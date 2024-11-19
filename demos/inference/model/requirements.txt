@@ -3,4 +3,4 @@ transformers==4.43.4
 pydantic==2.8.2
 pydantic_settings==2.4.0
 onnxruntime==1.18.1
-onnx==1.16.2
+onnx==1.17.0
