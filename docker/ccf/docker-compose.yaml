@@ -1,0 +1,15 @@
+services:
+  # We are forced to have a docker compose even for a single service since az cli commands expect
+  # to find the CCF provider container as part of a compose project and look for a 'client-1'
+  # container within.
+  client:
+    image: mcr.microsoft.com/cleanroom/ccf/ccf-provider-client:1.0.12
+    ports:
+      - "0:8080"
+    environment:
+      - IDENTITY_ENDPOINT=${CREDENTIAL_PROXY_ENDPOINT}
+      - IMDS_ENDPOINT="dummy_required_value"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - host.docker.internal:host-gateway

@@ -1,0 +1,20 @@
+version: "3"
+
+services:
+  otel-collector:
+    image: azure-cleanroom-samples-otelcollector
+    volumes:
+    - ${TELEMETRY_FOLDER:-.}:/telemetry
+    depends_on:
+    - aspire
+  aspire:
+    #
+    # otel-collector-config.yaml assumes an OTLP export endpoint at http://aspire:18889.
+    # Please ensure YAML is updated when changing the service name or port.
+    #
+    image: mcr.microsoft.com/dotnet/nightly/aspire-dashboard:8.0-preview
+    ports:
+    - "18888" # Dashboard
+    - "18889" # OTLP gRPC receiver
+    environment:
+      DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS: "true"

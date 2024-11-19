@@ -1,0 +1,39 @@
+receivers:
+  otlpjsonfile:
+    include:
+      - "/telemetry/**/*.traces"
+      - "/telemetry/**/*.metrics"
+      - "/telemetry/**/*.log"
+    start_at: "beginning"
+    poll_interval: 1000
+processors:
+  batch:
+
+exporters:
+  otlp:
+    endpoint: http://aspire:18889
+    tls:
+      insecure: true
+  debug:
+    verbosity: detailed
+    sampling_initial: 5
+    sampling_thereafter: 200
+  debug/noop:
+    verbosity: normal
+    sampling_initial: 0
+    sampling_thereafter: 0
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlpjsonfile]
+      processors: [batch]
+      exporters: [debug, otlp]
+    metrics:
+      receivers: [otlpjsonfile]
+      processors: [batch]
+      exporters: [debug, otlp]
+    logs:
+      receivers: [otlpjsonfile]
+      processors: [batch]
+      exporters: [debug, otlp]

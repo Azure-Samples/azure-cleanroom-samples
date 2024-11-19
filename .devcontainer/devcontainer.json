@@ -1,0 +1,23 @@
+{
+    "image": "mcr.microsoft.com/devcontainers/universal:2",
+    "features": {
+      "ghcr.io/devcontainers/features/powershell:1": {
+        "modules": "powershell-yaml"
+      },
+      "ghcr.io/devcontainers/features/azure-cli:1": {
+      }
+    },
+    "customizations": {
+      // Configure properties specific to VS Code.
+      "vscode": {
+        // Add the IDs of extensions you want installed when the container is created.
+        "extensions": [
+          "ms-azuretools.vscode-docker",
+          "yzhang.markdown-all-in-one",
+          "bierner.markdown-mermaid",
+          "vscode-icons-team.vscode-icons"
+        ]
+      }
+    },
+    "containerEnv": { "DEVCONTAINER": "true" }
+  }
