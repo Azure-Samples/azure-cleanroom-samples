@@ -443,7 +443,7 @@ The samples follow an envelope encryption model for encryption of data. For the 
 ## Encrypt and upload data (fabrikam, contosso)
 It is assumed that the collaborators have had out-of-band communication and have agreed on the data sets that will be shared. In these samples, the protected data is in the form of one or more files in one or more directories at each collaborators end.
 
-These dataset(s) in the form of files are encrypted using the [KEK-DEK](#kek-dek-based-encryption-approach) approach and uploaded into the the storage account created as part of [initializing the sample environment](#initializing-the-environment). Each directory in the source dataset would correspond to one Azure Blob storage container, and all files in the directory are uploaded as blobs to Azure Storage using specified encryption mode - client-side encryption <!-- TODO: Add link to explanation of CSE. -->/ server-side encryption using [customer provided key](https://learn.microsoft.com/azure/storage/blobs/encryption-customer-provided-keys). Only one symmetric key (DEK) is created per directory (blob storage container).
+These dataset(s) in the form of files are encrypted using the [KEK-DEK](#kek-dek-based-encryption-approach) approach and uploaded into the storage account created as part of [initializing the sample environment](#initializing-the-environment). Each directory in the source dataset would correspond to one Azure Blob storage container, and all files in the directory are uploaded as blobs to Azure Storage using specified encryption mode - client-side encryption <!-- TODO: Add link to explanation of CSE. -->/ server-side encryption using [customer provided key](https://learn.microsoft.com/azure/storage/blobs/encryption-customer-provided-keys). Only one symmetric key (DEK) is created per directory (blob storage container).
 
 ```mermaid
 sequenceDiagram
@@ -466,6 +466,9 @@ The following command initializes datastores and uploads encrypted datasets requ
 ```powershell
 ./scripts/data/publish-data.ps1 -demo $demo
 ```
+
+> [!Note]
+> The value of $demo would specify the sample being executed. So it can be one of: "cleanroomhello-job" or "cleanroomhello-api" or "analytics" or "inference".
 
 > [!NOTE]
 > This command seeds the environment with data from external sources in some of the samples. As a result, this step which could take some time.
