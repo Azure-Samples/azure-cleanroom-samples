@@ -62,17 +62,17 @@ $virtualBase = "/home/samples/demo-resources"
 # Create host directories shared by sample environment containers for all persona.
 #
 $publicDir = "$sharedBase/public"
-mkdir -p $publicDir
+New-Item -ItemType Directory -Force -Path $publicDir
 $telemetryDir = "$sharedBase/telemetry"
-mkdir -p $telemetryDir
+New-Item -ItemType Directory -Force -Path $telemetryDir
 
 #
 # Create host directories private to sample environment containers per persona.
 #
 $privateDir = "private"
-mkdir -p "$personaBase/$privateDir"
+New-Item -ItemType Directory -Force -Path "$personaBase/$privateDir"
 $secretDir = "secret"
-mkdir -p "$personaBase/$secretDir"
+New-Item -ItemType Directory -Force -Path "$personaBase/$secretDir"
 
 #
 # Launch credential proxy for operator or if sharing credentials.
