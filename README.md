@@ -120,6 +120,26 @@ All the involved parties need to bring up a local environment to participate in 
 
 Each party requires an independent environment. To create such an environment, open a separate powershell window for each party and run the following commands:
 
+
+```powershell
+$persona = # Set to one of: "operator" "litware" "fabrikam" "contosso" "client"
+```
+<!-- TODO: Is it worthwhile adding a selector instead?
+```powershell
+function Choose-Option([string[]] $options, [string] $prompt) { 
+  $displayString = "" 
+  for ($i = 0; $i -lt $options.Length; $i++)
+  {
+    $displayString += "${i}: $($options[$i])$([environment]::NewLine)"
+  } 
+  $displayString += "Choose $prompt" 
+  $choice=Read-Host $displayString 
+  return $options[([convert]::ToInt32($choice))] 
+} `
+$persona = (Choose-Option -options @('operator','litware','fabrikam','contosso','client') -prompt 'persona')
+```
+-->
+
 ```powershell
 ./start-environment.ps1 -shareCredentials -persona $persona
 ```
@@ -461,6 +481,12 @@ sequenceDiagram
     end
 ```
 
+> [!TIP]
+> Set a variable `$demo` to the name of the demo to be executed (_e.g., "**cleanroomhello-job**"_) - it is a required input for subsequent steps.
+> ```powershell
+> $demo = # Set to one of: "cleanroomhello-job", "cleanroomhello-api", "analytics", "inference"
+> ```
+
 The following command initializes datastores and uploads encrypted datasets required for executing the samples:
 
 ```powershell
@@ -653,9 +679,11 @@ The _operator_ merges all the contract fragments shared by the collaborators and
 ./scripts/contract/register-contract.ps1 -demo $demo
 ```
 
-> [!IMPORTANT]
-> Note down the generated `contractId` (_e.g., "**collab-cleanroomhello-job-8a106fb6**"_) - it is a required input for all subsequent steps.
-
+> [!TIP]
+> Set a variable `$contractId` to the contract ID generated above (_e.g., "**collab-cleanroomhello-job-8a106fb6**"_) - it is a required input for subsequent steps.
+> ```powershell
+> $contractId = # generated contractId # E.g. "collab-cleanroomhello-job-8a106fb6"
+> ```
 
 > [!WARNING]
 > In the default sample environment, the containers for all participants have their `/home/samples/demo-resources/public` mapped to a single host directory, so the contract fragments would be available to all parties automatically once generated. If the configuration has been changed, the fragments of all other parties needs to made available in `/home/samples/demo-resources/public` of the _operator's_ environment before running the command above.
