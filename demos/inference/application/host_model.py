@@ -51,7 +51,7 @@ app = FastAPI()
 
 @app.post("/infer")
 async def infer(data: Data):
-    return map_results(g_inf_pipeline(data.data))
+    return map_results(get_inferencing_pipeline(settings.model_path)(data.data))
 
 def data(dataset):
     for key in dataset.shuffle():
