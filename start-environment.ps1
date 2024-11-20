@@ -81,18 +81,18 @@ if ($shareCredentials -or ($persona -eq "operator"))
 {
     & {
         Write-Log OperationStarted `
-            "Setting up credential sharing infrastructure..." 
-    
+            "Setting up credential sharing infrastructure..."
+
         # Create a bridge network to host the credential proxy.
         $networkName = "$imageName-network"
         $network = (docker network ls --filter "name=^$networkName$" --format 'json') | ConvertFrom-Json
         if ($null -eq $network)
         {
             Write-Log Verbose `
-                "Creating docker network '$networkName'..." 
+                "Creating docker network '$networkName'..."
             docker network create $networkName
         }
-    
+
         # Bring up a credential proxy container.
         $containerName = $accessTokenProviderName
         $container = (docker container ls -a --filter "name=^$containerName$" --format 'json') | ConvertFrom-Json
@@ -100,7 +100,7 @@ if ($shareCredentials -or ($persona -eq "operator"))
         {
             $proxyImage = "workleap/azure-cli-credentials-proxy"
             Write-Log Verbose `
-                "Creating credential proxy '$containerName' using image '$proxyImage'..." 
+                "Creating credential proxy '$containerName' using image '$proxyImage'..."
             docker container create `
                 -p "0:8080" `
                 --network $networkName `
@@ -113,28 +113,28 @@ if ($shareCredentials -or ($persona -eq "operator"))
                 "Reusing existing credential proxy container '$($container.Names)'" `
                 "(ID: $($container.ID))."
         }
-    
+
         docker container start $containerName
-    
+
         # Interactively login to proxy if required.
         Write-Log Verbose `
-            "Checking validity of Azure access token..." 
+            "Checking validity of Azure access token..."
         & {
             # Disable $PSNativeCommandUseErrorActionPreference for this scriptblock
             $PSNativeCommandUseErrorActionPreference = $false
             $(docker exec $containerName sh -c "az account get-access-token")
         }
-    
+
         if (0 -ne $LASTEXITCODE)
         {
             Write-Log OperationStarted `
-                "Logging into Azure..." 
+                "Logging into Azure..."
             docker exec -it $containerName sh -c "az login"
         }
-    
+
         docker exec $containerName sh -c "az account show"
     }
-    
+
     # Fetch credential proxy host port details.
     $credentialProxyPort = (docker port $accessTokenProviderName 8080).Split(':')[1]
     $credentialProxyEndpoint = "http://host.docker.internal:$credentialProxyPort/token"
@@ -149,7 +149,7 @@ if ($persona -eq "litware")
 {
     & {
         Write-Log OperationStarted `
-            "Setting up telemetry dashboard..." 
+            "Setting up telemetry dashboard..."
         docker build -f $dockerFileDir/Dockerfile.azure-cleanroom-samples-otelcollector -t $imageName-otelcollector $dockerFileDir
 
         $env:TELEMETRY_FOLDER = $telemetryDir
@@ -169,7 +169,7 @@ if ($persona -eq "operator")
 {
     & {
         Write-Log OperationStarted `
-            "Setting up CCF provider..." 
+            "Setting up CCF provider..."
 
         $env:CREDENTIAL_PROXY_ENDPOINT = $credentialProxyEndpoint
         docker compose -p $ccfProviderName -f $dockerFileDir/ccf/docker-compose.yaml up -d --remove-orphans
@@ -194,7 +194,7 @@ if ($persona -eq "operator")
     {
         Write-Log Warning `
             "Samples environment for '$persona' already exists - '$($container.Names)' (ID: $($container.ID))."
-        $overwrite = $overwrite -or 
+        $overwrite = $overwrite -or
             (Get-Confirmation -Message "Overwrite container '$containerName'?" -YesLabel "Y" -NoLabel "N")
         if ($overwrite)
         {
@@ -208,12 +208,12 @@ if ($persona -eq "operator")
             $createContainer = $false
         }
     }
-    
+
     if ($createContainer)
     {
         Write-Log OperationStarted `
-            "Creating samples environment '$containerName' using image '$imageName'..." 
-    
+            "Creating samples environment '$containerName' using image '$imageName'..."
+
         # TODO: Cut across to a pre-built docker image?
         $dockerArgs = "image build -t $imageName -f $dockerFileDir/Dockerfile.azure-cleanroom-samples `".`""
         $customCliExtensions = @(Get-Item -Path "./docker/*.whl")
@@ -224,12 +224,12 @@ if ($persona -eq "operator")
             $dockerArgs += " --build-arg EXTENSION_SOURCE=local"
         }
         Start-Process docker $dockerArgs -Wait
-    
+
         if ($resourceGroup -eq "")
         {
             $resourceGroup = "$persona-$((New-Guid).ToString().Substring(0, 8))"
         }
-    
+
         docker container create `
             --env PERSONA=$persona `
             --env RESOURCE_GROUP=$resourceGroup `
@@ -247,11 +247,20 @@ if ($persona -eq "operator")
             "Created container '$containerName' to start samples environment for" `
             "'$persona'. Environment will be using resource group '$resourceGroup'."
     }
-    
+
+    # Stop any "orphan" instances of the container that are already running.
+    $container = (docker container ps --filter "name=^$containerName$" --format 'json') | ConvertFrom-Json
+    if ($null -ne $container)
+    {
+        Write-Log Warning `
+            "Stopping container '$containerName'..."
+        docker container stop --signal SIGKILL $containerName
+    }
+
     Write-Log OperationStarted `
         "Starting samples environment using container '$containerName'..."
     docker container start -a -i $containerName
-    
+
     Write-Log Warning `
         "Samples environment exited!"
 }
