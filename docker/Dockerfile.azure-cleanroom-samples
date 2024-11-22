@@ -1,6 +1,6 @@
 # Override hooks for controlling az cleanroom extension version and installation source.
 ARG EXTENSION_SOURCE=official
-ARG EXTENSION_FILENAME=cleanroom-0.0.7-py2.py3-none-any
+ARG EXTENSION_FILENAME=cleanroom-1.0.0-py2.py3-none-any
 
 FROM mcr.microsoft.com/powershell AS docker-azcli-base
 # Required packages.
