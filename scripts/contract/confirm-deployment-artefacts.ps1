@@ -4,7 +4,11 @@ param(
 
     [string]$persona = "$env:PERSONA",
 
-    [string]$cgsClient = "azure-cleanroom-samples-governance-client-$persona"
+    [string]$cgsClient = "azure-cleanroom-samples-governance-client-$persona",
+
+    [string]$samplesRoot = "/home/samples",
+    [string]$privateDir = "$samplesRoot/demo-resources/private",
+    [string]$artefactsDir = "$privateDir/$contractId-artefacts"
 )
 
 #https://learn.microsoft.com/en-us/powershell/scripting/learn/experimental-features?view=powershell-7.4#psnativecommanderroractionpreference
@@ -12,6 +16,9 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
 Import-Module $PSScriptRoot/../common/common.psm1
+. $PSScriptRoot/verify-deployment-artefacts.ps1
+
+mkdir -p $artefactsDir
 
 Write-Log OperationStarted `
     "Accepting deployment artefacts for '$contractId'..." 
@@ -27,8 +34,13 @@ Write-Log Verbose `
 az cleanroom governance proposal show-actions `
     --proposal-id $proposalId `
     --query "actions[0].args.spec.data" `
-    --governance-client $cgsClient
-# TODO: Logic to showcase template verification is pending.
+    --governance-client $cgsClient | Out-File "$artefactsDir/cleanroom-arm-template.json"
+
+Write-Log Verbose `
+    "Logging in to GitHub to verify container image attestations..."
+gh auth login --web
+
+Verify-Template -deploymentTemplatePath "$artefactsDir/cleanroom-arm-template.json"
 az cleanroom governance proposal vote `
     --proposal-id $proposalId `
     --action accept `
