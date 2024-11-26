@@ -16,9 +16,6 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
 Import-Module $PSScriptRoot/../common/common.psm1
-. $PSScriptRoot/verify-deployment-artefacts.ps1
-
-mkdir -p $artefactsDir
 
 Write-Log OperationStarted `
     "Accepting deployment artefacts for '$contractId'..." 
@@ -29,18 +26,33 @@ $proposalId = az cleanroom governance deployment template show `
     --governance-client $cgsClient `
     --query "proposalIds[0]" `
     --output tsv
-Write-Log Verbose `
-    "Accepting deployment template proposal '$proposalId'..."
+
 az cleanroom governance proposal show-actions `
     --proposal-id $proposalId `
     --query "actions[0].args.spec.data" `
-    --governance-client $cgsClient | Out-File "$artefactsDir/cleanroom-arm-template.json"
+    --governance-client $cgsClient | Out-File "$privateDir/$contractId-cleanroom-arm-template.json"
+
+$deploymentTemplate = Get-Content "$privateDir/$contractId-cleanroom-arm-template.json" | ConvertFrom-Json
+
+$resources = $deploymentTemplate.resources | Where-Object { $_.type -eq "Microsoft.ContainerInstance/containerGroups"}
+
+if ($null -eq $resources) {
+    Write-Log Error "No container groups found in the deployment template."
+    exit 1
+}
+
+$containerImages = $resources.properties.containers |`
+    ForEach-Object { $_.properties.image } |`
+    Select-Object -Unique
+
+$containerImages += $resources.properties.initContainers |`
+    ForEach-Object { $_.properties.image } |`
+    Select-Object -Unique
+
+Assert-CleanroomAttestation -containerImages $containerImages
 
 Write-Log Verbose `
-    "Logging in to GitHub to verify container image attestations..."
-gh auth login --web
-
-Verify-Template -deploymentTemplatePath "$artefactsDir/cleanroom-arm-template.json"
+    "Accepting deployment template proposal '$proposalId'..."
 az cleanroom governance proposal vote `
     --proposal-id $proposalId `
     --action accept `
