@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y azure-cli=${AZCLI_VERSION}~jammy
 # Install gh cli.
 COPY docker/github.list /etc/apt/sources.list.d/github-cli.list
 RUN apt-get update && apt-get install -y gh
+
 FROM docker-azcli-base AS samples-base
 # Required packages.
 RUN apt-get update && apt-get install -y jq python3-pip

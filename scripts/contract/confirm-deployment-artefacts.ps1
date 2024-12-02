@@ -7,8 +7,7 @@ param(
     [string]$cgsClient = "azure-cleanroom-samples-governance-client-$persona",
 
     [string]$samplesRoot = "/home/samples",
-    [string]$privateDir = "$samplesRoot/demo-resources/private",
-    [string]$artefactsDir = "$privateDir/$contractId-artefacts"
+    [string]$privateDir = "$samplesRoot/demo-resources/private"
 )
 
 #https://learn.microsoft.com/en-us/powershell/scripting/learn/experimental-features?view=powershell-7.4#psnativecommanderroractionpreference
@@ -27,12 +26,14 @@ $proposalId = az cleanroom governance deployment template show `
     --query "proposalIds[0]" `
     --output tsv
 
+$templateFilePath = "$privateDir/$contractId-cleanroom-arm-template.json"
+
 az cleanroom governance proposal show-actions `
     --proposal-id $proposalId `
     --query "actions[0].args.spec.data" `
-    --governance-client $cgsClient | Out-File "$privateDir/$contractId-cleanroom-arm-template.json"
+    --governance-client $cgsClient | Out-File $templateFilePath
 
-$deploymentTemplate = Get-Content "$privateDir/$contractId-cleanroom-arm-template.json" | ConvertFrom-Json
+$deploymentTemplate = Get-Content $templateFilePath | ConvertFrom-Json
 
 $resources = $deploymentTemplate.resources | Where-Object { $_.type -eq "Microsoft.ContainerInstance/containerGroups"}
 
@@ -49,7 +50,15 @@ $containerImages += $resources.properties.initContainers |`
     ForEach-Object { $_.properties.image } |`
     Select-Object -Unique
 
-Assert-CleanroomAttestation -containerImages $containerImages
+$containerTag = $resources.tags."accr-version"
+if ($null -eq $containerTag) {
+    $containerTag = "2.0.0"
+}
+
+Assert-CleanroomAttestation `
+    -containerImages $containerImages `
+    -tempDir $privateDir `
+    -containerTag $containerTag
 
 Write-Log Verbose `
     "Accepting deployment template proposal '$proposalId'..."
