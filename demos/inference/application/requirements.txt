@@ -2,7 +2,7 @@ fastapi==0.112.0
 optimum==1.21.3
 pydantic==2.8.2
 pydantic_settings==2.4.0
-transformers==4.43.4
+transformers==4.48.0
 uvicorn==0.30.5
 onnxruntime==1.18.1
 onnx==1.16.2
