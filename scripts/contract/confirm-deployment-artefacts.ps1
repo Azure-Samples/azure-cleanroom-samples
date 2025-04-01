@@ -52,7 +52,7 @@ $containerImages += $resources.properties.initContainers |`
 
 $containerTag = $resources.tags."accr-version"
 if ($null -eq $containerTag) {
-    $containerTag = "2.0.0"
+    $containerTag = "3.0.0"
 }
 
 Assert-CleanroomAttestation `

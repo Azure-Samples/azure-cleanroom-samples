@@ -30,7 +30,7 @@ function CheckLastExitCode() {
 function Get-ContainerRegistryUrl {
 
     if ([System.String]::IsNullOrEmpty($env:CONTAINER_REGISTRY_URL)) {
-        return "mcr.microsoft.com/cleanroom"
+        return "mcr.microsoft.com/azurecleanroom"
     }
     else {
         return $env:CONTAINER_REGISTRY_URL
