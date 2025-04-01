@@ -242,7 +242,7 @@ if ($persona -eq "operator")
             --network host `
             --add-host host.docker.internal:host-gateway `
             --name $containerName `
-            -it $imageName
+            $imageName
         Write-Log OperationCompleted `
             "Created container '$containerName' to start samples environment for" `
             "'$persona'. Environment will be using resource group '$resourceGroup'."
@@ -259,7 +259,7 @@ if ($persona -eq "operator")
 
     Write-Log OperationStarted `
         "Starting samples environment using container '$containerName'..."
-    docker container start -a -i $containerName
+    docker container start $containerName
 
     Write-Log Warning `
         "Samples environment exited!"

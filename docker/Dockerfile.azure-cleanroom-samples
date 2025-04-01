@@ -71,3 +71,5 @@ COPY ./scripts .
 COPY ./scripts/common/ps-profile.ps1 /opt/microsoft/powershell/7/profile.ps1
 # Done!
 WORKDIR /home/samples
+
+CMD ["tail", "-f", "/dev/null"]
