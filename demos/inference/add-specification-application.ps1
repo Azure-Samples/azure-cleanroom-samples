@@ -65,10 +65,9 @@ az cleanroom config add-application `
     --cpu 1 `
     --memory 3
 
-az cleanroom config add-application-endpoint `
-    --cleanroom-config $configResult.contractFragment `
-    --application-name demoapp-$demo `
-    --port 8000
+az cleanroom config network http enable `
+    --cleanroom-config $nginxConfig `
+    --direction inbound
 
 Write-Log OperationCompleted `
     "Added application 'demoapp-$demo' ($image)."

@@ -64,12 +64,13 @@ az cleanroom config add-application `
     --env-vars STORAGE_PATH_1=/mnt/remote/fabrikam-input `
                STORAGE_PATH_2=/mnt/remote/contosso-input `
     --cpu 0.5 `
+    --ports 8310 `
     --memory 4
 
-az cleanroom config add-application-endpoint `
-    --cleanroom-config $configResult.contractFragment `
-    --application-name demoapp-$demo `
-    --port 8310
+# Note: This will allow all incoming connections to the cleanroom.
+az cleanroom config network http enable `
+    --cleanroom-config $nginxConfig `
+    --direction inbound
 
 Write-Log OperationCompleted `
     "Added application 'demoapp-$demo' ($image)."

@@ -21,6 +21,7 @@ default on_request_body = {
 }
 
 on_request_headers = result {
+    is_inbound_request == true
     get_method == "GET"
     get_path == "/"
     result := {
@@ -34,12 +35,18 @@ default on_response_headers = true
 get_path := path if {
     some header in input.requestHeaders.headers.headers
     header.key == ":path"
-    path := header.value
+    path := base64.decode(header.rawValue)
 } else := ""
 
 get_method := method if {
     some header in input.requestHeaders.headers.headers
     header.key == ":method"
-    method := header.value
+    method := base64.decode(header.rawValue)
 } else := ""
+
+is_inbound_request := true if {
+    some header in input.requestHeaders.headers.headers
+    header.key == "x-ccr-request-direction"
+    base64.decode(header.rawValue) == "inbound"
+} else := false
 

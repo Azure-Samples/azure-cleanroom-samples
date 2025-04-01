@@ -13,6 +13,8 @@ param(
     [string]$privateDir = "$samplesRoot/demo-resources/private",
     [string]$telemetryDir = "$samplesRoot/demo-resources/telemetry",
 
+    [string]$cleanroomEndpoint = (Get-Content "$publicDir/$cleanRoomName.endpoint"),
+
     [string]$contractConfig = "$privateDir/$resourceGroup-$demo.generated.json",
     [string]$datastoreConfig = "$privateDir/datastores.config",
     [string]$dashboardName = "azure-cleanroom-samples-telemetry"
@@ -26,6 +28,31 @@ Import-Module $PSScriptRoot/../common/common.psm1
 
 $infrastructureDir = "$telemetryDir/infrastructure-telemetry/$contractId"
 $applicationDir = "$telemetryDir/application-telemetry/$contractId"
+
+if ($cleanroomEndpoint -eq '')
+{
+    Write-Log Warning `
+        "No endpoint details available for cleanroom '$cleanRoomName' at" `
+        "'$publicDir/$cleanRoomName.endpoint'."
+    return
+}
+
+Write-Log Information "Exporting logs..."
+$response = curl -X POST -s -k https://${cleanroomEndpoint}:8200/gov/exportLogs
+$expectedResponse = '{"message":"Application telemetry data exported successfully."}'
+if ($response -ne $expectedResponse) {
+    Write-Host -ForegroundColor Red "Did not get expected response. Received: $response."
+    exit 1
+}
+
+Write-Host "Exporting telemetry..."
+$response = curl -X POST -s -k https://${cleanroomEndpoint}:8200/gov/exportTelemetry
+$expectedResponse = '{"message":"Infrastructure telemetry data exported successfully."}'
+if ($response -ne $expectedResponse) {
+    Write-Host -ForegroundColor Red "Did not get expected response. Received: $response."
+    exit 1
+}
+
 
 if ("litware" -eq $persona)
 {

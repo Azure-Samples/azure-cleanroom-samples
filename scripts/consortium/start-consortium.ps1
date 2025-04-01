@@ -96,7 +96,7 @@ if ($null -eq $ccf)
     "encryptionPublicKey": "$ccfOperatorEncryptionCert",
     "memberData": {
         "identifier": "$ccfOperator",
-        "is_operator": true
+        "isOperator": true
     }
 },
 {

@@ -75,12 +75,12 @@ az cleanroom config add-application `
     --name demoapp-$demo `
     --image $image `
     --cpu 0.5 `
+    --ports 8080 `
     --memory 4
 
-az cleanroom config add-application-endpoint `
+az cleanroom config network http enable `
     --cleanroom-config $configResult.contractFragment `
-    --application-name demoapp-$demo `
-    --port 8080 `
+    --direction inbound `
     --policy $policy
 
 Write-Log OperationCompleted `
