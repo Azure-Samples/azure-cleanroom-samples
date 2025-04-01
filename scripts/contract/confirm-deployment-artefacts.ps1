@@ -4,7 +4,10 @@ param(
 
     [string]$persona = "$env:PERSONA",
 
-    [string]$cgsClient = "azure-cleanroom-samples-governance-client-$persona"
+    [string]$cgsClient = "azure-cleanroom-samples-governance-client-$persona",
+
+    [string]$samplesRoot = "/home/samples",
+    [string]$privateDir = "$samplesRoot/demo-resources/private"
 )
 
 #https://learn.microsoft.com/en-us/powershell/scripting/learn/experimental-features?view=powershell-7.4#psnativecommanderroractionpreference
@@ -22,13 +25,43 @@ $proposalId = az cleanroom governance deployment template show `
     --governance-client $cgsClient `
     --query "proposalIds[0]" `
     --output tsv
-Write-Log Verbose `
-    "Accepting deployment template proposal '$proposalId'..."
+
+$templateFilePath = "$privateDir/$contractId-cleanroom-arm-template.json"
+
 az cleanroom governance proposal show-actions `
     --proposal-id $proposalId `
     --query "actions[0].args.spec.data" `
-    --governance-client $cgsClient
-# TODO: Logic to showcase template verification is pending.
+    --governance-client $cgsClient | Out-File $templateFilePath
+
+$deploymentTemplate = Get-Content $templateFilePath | ConvertFrom-Json
+
+$resources = $deploymentTemplate.resources | Where-Object { $_.type -eq "Microsoft.ContainerInstance/containerGroups"}
+
+if ($null -eq $resources) {
+    Write-Log Error "No container groups found in the deployment template."
+    exit 1
+}
+
+$containerImages = $resources.properties.containers |`
+    ForEach-Object { $_.properties.image } |`
+    Select-Object -Unique
+
+$containerImages += $resources.properties.initContainers |`
+    ForEach-Object { $_.properties.image } |`
+    Select-Object -Unique
+
+$containerTag = $resources.tags."accr-version"
+if ($null -eq $containerTag) {
+    $containerTag = "2.0.0"
+}
+
+Assert-CleanroomAttestation `
+    -containerImages $containerImages `
+    -tempDir $privateDir `
+    -containerTag $containerTag
+
+Write-Log Verbose `
+    "Accepting deployment template proposal '$proposalId'..."
 az cleanroom governance proposal vote `
     --proposal-id $proposalId `
     --action accept `
