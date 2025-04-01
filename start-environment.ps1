@@ -98,7 +98,7 @@ if ($shareCredentials -or ($persona -eq "operator"))
         $container = (docker container ls -a --filter "name=^$containerName$" --format 'json') | ConvertFrom-Json
         if ($null -eq $container)
         {
-            $proxyImage = "workleap/azure-cli-credentials-proxy"
+            $proxyImage = "workleap/azure-cli-credentials-proxy:1.1.0"
             Write-Log Verbose `
                 "Creating credential proxy '$containerName' using image '$proxyImage'..."
             docker container create `
