@@ -27,7 +27,7 @@ if (-not (("litware") -contains $persona))
 $environmentConfigResult = Get-Content $environmentConfig | ConvertFrom-Json
 $acrName = $environmentConfigResult.acr.name
 $acr = $environmentConfigResult.acr.loginServer
-$image = "$acr/azure-cleanroom-samples/demos/$demo"
+$image = "$acr/azure-cleanroom-samples/demos/${demo}:latest"
 
 #
 # Build application if required.
@@ -57,7 +57,7 @@ Write-Log OperationStarted `
 az cleanroom config add-application `
     --cleanroom-config $configResult.contractFragment `
     --name demoapp-$demo `
-    --image ${image}:latest `
+    --image $image `
     --command "python3.10 ./analytics.py" `
     --datasources "fabrikam-input=/mnt/remote/fabrikam-input" `
              "contosso-input=/mnt/remote/contosso-input" `
