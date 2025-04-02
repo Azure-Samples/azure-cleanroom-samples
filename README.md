@@ -577,21 +577,21 @@ The application container is configured to access protected data through the cor
 > The resources for the application container should be allocated so as not to violate confidential ACI limits as defined [here](https://learn.microsoft.com/en-us/azure/container-instances/container-instances-resource-and-quota-limits#confidential-container-resources-preview).
 
 > [!TIP]
-> The set of datasource/datasink mount points available to an application is controlled through the `--mounts` option of the `az cleanroom config add-application` command. This takes an input of a list of mounts, where each mount is specified as the following two-tuple of key-value pairs (comma separated):
-> - `src=foo`, where `foo` is the name the datasource/datasink to be accessed.
-> - `dst=bar`, where `bar` is the path at which the datasource/datasink is to mounted within the application container.
+> The set of datasource/datasink mount points available to an application is controlled through the `--datasinks/--datasources` options of the `az cleanroom config add-application` command. These take an input of a list, where each value is specified as the following two-tuple of key-value pairs (comma separated):
+> - `foo`, where `foo` is the name the datasource/datasink to be accessed.
+> - `bar`, where `bar` is the path at which the datasource/datasink is to mounted within the application container.
 >
-> *E.g.*,`--mounts "src=fabrikam-input,dst=/mnt/remote/model" "src=contosso-input,dst=/mnt/remote/dataset"`
+> *E.g.*,`--datasources "fabrikam-input=/mnt/remote/model" "contosso-input/mnt/remote/dataset"` `--datasinks "fabrikam-output=/mnt/remote/output`
 
 > [!TIP]
-> The set of endpoints available to the application is configured through the `az cleanroom config add-application-endpoint` command. This takes an input of the port to be opened and a policy to control the HTTP traffic allowed on that port.
+> To enable traffic to/from the application, the `az cleanroom config network http enable` is used. This takes the direction of traffic as an input which can be specified as `--direction [inbound/outbound]` along with an optional policy URL to enforce for requests.
 
 <br>
 <details><summary><em>Azure CLI commands used</em></summary>
 <br>
 
 - `az cleanroom config add-application` - configure the application to be executed within the clean room.
-- `az cleanroom config add-application-endpoint` - configure an endpoint to communicate with the application executing within the clean room.
+- `az cleanroom config network http enable` - allow traffic to/from the application executing within the clean room.
 </details>
 <br>
 
@@ -850,7 +850,7 @@ Run the following script to wait for the cleanroom application to start:
 
 
 ```powershell
-./scripts/cleanroom/wait-cleanroom.ps1 -contractId $contractId
+./scripts/cleanroom/wait-cleanroom.ps1 -contractId $contractId -demo $demo
 ```
 
 
@@ -910,10 +910,6 @@ There are different views that are available:
 1. Traces: Track requests and activities across all the sidecars so that we can see where time is spent and track down specific failures.
 2. Logs: Record individual operations in the context of one of the request / activity.
 3. Metrics: Measure counters and gauges such as successful requests, failed requests, latency etc.
-
-<!-- TODO: Update samples to invoke telemetry export API once available and drop this note.-->
-> [!NOTE]
-> The clean room infrastructure currently performs a governance check (whether telemetry export is enabled) and exports telemetry only after the application exits. As a result, no telemetry gets exported for applications offering API endpoints. This limitation is being addressed in a future version of the infrastructure through an export telemetry API that can be invoked at any point of the clean room execution.
 
 <br>
 <details><summary><em>Azure CLI commands used</em></summary>

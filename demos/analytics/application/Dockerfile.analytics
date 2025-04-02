@@ -1,20 +1,13 @@
-FROM ubuntu:20.04
+FROM python:3.10
 
 RUN apt-get update -y && \
     apt-get -y --no-install-recommends install \
-    software-properties-common curl openjdk-8-jdk
-
-# Install python 3.10. https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa
-RUN add-apt-repository ppa:deadsnakes/ppa && \
-    apt-get -y install python3.10 python3.10-distutils
-
-# Install pip.
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
+    software-properties-common openjdk-17-jdk
 
 WORKDIR /app
 RUN chmod -R 777 /app
 COPY *.py .
 COPY requirements.txt .
 
-RUN python3.10 -m pip install -r requirements.txt
-ENTRYPOINT ["python3.10", "./analytics.py"]
+RUN pip install -r requirements.txt
+ENTRYPOINT ["python3", "./analytics.py"]

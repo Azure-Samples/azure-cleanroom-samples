@@ -33,7 +33,7 @@ $isOperator = ($persona -eq "operator")
 if (!$isCollaborator -and !$isDeveloper -and !$isOperator)
 {
     Write-Log Warning `
-        "No initiatization required for persona '$persona'."
+        "No initialization required for persona '$persona'."
     return
 }
 

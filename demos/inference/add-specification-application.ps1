@@ -27,7 +27,7 @@ if (-not (("litware") -contains $persona))
 $environmentConfigResult = Get-Content $environmentConfig | ConvertFrom-Json
 $acrName = $environmentConfigResult.acr.name
 $acr = $environmentConfigResult.acr.loginServer
-$image = "$acr/azure-cleanroom-samples/demos/$demo"
+$image = "$acr/azure-cleanroom-samples/demos/${demo}:latest"
 
 #
 # Build application if required.
@@ -59,16 +59,17 @@ az cleanroom config add-application `
     --name demoapp-$demo `
     --image $image `
     --command "python3 ./app/host_model.py --model-path=/mnt/remote/fabrikam-model/onnx --data-path=/mnt/remote/contosso-data" `
-    --mounts `
-        "src=fabrikam-model,dst=/mnt/remote/fabrikam-model" `
-        "src=contosso-data,dst=/mnt/remote/contosso-data" `
+    --datasources "fabrikam-model=/mnt/remote/fabrikam-model" `
+        "contosso-data=/mnt/remote/contosso-data" `
+    --ports 8000 `
     --cpu 1 `
     --memory 3
 
-az cleanroom config add-application-endpoint `
+# Note: This will allow all incoming connections to the application.
+# TODO: Add a policy to restrict traffic to the application.
+az cleanroom config network http enable `
     --cleanroom-config $configResult.contractFragment `
-    --application-name demoapp-$demo `
-    --port 8000
+    --direction inbound
 
 Write-Log OperationCompleted `
     "Added application 'demoapp-$demo' ($image)."
