@@ -98,6 +98,8 @@ if ($shareCredentials -or ($persona -eq "operator"))
         $container = (docker container ls -a --filter "name=^$containerName$" --format 'json') | ConvertFrom-Json
         if ($null -eq $container)
         {
+            # The latest version of the proxy image is giving a JsonDeserialization error.
+            # TODO: Use the latest version of the proxy image once the issue is fixed.
             $proxyImage = "workleap/azure-cli-credentials-proxy:1.1.0"
             Write-Log Verbose `
                 "Creating credential proxy '$containerName' using image '$proxyImage'..."

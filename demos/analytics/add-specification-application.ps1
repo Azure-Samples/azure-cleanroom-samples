@@ -67,7 +67,8 @@ az cleanroom config add-application `
     --ports 8310 `
     --memory 4
 
-# Note: This will allow all incoming connections to the cleanroom.
+# Note: This will allow all incoming connections to the application.
+# TODO: Add a policy to restrict traffic to the application.
 az cleanroom config network http enable `
     --cleanroom-config $configResult.contractFragment `
     --direction inbound

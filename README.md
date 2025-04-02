@@ -942,6 +942,10 @@ All collaborators can check for any audit events raised by the clean room during
 ./scripts/governance/show-audit-events.ps1 -contractId $contractId
 ```
 
+<!-- TODO: Update samples to invoke Audit API and drop this note.-->
+> [!NOTE]
+> The clean room infrastructure currently emits limited audit events, and doesn't offer an endpoint for an application to log audit events either. These limitations are being addressed in a future version of the infrastructure and samples.
+
 <br>
 <details><summary><em>Azure CLI commands used</em></summary>
 <br>

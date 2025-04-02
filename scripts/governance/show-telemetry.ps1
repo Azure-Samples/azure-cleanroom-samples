@@ -56,7 +56,6 @@ if ($response -ne $expectedResponse) {
     exit 1
 }
 
-
 if ("litware" -eq $persona)
 {
     Test-AzureAccessToken
