@@ -59,14 +59,13 @@ az cleanroom config add-application `
     --name demoapp-$demo `
     --image $image `
     --command "python3 ./app/host_model.py --model-path=/mnt/remote/fabrikam-model/onnx --data-path=/mnt/remote/contosso-data" `
-    --mounts `
-        "src=fabrikam-model,dst=/mnt/remote/fabrikam-model" `
-        "src=contosso-data,dst=/mnt/remote/contosso-data" `
+    --datasources "fabrikam-model=/mnt/remote/fabrikam-model" `
+        "contosso-data=/mnt/remote/contosso-data" `
     --cpu 1 `
     --memory 3
 
 az cleanroom config network http enable `
-    --cleanroom-config $nginxConfig `
+    --cleanroom-config $configResult.contractFragment `
     --direction inbound
 
 Write-Log OperationCompleted `

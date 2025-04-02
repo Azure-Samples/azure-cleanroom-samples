@@ -39,8 +39,8 @@ az cleanroom config add-application `
     --name demoapp-$demo `
     --image $image `
     --command "bash -c 'echo `$CODE | base64 -d > main.go; go run main.go'" `
-    --mounts "src=fabrikam-input,dst=/mnt/remote/fabrikam-input" `
-             "src=fabrikam-output,dst=/mnt/remote/fabrikam-output" `
+    --datasources "fabrikam-input=/mnt/remote/fabrikam-input" `
+    --datasinks "fabrikam-output=/mnt/remote/fabrikam-output" `
     --env-vars OUTPUT_LOCATION=/mnt/remote/fabrikam-output `
                INPUT_LOCATION=/mnt/remote/fabrikam-input `
                CODE="$inline_code" `
