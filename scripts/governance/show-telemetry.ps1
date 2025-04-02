@@ -9,8 +9,11 @@ param(
     [string]$persona = "$env:PERSONA",
     [string]$resourceGroup = "$env:RESOURCE_GROUP",
 
+    [string]$cleanRoomName = "cleanroom-$contractId",
+
     [string]$samplesRoot = "/home/samples",
     [string]$privateDir = "$samplesRoot/demo-resources/private",
+    [string]$publicDir = "$samplesRoot/demo-resources/public",
     [string]$telemetryDir = "$samplesRoot/demo-resources/telemetry",
 
     [string]$cleanroomEndpoint = (Get-Content "$publicDir/$cleanRoomName.endpoint"),
@@ -41,15 +44,15 @@ Write-Log Information "Exporting logs..."
 $response = curl -X POST -s -k https://${cleanroomEndpoint}:8200/gov/exportLogs
 $expectedResponse = '{"message":"Application telemetry data exported successfully."}'
 if ($response -ne $expectedResponse) {
-    Write-Host -ForegroundColor Red "Did not get expected response. Received: $response."
+    Write-Log Critical "Did not get expected response. Received: $response."
     exit 1
 }
 
-Write-Host "Exporting telemetry..."
+Write-Log Information "Exporting telemetry..."
 $response = curl -X POST -s -k https://${cleanroomEndpoint}:8200/gov/exportTelemetry
 $expectedResponse = '{"message":"Infrastructure telemetry data exported successfully."}'
 if ($response -ne $expectedResponse) {
-    Write-Host -ForegroundColor Red "Did not get expected response. Received: $response."
+    Write-Log Critical "Did not get expected response. Received: $response."
     exit 1
 }
 

@@ -57,10 +57,10 @@ Write-Log OperationStarted `
 az cleanroom config add-application `
     --cleanroom-config $configResult.contractFragment `
     --name demoapp-$demo `
-    --image $image `
+    --image ${image}:latest `
     --command "python3.10 ./analytics.py" `
-    --mounts "src=fabrikam-input,dst=/mnt/remote/fabrikam-input" `
-             "src=contosso-input,dst=/mnt/remote/contosso-input" `
+    --datasources "fabrikam-input=/mnt/remote/fabrikam-input" `
+             "contosso-input=/mnt/remote/contosso-input" `
     --env-vars STORAGE_PATH_1=/mnt/remote/fabrikam-input `
                STORAGE_PATH_2=/mnt/remote/contosso-input `
     --cpu 0.5 `
@@ -69,7 +69,7 @@ az cleanroom config add-application `
 
 # Note: This will allow all incoming connections to the cleanroom.
 az cleanroom config network http enable `
-    --cleanroom-config $nginxConfig `
+    --cleanroom-config $configResult.contractFragment `
     --direction inbound
 
 Write-Log OperationCompleted `

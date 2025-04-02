@@ -2,15 +2,19 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$contractId,
 
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("cleanroomhello-job", "cleanroomhello-api", "analytics", "inference")]
+    [string]$demo,
+
     [string]$resourceGroup = "$env:RESOURCE_GROUP",
 
     [string]$cleanRoomName = "cleanroom-$contractId",
     
     [string]$samplesRoot = "/home/samples",
     [string]$publicDir = "$samplesRoot/demo-resources/public",
-    [string]$cleanroomEndpoint = "$publicDir/$cleanRoomName.endpoint",
+    [string]$cleanroomEndpoint = (Get-Content "$publicDir/$cleanRoomName.endpoint"),
 
-    [string]$application,
+    [string]$application = "demoapp-$demo",
     [switch]$job,
     [switch]$skipStart
 )
@@ -27,33 +31,19 @@ function Get-TimeStamp {
     return "[{0:MM/dd/yy} {0:HH:mm:ss}]" -f (Get-Date)
 }
 
-while ($true) {
-    $ccrIP = az container show `
-        --name $cleanRoomName `
-        -g $resourceGroup `
-        --query "ipAddress.ip" `
-        --output tsv
-    if ($null -eq $ccrIP) {
-        Write-Log Information `
-            "$(Get-TimeStamp) Clean room '$cleanRoomName' is not yet available. Waiting for 20 seconds..."
-        Start-Sleep -Seconds 20
-    }
-    else {
-        break
-    }
+if ($cleanroomEndpoint -eq '')
+{
+    Write-Log Warning `
+        "No endpoint details available for cleanroom '$cleanRoomName' at" `
+        "'$publicDir/$cleanRoomName.endpoint'."
+    return
 }
-
-Write-Host "Clean Room IP address: $ccrIP"
-
-$ccrIP | Out-File "$cleanroomEndpoint"
-Write-Log OperationCompleted `
-    "CCR endpoint details {IP: '$ccrIp'} written to '$cleanroomEndpoint'."
 
 # wait for code-launcher endpoint to be up.
 $timeout = New-TimeSpan -Minutes 30
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-while ((curl -o /dev/null -w "%{http_code}" -s -k https://${ccrIP}:8200/gov/doesnotexist/status) -ne "404") {
-    Write-Host "Waiting for code-launcher endpoint to be up at https://${ccrIP}:8200"
+while ((curl -o /dev/null -w "%{http_code}" -s -k https://${cleanroomEndpoint}:8200/gov/doesnotexist/status) -ne "404") {
+    Write-Host "Waiting for code-launcher endpoint to be up at https://${cleanroomEndpoint}:8200"
     Start-Sleep -Seconds 3
     if ($stopwatch.elapsed -gt $timeout) {
         throw "Hit timeout waiting for code-launcher endpoint to be up."
@@ -65,7 +55,7 @@ if (!$skipStart)
     Write-Log OperationStarted `
         "$(Get-TimeStamp) Starting clean room application '$application' in $cleanRoomName'..."
     
-    curl -X POST -s -k https://${ccrIP}:8200/gov/$application/start
+    curl -X POST -s -k https://${cleanroomEndpoint}:8200/gov/$application/start
     Write-Log OperationCompleted `
         "$(Get-TimeStamp) Clean room application '$application' in '$cleanRoomName' started."
 }
@@ -74,7 +64,7 @@ Write-Log Verbose `
     "$(Get-TimeStamp) Waiting for clean room '$cleanRoomName' ('$resourceGroup')..."
 
 do {
-    $applicationStatus = curl -s -k https://${ccrIP}:8200/gov/$application/status
+    $applicationStatus = curl -s -k https://${cleanroomEndpoint}:8200/gov/$application/status
     Write-Log Verbose "Got application status: $applicationStatus"
 
     if ($applicationStatus -ne "" -and $null -ne $applicationStatus) {

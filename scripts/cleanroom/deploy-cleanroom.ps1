@@ -11,7 +11,9 @@ param(
     [string]$artefactsDir = "$privateDir/$contractId-artefacts",
 
     [string]$cleanRoomName = "cleanroom-$contractId",
-    [string]$cgsClient = "azure-cleanroom-samples-governance-client-$persona"
+    [string]$cgsClient = "azure-cleanroom-samples-governance-client-$persona",
+    [string]$publicDir = "$samplesRoot/demo-resources/public",
+    [string]$cleanroomEndpoint = "$publicDir/$cleanRoomName.endpoint"
 )
 
 #https://learn.microsoft.com/en-us/powershell/scripting/learn/experimental-features?view=powershell-7.4#psnativecommanderroractionpreference
@@ -54,3 +56,24 @@ az deployment group create `
 Write-Log OperationCompleted `
     "Deployed clean room '$cleanRoomName' for contract '$contractId' to '$resourceGroup'." 
 
+while ($true) {
+    $ccrIP = az container show `
+        --name $cleanRoomName `
+        -g $resourceGroup `
+        --query "ipAddress.ip" `
+        --output tsv
+    if ($null -eq $ccrIP) {
+        Write-Log Information `
+            "$(Get-TimeStamp) Clean room IP for '$cleanRoomName' is not yet available. Waiting for 20 seconds..."
+        Start-Sleep -Seconds 20
+    }
+    else {
+        break
+    }
+}
+
+Write-Host "Clean Room IP address: $ccrIP"
+
+$ccrIP | Out-File "$cleanroomEndpoint"
+Write-Log OperationCompleted `
+    "CCR endpoint details {IP: '$ccrIp'} written to '$cleanroomEndpoint'."

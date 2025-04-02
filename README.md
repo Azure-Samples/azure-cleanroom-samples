@@ -850,7 +850,7 @@ Run the following script to wait for the cleanroom application to start:
 
 
 ```powershell
-./scripts/cleanroom/wait-cleanroom.ps1 -contractId $contractId
+./scripts/cleanroom/wait-cleanroom.ps1 -contractId $contractId -demo $demo
 ```
 
 
@@ -911,10 +911,6 @@ There are different views that are available:
 2. Logs: Record individual operations in the context of one of the request / activity.
 3. Metrics: Measure counters and gauges such as successful requests, failed requests, latency etc.
 
-<!-- TODO: Update samples to invoke telemetry export API once available and drop this note.-->
-> [!NOTE]
-> The clean room infrastructure currently performs a governance check (whether telemetry export is enabled) and exports telemetry only after the application exits. As a result, no telemetry gets exported for applications offering API endpoints. This limitation is being addressed in a future version of the infrastructure through an export telemetry API that can be invoked at any point of the clean room execution.
-
 <br>
 <details><summary><em>Azure CLI commands used</em></summary>
 <br>
@@ -945,10 +941,6 @@ All collaborators can check for any audit events raised by the clean room during
 ```powershell
 ./scripts/governance/show-audit-events.ps1 -contractId $contractId
 ```
-
-<!-- TODO: Update samples to invoke Audit API and drop this note.-->
-> [!NOTE]
-> The clean room infrastructure currently emits limited audit events, and doesn't offer an endpoint for an application to log audit events either. These limitations are being addressed in a future version of the infrastructure and samples.
 
 <br>
 <details><summary><em>Azure CLI commands used</em></summary>
