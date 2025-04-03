@@ -1,0 +1,20 @@
+#FROM python:3.10
+FROM mcr.microsoft.com/mirror/docker/library/ubuntu:22.04
+
+RUN apt-get update -y && \
+    apt-get -y --no-install-recommends install \
+    software-properties-common curl python3.10 python3-pip
+
+# Install python 3.10. https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa
+#RUN apt-get -y install python3.10
+
+# Install pip.
+#RUN  curl -sS https://bootstrap.pypa.io/get-pip.py
+
+WORKDIR /app
+RUN chmod -R 777 /app
+COPY *.py .
+
+RUN python3 -m pip install matplotlib onnx
+RUN python3 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+ENTRYPOINT ["python3", "./PyTorchTraining.py"]
