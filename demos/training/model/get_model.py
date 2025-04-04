@@ -40,15 +40,8 @@ class AppSettings(BaseSettings, cli_parse_args=True):
 settings = AppSettings()
 
 # Generating an empty model to be trained.
-
-#device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-#logging.info(f"The model will be running on", device, "device")
-
 # Instantiate a neural network model
 model = Network()
-
-# Convert model parameters and buffers to CPU or Cuda
-#model.to(device)
 
 # Save the model
 torch.save(model.state_dict(), f"{settings.output_path}/model.pth")
