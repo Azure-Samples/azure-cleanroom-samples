@@ -58,9 +58,10 @@ az cleanroom config add-application `
     --cleanroom-config $configResult.contractFragment `
     --name demoapp-$demo `
     --image $image `
-    --command "python3 ./app/host_model.py --model-path=/mnt/remote/fabrikam-model/onnx --data-path=/mnt/remote/contosso-data" `
+    --command "python3 ./pytorchTrain.py --model-path=/mnt/remote/fabrikam-model --data-path=/mnt/remote/contosso-data" `
     --datasources "fabrikam-model=/mnt/remote/fabrikam-model" `
         "contosso-data=/mnt/remote/contosso-data" `
+    --datasinks "fabrikam-modelout=/mnt/remote/fabrikam-modelout" `
     --ports 8000 `
     --cpu 1 `
     --memory 3

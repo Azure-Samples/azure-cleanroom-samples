@@ -21,34 +21,28 @@ if ("fabrikam" -eq $persona)
 {
     $dataDir = "$PSScriptRoot/datasource/fabrikam/model"
     Write-Log OperationStarted `
-        "Generating inference model for demo '$demo'..."
+        "Generating empty model for demo '$demo'..."
 
     pip install -r $PSScriptRoot/model/requirements.txt
     python3 $PSScriptRoot/model/get_model.py --output-path $dataDir
 
     Write-Log OperationCompleted `
-        "Generated inference model for demo '$demo' in '$dataDir'."
+        "Generated empty model for demo '$demo' in '$dataDir'."
 }
 
 #
-# Use sample dataset at https://huggingface.co/datasets/cornell-movie-review-data/rotten_tomatoes/tree/main
-#
+# We'll use sample the CIFAR10 dataset to build and train the image classification model. CIFAR10 is a widely used dataset for machine learning research. It consists of 50,000 training images and 10,000 test images. All of them are of size 3x32x32, which means 3-channel color images of 32x32 pixels in size.
+# The images are divided to 10 classes: ‘airplane’ (0), ‘automobile’ (1), ‘bird’ (2), ‘cat’ (3) , ‘deer’ (4), ‘dog’ (5), ‘frog’ (6), ‘horse’ (7), ‘ship’ (8), ‘truck’ (9).
+# The CIFAR10 dataset is available at https://www.cs.toronto.edu/~kriz/cifar.html.
 if ("contosso" -eq $persona)
 {
+    pip install -r $PSScriptRoot/model/requirements.txt
     $dataDir = "$PSScriptRoot/datasource/contosso/data"
     Write-Log OperationStarted `
-        "Downloading inference data for demo '$demo' from" `
-        "'https://huggingface.co/datasets/cornell-movie-review-data/rotten_tomatoes/tree/main'" `
-        "..."
+        "Downloading data for demo '$demo'"
 
-    $src = "https://huggingface.co/datasets/cornell-movie-review-data/rotten_tomatoes/resolve/main"
-    foreach ($dataset in ("test.parquet", "train.parquet", "validation.parquet"))
-    {
-        Write-Log Verbose `
-            "Downloading '$src/$dataset'..."
-        curl -L "$src/$dataset" -o "$dataDir/$dataset"
-    }
+    python3 $PSScriptRoot/trainingData/get_data.py --data-path $dataDir
 
     Write-Log OperationCompleted `
-        "Downloaded inference data for demo '$demo' to '$dataDir'."
+        "Downloaded data for demo '$demo' to '$dataDir'."
 }

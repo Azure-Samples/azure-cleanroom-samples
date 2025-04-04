@@ -1,46 +1,19 @@
-# pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-
-from torchvision.datasets import CIFAR10
-from torchvision.transforms import transforms
-from torch.utils.data import DataLoader
-
+import time
+import os
 import torch
 import torch.nn as nn
-import torchvision
-import torch.nn.functional as F
-
+from torchvision.datasets import CIFAR10
+from torchvision.transforms import transforms
 from torch.optim import Adam
+from torch.autograd import Variable
 
-# Loading and normalizing the data.
-# Define transformations for the training and test sets
-transformations = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-])
+from torch.utils.data import DataLoader
 
-# CIFAR10 dataset consists of 50K training images. We define the batch size of 10 to load 5,000 batches of images.
-batch_size = 10
-number_of_labels = 10
+from pydantic_settings import BaseSettings
+from pydantic import Field
 
-# Create an instance for training.
-# When we run this code for the first time, the CIFAR10 train dataset will be downloaded locally.
-train_set =CIFAR10(root="./data",train=True,transform=transformations,download=True)
-
-# Create a loader for the training set which will read the data within batch size and put into memory.
-train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=0)
-print("The number of images in a training set is: ", len(train_loader)*batch_size)
-
-# Create an instance for testing, note that train is set to False.
-# When we run this code for the first time, the CIFAR10 test dataset will be downloaded locally.
-test_set = CIFAR10(root="./data", train=False, transform=transformations, download=True)
-
-# Create a loader for the test set which will read the data within batch size and put into memory.
-# Note that each shuffle is set to false for the test loader.
-test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=0)
-print("The number of images in a test set is: ", len(test_loader)*batch_size)
-
-print("The number of batches per epoch is: ", len(train_loader))
-classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+import torch.nn as nn
+import torch.nn.functional as F
 
 # Define a convolution neural network
 class Network(nn.Module):
@@ -69,10 +42,51 @@ class Network(nn.Module):
 
         return output
 
-from torch.autograd import Variable
+class AppSettings(BaseSettings, cli_parse_args=True):
+    inmodel_path: str = Field(alias="model-path")
+    data_path: str = Field(alias="data-path")
+    outmodel_path: str = Field(alias="outmodel-path")
+
+settings = AppSettings()
+
+def loadData(data_path):
+
+    # Loading and normalizing the data.
+    # Define transformations for the training and test sets
+    transformations = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+
+    # CIFAR10 dataset consists of 50K training images. We define the batch size of 10 to load 5,000 batches of images.
+    batch_size = 10
+    number_of_labels = 10
+
+    print(f"Loading data from {data_path}")
+
+    # Create an instance for training.
+    train_set =CIFAR10(root=data_path,train=True,transform=transformations,download=False)
+
+    # Create a loader for the training set which will read the data within batch size and put into memory.
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=0)
+    print("The number of images in a training set is: ", len(train_loader)*batch_size)
+
+    # Create an instance for testing, note that train is set to False.
+    test_set = CIFAR10(root=data_path, train=False, transform=transformations,download=False)
+
+    # Create a loader for the test set which will read the data within batch size and put into memory.
+    # Note that each shuffle is set to false for the test loader.
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=0)
+    print("The number of images in a test set is: ", len(test_loader)*batch_size)
+
+    print("The number of batches per epoch is: ", len(train_loader))
+    classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+
+    return train_loader, test_loader
+
 
 # Function to test the model with the test dataset and print the accuracy for the test images
-def testAccuracy(model):
+def testAccuracy(model, test_loader):
     model.eval()
     accuracy = 0.0
     total = 0.0
@@ -94,7 +108,7 @@ def testAccuracy(model):
 
 
 # Training function. We simply have to loop over our data iterator and feed the inputs to the network and optimize.
-def train(model, device, epoch):
+def train(model, device, epoch, train_loader, test_loader):
     # Define the loss function with Classification Cross-Entropy loss and an optimizer with Adam optimizer
     loss_fn = nn.CrossEntropyLoss()
     optimizer = Adam(model.parameters(), lr=0.001, weight_decay=0.0001)
@@ -127,15 +141,13 @@ def train(model, device, epoch):
             running_loss = 0.0
 
     # Compute and print the average accuracy for this epoch when tested over all 10000 test images
-    accuracy = testAccuracy(model)
+    accuracy = testAccuracy(model, test_loader)
     print('For epoch', epoch+1,'the test accuracy over the whole test set is %d %%' % (accuracy))
 
-import time
-import os
 
-if __name__ == "__main__":
-    start = time.time()
-    path = "./myFirstModel.pth"
+def main():
+    path = f"{settings.inmodel_path}/model.pth"
+    outPath = f"{settings.outmodel_path}/model.pth"
 
     # Define your execution device
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -146,25 +158,32 @@ if __name__ == "__main__":
 
     # Load model from path
     if (os.path.exists(path)):
-        print("Model file exists")
+        print(f"Model file exists at {path}")
 
         # Load the state dict
         model.load_state_dict(torch.load(path))
 
+        # Load the data
+        train_loader, test_loader = loadData(settings.data_path)
+
         # Convert model parameters and buffers to CPU or Cuda
         model.to(device)
 
-        # Train
-        for epoch in range(5):  # loop over the dataset multiple times
-            train(model, device, epoch)
+        start = time.time()
+        # Train & loop over the dataset multiple times
+        for epoch in range(3):
+            train(model, device, epoch, train_loader, test_loader)
         print('Finished Training')
 
         # <code to time>
         end = time.time()
         print(f"Time taken to train was {end-start} seconds")
 
-        # Save the model
-        torch.save(model.state_dict(), path)
+        # Save the models
+        torch.save(model.state_dict(), outPath)
     else:
-        print("Model file does not exist")
+        print(f"Model file {path} does not exist")
         exit(1)
+
+if __name__ == "__main__":
+    main()
