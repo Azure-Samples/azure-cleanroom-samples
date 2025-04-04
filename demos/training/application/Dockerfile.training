@@ -1,0 +1,13 @@
+FROM mcr.microsoft.com/mirror/docker/library/ubuntu:22.04
+
+RUN apt-get update -y && \
+    apt-get -y --no-install-recommends install \
+    software-properties-common curl python3.10 python3-pip
+
+WORKDIR /app
+RUN chmod -R 777 /app
+COPY * .
+
+RUN python3 -m pip install matplotlib onnx
+RUN python3 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+ENTRYPOINT ["python3", "./pytorchTrain.py"]
