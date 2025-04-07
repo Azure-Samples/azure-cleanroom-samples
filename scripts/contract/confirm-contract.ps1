@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("cleanroomhello-job", "cleanroomhello-api", "analytics", "inference")]
+    [ValidateSet("cleanroomhello-job", "cleanroomhello-api", "analytics", "inference", "training")]
     [string]$demo,
 
     [Parameter(Mandatory = $true)]

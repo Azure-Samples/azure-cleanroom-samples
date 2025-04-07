@@ -68,14 +68,7 @@ Quick start demos showcasing basic functionality:
 End to end demos showcasing scenario oriented usage:
 - Confidential execution of audited queries on protected datasets using a standalone DB engine residing within the CCR. [`analytics`](./demos/analytics/README.md)
 - Confidential inference from sensitive data using a protected ML model. [`inference`](./demos/inference/README.md)
-<!-- TODO: Add fine tuning sample.
-- Confidential fine tuning of a protected ML model on protected datasets. [Training]
-tuning [Job]
-    litware - training app in, logs and telemetry out
-    fabrikam - initial-model in, tuned-model out
-    contosso - dataset in, nothing out
-    consumer - NA
--->
+- Confidential fine tuning of a protected ML model on protected datasets. [`training`](./demos/training/README.md)
 
 |                     | `cleanroomhello-job`  | `cleanroomhello-api`  | `analytics`         | `inference`         |
 | :---                | :---:                 | :---:                 | :---:               | :---:               |
@@ -484,7 +477,7 @@ sequenceDiagram
 > [!TIP]
 > Set a variable `$demo` to the name of the demo to be executed (_e.g., "**cleanroomhello-job**"_) - it is a required input for subsequent steps.
 > ```powershell
-> $demo = # Set to one of: "cleanroomhello-job", "cleanroomhello-api", "analytics", "inference"
+> $demo = # Set to one of: "cleanroomhello-job", "cleanroomhello-api", "analytics", "inference", "training"
 > ```
 
 The following command initializes datastores and uploads encrypted datasets required for executing the samples:
@@ -884,7 +877,7 @@ pwsh ./demos/$demo/show-output.ps1 -contractId $contractId
 
 > [!NOTE]
 > Further details of the output for each demo may be found in the corresponding readme files - [`cleanroomhello-job`](./demos/cleanroomhello-job/README.md) [`cleanroomhello-api`](./demos/cleanroomhello-api/README.md) [`analytics`](./demos/analytics/README.md)
- [`inference`](./demos/inference/README.md)
+ [`inference`](./demos/inference/README.md) [`training`](./demos/training/README.md)
 
 
 <br>

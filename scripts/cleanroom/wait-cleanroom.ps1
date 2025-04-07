@@ -3,7 +3,7 @@ param(
     [string]$contractId,
 
     [Parameter(Mandatory = $true)]
-    [ValidateSet("cleanroomhello-job", "cleanroomhello-api", "analytics", "inference")]
+    [ValidateSet("cleanroomhello-job", "cleanroomhello-api", "analytics", "inference", "training")]
     [string]$demo,
 
     [string]$resourceGroup = "$env:RESOURCE_GROUP",
