@@ -141,6 +141,7 @@ This create a separate docker container for each party that contains an isolated
 
 > [!IMPORTANT]
 > The command configures the environment to use a randomly generated resource group name on every invocation. To control the name, or to reuse an existing resource group, pass it in using the `-resourceGroup` parameter.
+> Do not use the same resource group name for different personas.
 
 
 > [!TIP]
