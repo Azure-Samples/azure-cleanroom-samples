@@ -15,6 +15,11 @@ from pydantic import Field
 import torch.nn as nn
 import torch.nn.functional as F
 
+class AppSettings(BaseSettings, cli_parse_args=True):
+    inmodel_path: str = Field(alias="model-path")
+    data_path: str = Field(alias="data-path")
+    outmodel_path: str = Field(alias="out-path")
+
 # Define a convolution neural network
 class Network(nn.Module):
     def __init__(self):
@@ -41,11 +46,6 @@ class Network(nn.Module):
         output = self.fc1(output)
 
         return output
-
-class AppSettings(BaseSettings, cli_parse_args=True):
-    inmodel_path: str = Field(alias="model-path")
-    data_path: str = Field(alias="data-path")
-    outmodel_path: str = Field(alias="outmodel-path")
 
 settings = AppSettings()
 

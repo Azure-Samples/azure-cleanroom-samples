@@ -21,13 +21,13 @@ if ("fabrikam" -eq $persona)
 {
     $dataDir = "$PSScriptRoot/datasource/fabrikam/model"
     Write-Log OperationStarted `
-        "Generating empty model for demo '$demo'..."
+        "Generating untrained model for demo '$demo'..."
 
-    pip install -r $PSScriptRoot/model/requirements.txt
+    pip install -r $PSScriptRoot/model/requirements.txt --index-url https://download.pytorch.org/whl/cpu
     python3 $PSScriptRoot/model/get_model.py --output-path $dataDir
 
     Write-Log OperationCompleted `
-        "Generated empty model for demo '$demo' in '$dataDir'."
+        "Generated untrained model for demo '$demo' in '$dataDir'."
 }
 
 #
@@ -36,7 +36,7 @@ if ("fabrikam" -eq $persona)
 # The CIFAR10 dataset is available at https://www.cs.toronto.edu/~kriz/cifar.html.
 if ("contosso" -eq $persona)
 {
-    pip install -r $PSScriptRoot/model/requirements.txt
+    pip install -r $PSScriptRoot/trainingData/requirements.txt --index-url https://download.pytorch.org/whl/cpu
     $dataDir = "$PSScriptRoot/datasource/contosso/data"
     Write-Log OperationStarted `
         "Downloading data for demo '$demo'"
