@@ -70,22 +70,22 @@ End to end demos showcasing scenario oriented usage:
 - Confidential inference from sensitive data using a protected ML model. [`inference`](./demos/inference/README.md)
 - Confidential fine tuning of a protected ML model on protected datasets. [`training`](./demos/training/README.md)
 
-|                     | `cleanroomhello-job`  | `cleanroomhello-api`  | `analytics`         | `inference`         |
-| :---                | :---:                 | :---:                 | :---:               | :---:               |
-| _**Collaboration**_ |                       |                       |                     |                     |
-| Data Source         | :heavy_check_mark:    | :x:                   | :heavy_check_mark:  | :heavy_check_mark:  |
-| Data Sink           | :heavy_check_mark:    | :x:                   | :x:                 | :x:                 |
-| Data Access         | :heavy_check_mark:    | :x:                   | :heavy_check_mark:  | :heavy_check_mark:  |
-| API Endpoint        | :x:                   | :heavy_check_mark:    | :heavy_check_mark:  | :heavy_check_mark:  |
-| Network Protection  | :x:                   | :heavy_check_mark:    | :x:                 | :x:                 |
-| _**Governance**_    |                       |                       |                     |                     |
-| Contract            | :heavy_check_mark:    | :heavy_check_mark:    | :heavy_check_mark:  | :heavy_check_mark:  |
-| Deployment          | :heavy_check_mark:    | :heavy_check_mark:    | :heavy_check_mark:  | :heavy_check_mark:  |
-| Document Store      | :x:                   | :x:                   | :heavy_check_mark:  | :x:                 |
-| Telemetry           | :heavy_check_mark:    | :x:                   | :x:                 | :x:                 |
-| Audit               | :heavy_check_mark:    | :heavy_check_mark:    | :heavy_check_mark:  | :heavy_check_mark:  |
-| Identity Provider   | :heavy_check_mark:    | :x:                   | :heavy_check_mark:  | :heavy_check_mark:  |
-| CA                  | :x:                   | :heavy_check_mark:    | :heavy_check_mark:  | :heavy_check_mark:  |
+|                     | `cleanroomhello-job`  | `cleanroomhello-api`  | `analytics`         | `inference`         | `training`          |
+| :---                | :---:                 | :---:                 | :---:               | :---:               | :---:               |
+| _**Collaboration**_ |                       |                       |                     |                     |                     |
+| Data Source         | :heavy_check_mark:    | :x:                   | :heavy_check_mark:  | :heavy_check_mark:  | :heavy_check_mark:  |
+| Data Sink           | :heavy_check_mark:    | :x:                   | :x:                 | :x:                 | :heavy_check_mark:  |
+| Data Access         | :heavy_check_mark:    | :x:                   | :heavy_check_mark:  | :heavy_check_mark:  | :heavy_check_mark:  |
+| API Endpoint        | :x:                   | :heavy_check_mark:    | :heavy_check_mark:  | :heavy_check_mark:  | :x:                 |
+| Network Protection  | :x:                   | :heavy_check_mark:    | :x:                 | :x:                 | :x:                 |
+| _**Governance**_    |                       |                       |                     |                     |                     |
+| Contract            | :heavy_check_mark:    | :heavy_check_mark:    | :heavy_check_mark:  | :heavy_check_mark:  | :heavy_check_mark:  |
+| Deployment          | :heavy_check_mark:    | :heavy_check_mark:    | :heavy_check_mark:  | :heavy_check_mark:  | :heavy_check_mark:  |
+| Document Store      | :x:                   | :x:                   | :heavy_check_mark:  | :x:                 | :x:                 |
+| Telemetry           | :heavy_check_mark:    | :x:                   | :x:                 | :x:                 | :heavy_check_mark:  |
+| Audit               | :heavy_check_mark:    | :heavy_check_mark:    | :heavy_check_mark:  | :heavy_check_mark:  | :heavy_check_mark:  |
+| Identity Provider   | :heavy_check_mark:    | :x:                   | :heavy_check_mark:  | :heavy_check_mark:  | :heavy_check_mark:  |
+| CA                  | :x:                   | :heavy_check_mark:    | :heavy_check_mark:  | :heavy_check_mark:  | :x:                 |
 
 <br>
 
