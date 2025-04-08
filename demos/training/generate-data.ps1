@@ -23,7 +23,8 @@ if ("fabrikam" -eq $persona)
     Write-Log OperationStarted `
         "Generating untrained model for demo '$demo'..."
 
-    pip install -r $PSScriptRoot/model/requirements.txt --index-url https://download.pytorch.org/whl/cpu
+    pip install -r $PSScriptRoot/model/requirements.txt
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
     python3 $PSScriptRoot/model/get_model.py --output-path $dataDir
 
     Write-Log OperationCompleted `
@@ -36,7 +37,8 @@ if ("fabrikam" -eq $persona)
 # The CIFAR10 dataset is available at https://www.cs.toronto.edu/~kriz/cifar.html.
 if ("contosso" -eq $persona)
 {
-    pip install -r $PSScriptRoot/trainingData/requirements.txt --index-url https://download.pytorch.org/whl/cpu
+    pip install -r $PSScriptRoot/trainingData/requirements.txt
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
     $dataDir = "$PSScriptRoot/datasource/contosso/data"
     Write-Log OperationStarted `
         "Downloading data for demo '$demo'"

@@ -62,15 +62,8 @@ az cleanroom config add-application `
     --datasources "fabrikam-model=/mnt/remote/model" `
         "contosso-data=/mnt/remote/data" `
     --datasinks "fabrikam-output=/mnt/remote/output" `
-    --ports 8000 `
     --cpu 1 `
     --memory 3
-
-# Note: This will allow all incoming connections to the application.
-# TODO: Add a policy to restrict traffic to the application.
-az cleanroom config network http enable `
-    --cleanroom-config $configResult.contractFragment `
-    --direction inbound
 
 Write-Log OperationCompleted `
     "Added application 'demoapp-$demo' ($image)."

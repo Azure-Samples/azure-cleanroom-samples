@@ -1,4 +1,2 @@
-torch==2.6.0
-torchvision==0.21.0
 pydantic==2.8.2
 pydantic_settings==2.4.0
