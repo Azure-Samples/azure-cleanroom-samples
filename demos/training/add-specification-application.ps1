@@ -63,7 +63,8 @@ az cleanroom config add-application `
         "contosso-data=/mnt/remote/data" `
     --datasinks "fabrikam-output=/mnt/remote/output" `
     --cpu 1 `
-    --memory 3
+    --memory 3 `
+    --auto-start
 
 Write-Log OperationCompleted `
     "Added application 'demoapp-$demo' ($image)."
