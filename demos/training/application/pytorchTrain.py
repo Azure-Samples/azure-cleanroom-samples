@@ -180,6 +180,7 @@ def main():
         print(f"Time taken to train was {end-start} seconds")
 
         # Save the models
+        print(f"Saving trained model to {outPath}")
         torch.save(model.state_dict(), outPath)
     else:
         print(f"Model file {path} does not exist")
