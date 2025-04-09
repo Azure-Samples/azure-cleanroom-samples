@@ -32,8 +32,11 @@ if ("fabrikam" -eq $persona)
 }
 
 #
-# We'll use sample the CIFAR10 dataset to build and train the image classification model. CIFAR10 is a widely used dataset for machine learning research. It consists of 50,000 training images and 10,000 test images. All of them are of size 3x32x32, which means 3-channel color images of 32x32 pixels in size.
-# The images are divided to 10 classes: ‘airplane’ (0), ‘automobile’ (1), ‘bird’ (2), ‘cat’ (3) , ‘deer’ (4), ‘dog’ (5), ‘frog’ (6), ‘horse’ (7), ‘ship’ (8), ‘truck’ (9).
+# We'll use sample the CIFAR10 dataset to build and train the image classification model.
+# CIFAR10 is a widely used dataset for machine learning research. It consists of 50,000 training images and 10,000 test images.
+# All of them are of size 3x32x32, which means 3-channel color images of 32x32 pixels in size.
+# The images are divided to 10 classes: ‘airplane’ (0), ‘automobile’ (1), ‘bird’ (2), ‘cat’ (3),
+# ‘deer’ (4), ‘dog’ (5), ‘frog’ (6), ‘horse’ (7), ‘ship’ (8), ‘truck’ (9).
 # The CIFAR10 dataset is available at https://www.cs.toronto.edu/~kriz/cifar.html.
 if ("contosso" -eq $persona)
 {

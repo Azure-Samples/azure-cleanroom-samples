@@ -849,7 +849,8 @@ Run the following script to wait for the cleanroom application to start:
 
 
 > [!TIP]
-If the cleanroom application is being executed as a job, add the `-job` switch to wait for the job to complete. Also, if the application has an `--auto-start` to it's specification to start automatically, pass the -skipStart parameter to the wait-cleanroom.ps1.
+- If the cleanroom application is being executed as a job, add the `-job` switch to wait for the job to complete.
+- If the cleanroom application has been configured to start automatically (--auto-start), add the -skipStart switch to skip that step.
 
 
 <br>
