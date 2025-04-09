@@ -67,6 +67,13 @@ else
 
 $objectId = GetLoggedInEntityObjectId
 
+# Install Prereqs on the subscription
+az provider register -n 'Microsoft.Storage'
+az provider register -n 'Microsoft.ContainerInstance'
+az provider register -n 'Microsoft.ContainerRegistry'
+az provider register -n 'Microsoft.KeyVault'
+az provider register -n 'Microsoft.ManagedIdentity'
+
 #
 # Create secure key stores for:
 #   a) Collaborators to store data set encyrption keys.

@@ -7,5 +7,5 @@ WORKDIR /app
 COPY * .
 
 RUN python3 -m pip install -r requirements.txt
-# Explicit installing here to pickup just the CPU version of torch
+# Customizing install manually instead of using requrement.txt to reduce the container image size by only picking up the CPU version of torch.
 RUN python3 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu

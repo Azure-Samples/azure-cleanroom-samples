@@ -11,7 +11,7 @@ When the cleanroom starts, this application is auto triggered to start the train
 | :---      | :---                  | :---                      |
 | litware   | Application           | Telemetry                 |
 | fabrikam  | Model                 | Trained model             |
-| contosso  | Data (Data source)    | :---                      |
+| contosso  | Data (Data source)    | N/A                       |
 
 This sample has been adopted from https://learn.microsoft.com/en-us/windows/ai/windows-ml/tutorials/pytorch-train-model
 
