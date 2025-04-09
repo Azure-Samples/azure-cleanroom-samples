@@ -10,4 +10,4 @@ COPY * .
 
 RUN python3 -m pip install matplotlib onnx
 RUN python3 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-ENTRYPOINT ["python3", "./pytorchTrain.py"]
+RUN python3 -m pip install -r requirements.txt
