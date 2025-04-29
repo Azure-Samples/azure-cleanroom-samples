@@ -1,5 +1,5 @@
 optimum==1.21.3
-transformers==4.43.4
+transformers==4.50.0
 pydantic==2.8.2
 pydantic_settings==2.4.0
 onnxruntime==1.18.1
