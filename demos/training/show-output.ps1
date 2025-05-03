@@ -76,7 +76,6 @@ foreach ($dir in $dirs)
     Write-Log Verbose `
         "-----BEGIN OUTPUT-----" `
         "$($PSStyle.Reset)"
-    gzip -c -d $datastoreFolder/*.gz
     Write-Log Verbose `
         "$([environment]::NewLine)-----END OUTPUT-----"
 }
