@@ -52,7 +52,7 @@ $containerImages += $resources.properties.initContainers |`
 
 $containerTag = $resources.tags."accr-version"
 if ($null -eq $containerTag) {
-    $containerTag = "3.0.0"
+    $containerTag = "4.0.0"
 }
 
 <# TODO Re-enable once the attestation issue on the published containers is fixed.
