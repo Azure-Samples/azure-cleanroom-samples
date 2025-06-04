@@ -28,5 +28,7 @@ tokenizer.save_pretrained(f"{settings.output_path}/pytorch")
 model = ORTModelForSequenceClassification.from_pretrained(model_id, export=True)
 logging.info(f"Saving ONNX model to path {settings.output_path}")
 model.save_pretrained(f"{settings.output_path}/onnx")
+logging.info(f"Saving tokenizer to path {settings.output_path}/onnx")
+tokenizer.save_pretrained(f"{settings.output_path}/onnx")
 
 # TODO: Should we tune the model to give better inference results?

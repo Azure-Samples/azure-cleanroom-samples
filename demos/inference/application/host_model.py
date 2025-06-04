@@ -4,7 +4,7 @@ import uvicorn
 from fastapi import FastAPI
 from optimum.onnxruntime import ORTModelForSequenceClassification
 from optimum.pipelines import pipeline
-from transformers import Pipeline
+from transformers import Pipeline, AutoTokenizer
 from pydantic_settings import BaseSettings
 from pydantic import Field, BaseModel
 from datasets import load_dataset
@@ -23,8 +23,9 @@ def get_inferencing_pipeline(model_path: str):
         return g_inf_pipeline
     logger.info(f"Loading model from path {model_path}.")
     model = ORTModelForSequenceClassification.from_pretrained(model_path)
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
     logger.info(f"Hosting model for inference under pipeline for 'text-classification'")
-    g_inf_pipeline = pipeline("text-classification", model=model, accelerator="ort")
+    g_inf_pipeline = pipeline("text-classification", model=model, accelerator="ort", tokenizer=tokenizer)
     return g_inf_pipeline
 
 
