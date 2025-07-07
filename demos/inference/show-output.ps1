@@ -52,7 +52,7 @@ function Get-Sentiment {
 
     Write-Log Verbose `
         "Checking sentiment..."
-    $response = (curl -s -k --fail-with-body `
+    $response = (curl -s -k --verbose --fail-with-body `
         -X POST -H "Content-Type: application/json" -d $payload `
         https://${cleanroomEndpoint}:8000/infer)
     $output = @{
