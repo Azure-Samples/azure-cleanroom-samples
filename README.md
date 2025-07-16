@@ -77,7 +77,7 @@ End to end demos showcasing scenario oriented usage:
 | Data Sink           | :heavy_check_mark:    | :x:                   | :x:                 | :x:                 | :heavy_check_mark:  |
 | Data Access         | :heavy_check_mark:    | :x:                   | :heavy_check_mark:  | :heavy_check_mark:  | :heavy_check_mark:  |
 | API Endpoint        | :x:                   | :heavy_check_mark:    | :heavy_check_mark:  | :heavy_check_mark:  | :x:                 |
-| Network Protection  | N/A                   | :heavy_check_mark:    | :x:                 | :x:                 | N/A                 |
+| Network Protection  | :heavy_check_mark:    | :heavy_check_mark:    | :x:                 | :x:                 | :heavy_check_mark:  |
 | _**Governance**_    |                       |                       |                     |                     |                     |
 | Contract            | :heavy_check_mark:    | :heavy_check_mark:    | :heavy_check_mark:  | :heavy_check_mark:  | :heavy_check_mark:  |
 | Deployment          | :heavy_check_mark:    | :heavy_check_mark:    | :heavy_check_mark:  | :heavy_check_mark:  | :heavy_check_mark:  |
