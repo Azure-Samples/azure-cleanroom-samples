@@ -3,7 +3,7 @@ services:
   # to find the CCF provider container as part of a compose project and look for a 'client-1'
   # container within.
   client:
-    image: mcr.microsoft.com/azurecleanroom/ccf/ccf-provider-client:4.0.0
+    image: mcr.microsoft.com/azurecleanroom/ccf/ccf-provider-client:5.0.0
     ports:
       - "0:8080"
     environment:

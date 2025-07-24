@@ -52,15 +52,13 @@ $containerImages += $resources.properties.initContainers |`
 
 $containerTag = $resources.tags."accr-version"
 if ($null -eq $containerTag) {
-    $containerTag = "4.0.0"
+    $containerTag = "5.0.0"
 }
 
-<# TODO Re-enable once the attestation issue on the published containers is fixed.
 Assert-CleanroomAttestation `
     -containerImages $containerImages `
     -tempDir $privateDir `
     -containerTag $containerTag
-#>
 
 Write-Log Verbose `
     "Accepting deployment template proposal '$proposalId'..."
