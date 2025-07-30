@@ -34,7 +34,7 @@ function Assert-CleanroomAttestation {
         if (Test-Path "$tempDir/$digest.jsonl") {
             Write-Log Information "Attestation file '$tempDir/$digest.jsonl' already exists. Reusing..."
         }
-        else{
+        else {
             # Fetch attestation from GitHub API.
             $attestationResult = curl -L "https://api.github.com/repos/$repo/attestations/$digest" | ConvertFrom-Json
             if ($attestationResult.Length -ne 1) {
