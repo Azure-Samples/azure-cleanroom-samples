@@ -31,20 +31,23 @@ function Assert-CleanroomAttestation {
     foreach ($image in $containerImages) {
         Write-Log Verbose "Verifying image '$image'..."
         $digest = $image.Split("@")[1]
-        rm -f "$tempDir/$digest.jsonl"
-
-        # Fetch attestation from GitHub API.
-        $attestationResult = curl -L "https://api.github.com/repos/$repo/attestations/$digest" | ConvertFrom-Json
-        if ($attestationResult.Length -ne 1) {
-            Write-Log Error "Invalid attestation result for image '$image'"
-            exit 1
+        if (Test-Path "$tempDir/$digest.jsonl") {
+            Write-Log Information "Attestation file '$tempDir/$digest.jsonl' already exists. Reusing..."
         }
+        else {
+            # Fetch attestation from GitHub API.
+            $attestationResult = curl -L "https://api.github.com/repos/$repo/attestations/$digest" | ConvertFrom-Json
+            if ($attestationResult.Length -ne 1) {
+                Write-Log Error "Invalid attestation result for image '$image'"
+                exit 1
+            }
 
-        # Convert the attestation to JSONL format, required for offline verification:
-        # https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/verifying-attestations-offline
-        $attestationResult = $attestationResult[0]
-        foreach ($attestation in $attestationResult.attestations) {
-            $attestation.bundle | ConvertTo-Json -Depth 100 -Compress | Out-File "$tempDir/$digest.jsonl" -Append
+            # Convert the attestation to JSONL format, required for offline verification:
+            # https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/verifying-attestations-offline
+            $attestationResult = $attestationResult[0]
+            foreach ($attestation in $attestationResult.attestations) {
+                $attestation.bundle | ConvertTo-Json -Depth 100 -Compress | Out-File "$tempDir/$digest.jsonl" -Append -Force
+            }
         }
 
         $attestationVerificationResult = gh attestation verify `

@@ -1,6 +1,6 @@
 # Override hooks for controlling az cleanroom extension version and installation source.
 ARG EXTENSION_SOURCE=official
-ARG EXTENSION_FILENAME=cleanroom-4.0.0-py2.py3-none-any
+ARG EXTENSION_FILENAME=cleanroom-5.0.0-py2.py3-none-any
 
 FROM mcr.microsoft.com/powershell AS docker-azcli-base
 # Required packages.
@@ -52,8 +52,8 @@ FROM samples-base AS install-extension-official
 ARG EXTENSION_FILENAME
 ONBUILD RUN echo "Installing clean room extension '${EXTENSION_FILENAME}' from official source."
 ONBUILD WORKDIR /home/scratch
-ONBUILD RUN oras pull mcr.microsoft.com/azurecleanroom/cli/cleanroom-whl:4.0.0
-ONBUILD RUN az extension add --source /home/scratch/cleanroom-4.0.0-py2.py3-none-any.whl -y --allow-preview true
+ONBUILD RUN oras pull mcr.microsoft.com/azurecleanroom/cli/cleanroom-whl:5.0.0
+ONBUILD RUN az extension add --source /home/scratch/cleanroom-5.0.0-py2.py3-none-any.whl -y --allow-preview true
 
 FROM samples-base AS install-extension-local
 # Install WHL from local source.
