@@ -82,6 +82,9 @@ az provider register -n 'Microsoft.ManagedIdentity'
 #
 if ($isCollaborator -or $isDeveloper)
 {
+    $currentUser = (az account show) | ConvertFrom-Json
+    $tenantId = $currentUser.tenantid
+
     # for MSFT tenant 72f988bf-86f1-41af-91ab-2d7cd011db47 we must a use pre-provisioned whitelisted storage account
     if ($tenantId -eq "72f988bf-86f1-41af-91ab-2d7cd011db47")
     {
@@ -193,11 +196,7 @@ else
 #
 if ($isCollaborator -or $isDeveloper)
 {
-    $currentUser = (az account show) | ConvertFrom-Json
-    $tenantId = $currentUser.tenantid
     $oidcStorageAccount = ""
-
-    # for MSFT tenant 72f988bf-86f1-41af-91ab-2d7cd011db47 we must a use pre-provisioned whitelisted storage account
     if ($preProvisionedOIDCStorageAccount -ne "")
     {
         $oidcStorageAccount = $preProvisionedOIDCStorageAccount
@@ -227,7 +226,7 @@ if ($isCollaborator -or $isDeveloper)
         --static-website `
         --404-document error.html `
         --index-document index.html #`
-        #--auth-mode login
+        --auth-mode login
     }
 }
 else
