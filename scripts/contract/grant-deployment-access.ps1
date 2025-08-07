@@ -20,7 +20,8 @@ param(
     [string]$datastoreConfig = "$privateDir/datastores.config",
     [string]$environmentConfig = "$privateDir/$resourceGroup.generated.json",
     [string]$contractConfig = "$privateDir/$resourceGroup-$demo.generated.json",
-    [string]$cgsClient = "azure-cleanroom-samples-governance-client-$persona"
+    [string]$cgsClient = "azure-cleanroom-samples-governance-client-$persona",
+    [string]$preProvisionedOIDCStorageAccount = ""
 )
 
 #https://learn.microsoft.com/en-us/powershell/scripting/learn/experimental-features?view=powershell-7.4#psnativecommanderroractionpreference
@@ -145,27 +146,39 @@ if ($null -ne $tenantData -and $tenantData.tenantId -eq $tenantId) {
 }
 else {
     $oidcsa = $environmentConfigResult.oidcsa.name
+
+    # for MSFT tenant 72f988bf-86f1-41af-91ab-2d7cd011db47 we must a use pre-provisioned whitelisted storage account
+    if ($tenantId -eq "72f988bf-86f1-41af-91ab-2d7cd011db47")
+    {
+        if ($preProvisionedOIDCStorageAccount -eq "")
+        {
+            Write-Log Error `
+                "No pre-provisioned OIDC storage account provided for MSFT tenant."
+            throw "No pre-provisioned OIDC storage account provided for MSFT tenant. Please set the " +
+                "`preProvisionedOIDCStorageAccount` parameter to the name of the pre-provisioned storage account."
+        }
+
+        $oidcsa = $preProvisionedOIDCStorageAccount
+        Write-Log Verbose `
+            "Using pre-provisioned OIDC storage account '$oidcsa' for MSFT tenant."
+    }
+
     Write-Log Verbose `
         "Setting up OIDC issuer for tenant '$tenantId' using storage account '$oidcsa'..."
 
-    Write-Log Verbose `
-        "Creating public access blob container '$oidcContainerName' in '$oidcsa'..."
-    az storage container create `
-        --name $oidcContainerName `
-        --account-name $oidcsa `
-        --public-access blob `
-        --auth-mode login
-    CheckLastExitCode
-    Write-Log OperationCompleted `
-        "Created public access blob container '$oidcContainerName' in '$oidcsa'."
+    $webUrl = (az storage account show `
+            --name $oidcsa `
+            --query "primaryEndpoints.web" `
+            --output tsv)
+    Write-Host "Storage account static website URL: $webUrl"
 
     Write-Log Verbose `
-        "Uploading openid-configuration to container '$oidcContainerName' in '$oidcsa'..." `
+        "Uploading openid-configuration to container '$webUrl$oidcContainerName' ..." `
         "$($PSStyle.Reset)"
     @"
 {
-"issuer": "https://$oidcsa.blob.core.windows.net/$oidcContainerName",
-"jwks_uri": "https://$oidcsa.blob.core.windows.net/$oidcContainerName/openid/v1/jwks",
+"issuer": "$webUrl$oidcContainerName",
+"jwks_uri": "$webUrl$oidcContainerName/openid/v1/jwks",
 "response_types_supported": [
 "id_token"
 ],
@@ -178,9 +191,9 @@ else {
 }
 "@ | Out-File $privateDir/openid-configuration.json
     az storage blob upload `
-        --container-name $oidcContainerName `
+        --container-name '$web' `
         --file $privateDir/openid-configuration.json `
-        --name .well-known/openid-configuration `
+        --name $oidcContainerName/.well-known/openid-configuration `
         --account-name $oidcsa `
         --overwrite `
         --auth-mode login
@@ -192,9 +205,9 @@ else {
     $url = "$($ccfEndpoint.url)/app/oidc/keys"
     curl -sL -k $url | jq | Out-File $privateDir/jwks.json
     az storage blob upload `
-        --container-name $oidcContainerName `
+        --container-name '$web' `
         --file $privateDir/jwks.json `
-        --name openid/v1/jwks `
+        --name $oidcContainerName/openid/v1/jwks `
         --account-name $oidcsa `
         --overwrite `
         --auth-mode login
@@ -204,7 +217,7 @@ else {
         "Setting OIDC issuer for tenant '$tenantId'..."
     az cleanroom governance oidc-issuer set-issuer-url `
         --governance-client $cgsClient `
-        --url "https://$oidcsa.blob.core.windows.net/$oidcContainerName"
+        --url "$webUrl$oidcContainerName"
     $tenantData = (az cleanroom governance oidc-issuer show `
             --governance-client $cgsClient `
             --query "tenantData" | ConvertFrom-Json)
