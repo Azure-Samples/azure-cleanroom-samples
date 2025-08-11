@@ -1,9 +1,6 @@
 {
-    "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+    "image": "mcr.microsoft.com/devcontainers/universal:3.0.3-noble",
     "features": {
-      "ghcr.io/devcontainers/features/docker-in-docker:2": {
-          "version": "latest"
-      },
       "ghcr.io/devcontainers/features/powershell:1": {
         "modules": "powershell-yaml"
       },
