@@ -225,7 +225,7 @@ if ($isCollaborator -or $isDeveloper)
         --account-name $oidcStorageAccount `
         --static-website `
         --404-document error.html `
-        --index-document index.html #`
+        --index-document index.html `
         --auth-mode login
     }
 }
