@@ -144,6 +144,7 @@ if ($null -ne $tenantData -and $tenantData.tenantId -eq $tenantId) {
         "OIDC issuer already set for tenant '$tenantId' to '$issuerUrl'. Skipping!"
 }
 else {
+    $oidcsa = $environmentConfigResult.oidcsa.name
     Write-Log Verbose `
         "Setting up OIDC issuer for tenant '$tenantId' using storage account '$oidcsa'..."
 
