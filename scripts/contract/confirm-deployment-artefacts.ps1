@@ -7,7 +7,9 @@ param(
     [string]$cgsClient = "azure-cleanroom-samples-governance-client-$persona",
 
     [string]$samplesRoot = "/home/samples",
-    [string]$privateDir = "$samplesRoot/demo-resources/private"
+    [string]$privateDir = "$samplesRoot/demo-resources/private",
+
+    [switch]$disableGithubAttestation
 )
 
 #https://learn.microsoft.com/en-us/powershell/scripting/learn/experimental-features?view=powershell-7.4#psnativecommanderroractionpreference
@@ -55,10 +57,13 @@ if ($null -eq $containerTag) {
     $containerTag = "5.0.0"
 }
 
-Assert-CleanroomAttestation `
-    -containerImages $containerImages `
-    -tempDir $privateDir `
-    -containerTag $containerTag
+if(!$disableGithubAttestation)
+{
+    Assert-CleanroomAttestation `
+        -containerImages $containerImages `
+        -tempDir $privateDir `
+        -containerTag $containerTag
+}
 
 Write-Log Verbose `
     "Accepting deployment template proposal '$proposalId'..."

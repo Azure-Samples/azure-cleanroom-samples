@@ -83,7 +83,7 @@ if ($tenantId -eq "72f988bf-86f1-41af-91ab-2d7cd011db47" -and $preProvisionedOID
 {
     Write-Log Error "No pre-provisioned OIDC storage account provided for MSFT tenant. Please set the " `
         "`preProvisionedOIDCStorageAccount` parameter in the start-environment.ps1 " `
-        "to the name of the pre-provisioned storage account."
+        "to the name of a pre-provisioned storage account."
     throw "No pre-provisioned OIDC storage account provided for MSFT tenant."
 }
 

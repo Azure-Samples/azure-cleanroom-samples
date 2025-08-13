@@ -22,6 +22,11 @@ function Assert-CleanroomAttestation {
 
     # Fetch the commit ID corresponding to the container versions
     $tagDetails = curl -L "https://api.github.com/repos/$repo/tags" | ConvertFrom-Json | Where-Object {$_.name -eq $containerTag}
+    if ($tagDetails -eq $null)
+    {
+        throw "Querying github.com API failed, which could be because of rate-limiting. Please retry the confirm-deployment-artefacts.ps1 with -disableGithubAttestation"
+    }
+
     $commitId = $tagDetails.commit.sha
 
     # Verify attestations for container images offline:
