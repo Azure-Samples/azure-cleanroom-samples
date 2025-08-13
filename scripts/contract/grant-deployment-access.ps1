@@ -56,15 +56,28 @@ $managedIdentity = $contractConfigResult.mi
 
 # Cleanroom needs both read/write permissions on storage account, hence assigning Storage Blob Data Contributor.
 $role = "Storage Blob Data Contributor"
-Write-Log Verbose `
-    "Assigning permission for '$role' to '$($managedIdentity.name)' on" `
-    "storage account '$($environmentConfigResult.datasa.name)'"
-az role assignment create `
-    --role "Storage Blob Data Contributor" `
-    --scope $environmentConfigResult.datasa.id `
-    --assignee-object-id $managedIdentity.principalId `
-    --assignee-principal-type ServicePrincipal
-CheckLastExitCode
+$roleAssignment = (az role assignment list `
+        --assignee-object-id $managedIdentity.principalId `
+        --scope $environmentConfigResult.datasa.id `
+        --fill-principal-name false `
+        --fill-role-definition-name false `
+        --role "Storage Blob Data Contributor") | ConvertFrom-Json
+if ($roleAssignment.Length -eq 1) {
+    Write-Log Warning `
+        "Skipping assignment as 'Storage Blob Data Contributor' permission already exists for" `
+        "'$($managedIdentity.name)' on storage account '$($environmentConfigResult.datasa.name)."
+}
+else {
+    Write-Log Verbose `
+        "Assigning permissions for 'Storage Blob Data Contributor' to '$($managedIdentity.name)' on" `
+        "on storage account '$($environmentConfigResult.datasa.name)."
+    az role assignment create `
+        --role "Storage Blob Data Contributor" `
+        --scope $environmentConfigResult.datasa.id `
+        --assignee-object-id $managedIdentity.principalId `
+        --assignee-principal-type ServicePrincipal
+    CheckLastExitCode
+}
 
 # KEK vault access.
 $kekVault = $environmentConfigResult.kek.kv
@@ -74,6 +87,8 @@ if ($kekVault.type -eq "Microsoft.KeyVault/managedHSMs") {
     $roleAssignment = (az keyvault role assignment list `
             --assignee-object-id $managedIdentity.principalId `
             --hsm-name $kekVault.name `
+            --fill-principal-name false `
+            --fill-role-definition-name false `
             --role $role) | ConvertFrom-Json
     if ($roleAssignment.Length -eq 1) {
         Write-Log Warning `
@@ -97,8 +112,10 @@ elseif ($kekVault.type -eq "Microsoft.KeyVault/vaults") {
     $role = "Key Vault Crypto Officer"
 
     $roleAssignment = (az role assignment list `
-            --assignee $managedIdentity.principalId `
+            --assignee-object-id $managedIdentity.principalId `
             --scope $kekVault.id `
+            --fill-principal-name false `
+            --fill-role-definition-name false `
             --role $role) | ConvertFrom-Json
     if ($roleAssignment.Length -eq 1) {
         Write-Log Warning `
