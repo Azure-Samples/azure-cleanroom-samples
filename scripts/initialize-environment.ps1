@@ -209,7 +209,7 @@ if ($isCollaborator -or $isDeveloper)
           throw "Preprovisioned storage account $oidcStorageAccount should have static website enabled."
         }
 
-        $result.oidcsa = (az storage account get --name $storageAccountName --resource-group $resourceGroup) | ConvertFrom-Json
+        $result.oidcsa = (az storage account show --name $storageAccountName --resource-group $resourceGroup) | ConvertFrom-Json
     }
     else
     {
