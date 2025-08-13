@@ -20,8 +20,7 @@ param(
     [string]$datastoreConfig = "$privateDir/datastores.config",
     [string]$environmentConfig = "$privateDir/$resourceGroup.generated.json",
     [string]$contractConfig = "$privateDir/$resourceGroup-$demo.generated.json",
-    [string]$cgsClient = "azure-cleanroom-samples-governance-client-$persona",
-    [string]$preProvisionedOIDCStorageAccount = "$env:PREPROVISIONED_OIDC_STORAGEACCOUNT"
+    [string]$cgsClient = "azure-cleanroom-samples-governance-client-$persona"
 )
 
 #https://learn.microsoft.com/en-us/powershell/scripting/learn/experimental-features?view=powershell-7.4#psnativecommanderroractionpreference
@@ -145,12 +144,6 @@ if ($null -ne $tenantData -and $tenantData.tenantId -eq $tenantId) {
         "OIDC issuer already set for tenant '$tenantId' to '$issuerUrl'. Skipping!"
 }
 else {
-    $oidcsa = $environmentConfigResult.oidcsa.name
-    if ($preProvisionedOIDCStorageAccount -ne "")
-    {
-        $oidcsa = $preProvisionedOIDCStorageAccount
-    }
-
     Write-Log Verbose `
         "Setting up OIDC issuer for tenant '$tenantId' using storage account '$oidcsa'..."
 

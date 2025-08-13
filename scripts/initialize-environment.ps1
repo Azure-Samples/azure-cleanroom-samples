@@ -81,8 +81,8 @@ $tenantId = $currentUser.tenantid
 # for MSFT tenant 72f988bf-86f1-41af-91ab-2d7cd011db47 we must a use pre-provisioned whitelisted storage account
 if ($tenantId -eq "72f988bf-86f1-41af-91ab-2d7cd011db47" -and $preProvisionedOIDCStorageAccount -eq "")
 {
-    Write-Log Error "No pre-provisioned OIDC storage account provided for MSFT tenant. Please set the " +
-        "`preProvisionedOIDCStorageAccount` parameter in the start-environment.ps1 " +
+    Write-Log Error "No pre-provisioned OIDC storage account provided for MSFT tenant. Please set the " `
+        "`preProvisionedOIDCStorageAccount` parameter in the start-environment.ps1 " `
         "to the name of the pre-provisioned storage account."
     throw "No pre-provisioned OIDC storage account provided for MSFT tenant."
 }
@@ -208,6 +208,8 @@ if ($isCollaborator -or $isDeveloper)
         if ($status -ne "true") {
           throw "Preprovisioned storage account $oidcStorageAccount should have static website enabled."
         }
+
+        $result.oidcsa = (az storage account get --name $storageAccountName --resource-group $resourceGroup) | ConvertFrom-Json
     }
     else
     {
