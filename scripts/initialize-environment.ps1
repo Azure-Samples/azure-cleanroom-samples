@@ -18,7 +18,7 @@ param(
     [string]$environmentConfig = "$privateDir/$resourceGroup.generated.json",
     [string]$secretstoreConfig = "$privateDir/secretstores.config",
     [string]$localSecretStore = "$secretDir/$persona-local-store",
-    [string]$preProvisionedOIDCStorageAccount = ""
+    [string]$preProvisionedOIDCStorageAccount = "$env:PREPROVISIONED_OIDC_STORAGEACCOUNT"
 )
 
 #https://learn.microsoft.com/en-us/powershell/scripting/learn/experimental-features?view=powershell-7.4#psnativecommanderroractionpreference
@@ -75,6 +75,17 @@ az provider register -n 'Microsoft.ContainerRegistry'
 az provider register -n 'Microsoft.KeyVault'
 az provider register -n 'Microsoft.ManagedIdentity'
 
+$currentUser = (az account show) | ConvertFrom-Json
+$tenantId = $currentUser.tenantid
+
+# for MSFT tenant 72f988bf-86f1-41af-91ab-2d7cd011db47 we must a use pre-provisioned whitelisted storage account
+if ($tenantId -eq "72f988bf-86f1-41af-91ab-2d7cd011db47" -and $preProvisionedOIDCStorageAccount -eq "")
+{
+    Write-Log Error "No pre-provisioned OIDC storage account provided for MSFT tenant. Please set the " +
+        "`preProvisionedOIDCStorageAccount` parameter in the start-environment.ps1 " +
+        "to the name of the pre-provisioned storage account."
+}
+
 #
 # Create secure key stores for:
 #   a) Collaborators to store data set encyrption keys.
@@ -82,21 +93,6 @@ az provider register -n 'Microsoft.ManagedIdentity'
 #
 if ($isCollaborator -or $isDeveloper)
 {
-    $currentUser = (az account show) | ConvertFrom-Json
-    $tenantId = $currentUser.tenantid
-
-    # for MSFT tenant 72f988bf-86f1-41af-91ab-2d7cd011db47 we must a use pre-provisioned whitelisted storage account
-    if ($tenantId -eq "72f988bf-86f1-41af-91ab-2d7cd011db47")
-    {
-        if ($preProvisionedOIDCStorageAccount -eq "")
-        {
-            Write-Log Error `
-                "No pre-provisioned OIDC storage account provided for MSFT tenant."
-            throw "No pre-provisioned OIDC storage account provided for MSFT tenant. Please set the " +
-                "`preProvisionedOIDCStorageAccount` parameter to the name of the pre-provisioned storage account."
-        }
-    }
-
     $kvName = $($overrides['$KEYVAULT_NAME'] ?? "${uniqueString}kv")
     $mhsmName = $($overrides['$MHSM_NAME'] ?? "${uniqueString}mhsm")
     if ($kvType -eq "mhsm")

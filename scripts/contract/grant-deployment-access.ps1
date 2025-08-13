@@ -21,7 +21,7 @@ param(
     [string]$environmentConfig = "$privateDir/$resourceGroup.generated.json",
     [string]$contractConfig = "$privateDir/$resourceGroup-$demo.generated.json",
     [string]$cgsClient = "azure-cleanroom-samples-governance-client-$persona",
-    [string]$preProvisionedOIDCStorageAccount = ""
+    [string]$preProvisionedOIDCStorageAccount = "$env:PREPROVISIONED_OIDC_STORAGEACCOUNT"
 )
 
 #https://learn.microsoft.com/en-us/powershell/scripting/learn/experimental-features?view=powershell-7.4#psnativecommanderroractionpreference
@@ -146,21 +146,9 @@ if ($null -ne $tenantData -and $tenantData.tenantId -eq $tenantId) {
 }
 else {
     $oidcsa = $environmentConfigResult.oidcsa.name
-
-    # for MSFT tenant 72f988bf-86f1-41af-91ab-2d7cd011db47 we must a use pre-provisioned whitelisted storage account
-    if ($tenantId -eq "72f988bf-86f1-41af-91ab-2d7cd011db47")
+    if ($preProvisionedOIDCStorageAccount -ne "")
     {
-        if ($preProvisionedOIDCStorageAccount -eq "")
-        {
-            Write-Log Error `
-                "No pre-provisioned OIDC storage account provided for MSFT tenant."
-            throw "No pre-provisioned OIDC storage account provided for MSFT tenant. Please set the " +
-                "`preProvisionedOIDCStorageAccount` parameter to the name of the pre-provisioned storage account."
-        }
-
         $oidcsa = $preProvisionedOIDCStorageAccount
-        Write-Log Verbose `
-            "Using pre-provisioned OIDC storage account '$oidcsa' for MSFT tenant."
     }
 
     Write-Log Verbose `
