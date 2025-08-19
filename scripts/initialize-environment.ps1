@@ -18,7 +18,7 @@ param(
     [string]$environmentConfig = "$privateDir/$resourceGroup.generated.json",
     [string]$secretstoreConfig = "$privateDir/secretstores.config",
     [string]$localSecretStore = "$secretDir/$persona-local-store",
-    [string]$preProvisionedOIDCStorageAccount = "$env:PREPROVISIONED_OIDC_STORAGEACCOUNT"
+    [string]$preProvisionedOIDCStorageAccount = ""
 )
 
 #https://learn.microsoft.com/en-us/powershell/scripting/learn/experimental-features?view=powershell-7.4#psnativecommanderroractionpreference
@@ -82,8 +82,7 @@ $tenantId = $currentUser.tenantid
 if ($tenantId -eq "72f988bf-86f1-41af-91ab-2d7cd011db47" -and $preProvisionedOIDCStorageAccount -eq "")
 {
     Write-Log Error "No pre-provisioned OIDC storage account provided for MSFT tenant. Please set the " `
-        "`preProvisionedOIDCStorageAccount` parameter in the start-environment.ps1 " `
-        "to the name of a pre-provisioned storage account."
+        "`preProvisionedOIDCStorageAccount` parameter for this script to the name of a pre-provisioned storage account."
     throw "No pre-provisioned OIDC storage account provided for MSFT tenant."
 }
 
