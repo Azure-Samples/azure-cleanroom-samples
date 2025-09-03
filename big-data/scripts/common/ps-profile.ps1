@@ -1,5 +1,5 @@
 function Prompt {
-    "PS [" + $env:PERSONA + "][" + $env:RESOURCE_GROUP + "][" + $env:DEMO + "] " + (Get-Location) + "> "
+    "PS [" + $env:PERSONA + "][" + $env:RESOURCE_GROUP + "] " + (Get-Location) + "> "
 }
 
 Set-PSReadLineOption -PredictionSource History

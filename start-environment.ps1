@@ -13,7 +13,6 @@ param(
     [string]$ccfProviderName = "$imageName-ccf-provider",
     [string]$telemetryDashboardName = "$imageName-telemetry",
     [string]$shellContainerName = "$imageName-shell-$persona",
-    [string]$preProvisionedOIDCStorageAccount = "",
 
     [switch]$overwrite,
     [switch]$shareCredentials
@@ -226,7 +225,6 @@ if ($persona -eq "operator") {
             --env PERSONA=$persona `
             --env RESOURCE_GROUP=$resourceGroup `
             --env RESOURCE_GROUP_LOCATION=$resourceGroupLocation `
-            --env PREPROVISIONED_OIDC_STORAGEACCOUNT=$preProvisionedOIDCStorageAccount `
             --env IDENTITY_ENDPOINT=$credentialProxyEndpoint `
             --env IDENTITY_HEADER="dummy_required_value" `
             -v "//var/run/docker.sock:/var/run/docker.sock" `

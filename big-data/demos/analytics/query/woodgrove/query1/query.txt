@@ -1,0 +1,1 @@
+SELECT author, COUNT(*) AS Number_Of_Mentions FROM (SELECT * FROM publisher_data UNION ALL SELECT * FROM consumer_data) AS combine_data WHERE mentions LIKE '%MikeDoesBigData%' GROUP BY author ORDER BY Number_Of_Mentions DESC

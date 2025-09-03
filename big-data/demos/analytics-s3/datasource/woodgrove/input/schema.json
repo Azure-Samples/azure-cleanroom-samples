@@ -1,0 +1,14 @@
+{
+  "date": {
+    "type": "date"
+  },
+  "time": {
+    "type": "string"
+  },
+  "author": {
+    "type": "string"
+  },
+  "mentions": {
+    "type": "string"
+  }
+}

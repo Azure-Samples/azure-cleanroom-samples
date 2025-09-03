@@ -1,0 +1,8 @@
+{
+  "author": {
+    "type": "string"
+  },
+  "Number_Of_Mentions": {
+    "type": "integer"
+  }
+}

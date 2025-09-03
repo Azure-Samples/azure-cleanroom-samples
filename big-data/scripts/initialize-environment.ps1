@@ -210,7 +210,6 @@ if ($isOperator) {
         $oidcStorageAccount = $preProvisionedOIDCStorageAccount
         Write-Log Warning `
             "Using pre-provisioned OIDC storage account '$oidcStorageAccount'."
-
         $status = (az storage blob service-properties show `
                 --account-name $oidcStorageAccount `
                 --auth-mode login `
