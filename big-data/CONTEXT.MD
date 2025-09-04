@@ -1,5 +1,5 @@
 ## Overview
-Azure Confidential Clean Rooms (ACCR) enable secure sharing of privacy-sensitive data by collaborating customer organizations by using confidential computing and Trusted Execution Environments (TEEs) to protect data throughout its lifecycle. This is in preview today and the sample scenarios for the same are available [here] (../README.md).
+Azure Confidential Clean Rooms (ACCR) enable secure sharing of privacy-sensitive data by collaborating customer organizations by using confidential computing and Trusted Execution Environments (TEEs) to protect data throughout its lifecycle. This is in preview today and the sample scenarios for the same are available [here](../README.md).
 
 We’re now launching an improved version of ACCR focused on big data analytics, which may be useful for customers across all industries, but particularly those in marketing and advertising who may want to analyze large amounts of privacy-sensitive data across different organizations securely using SQL queries. This version allows Spark SQL queries to be executed in a distributed, confidential compute based Apache Spark engine (OSS Spark Engine offering, integrated into the ACCR), thus enabling big data analytics in a fully secure and verifiable manner.
 
