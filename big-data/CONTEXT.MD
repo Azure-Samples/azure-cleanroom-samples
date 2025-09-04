@@ -25,3 +25,6 @@ Based on the feedback we’ve received from preview, we’ve also simplified the
 |----------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------------|----------------------------------|----------------------------------|
 | **Capabilities**     | - Clean room setup, Member Invitation/Acceptance<br>- Azure Blob Storage & AWS S3 as data sources/sinks for input/output<br>- Ability to propose and approve Spark SQL queries<br>- Ability to execute Spark SQL queries in a confidential manner | All Release-1 capabilities and<br>- Input k-min & output k-min privacy-preserving functions<br>- Support for custom parameters in queries | All Release-2 capabilities       | All Release-2 capabilities       |
 | **Deployment/Management** | PS Scripts and Local Docker Containers                                         | PS Scripts and Local Docker Containers                                    | Azure CLI / PS Scripts + Frontend API (without UI) using cleanroom RP | Azure Portal + Frontend UI and/or Azure CLI/PS Scripts |
+
+## Sample Scenario
+Please see [here](README.md) for the steps to run clean rooms for big data analytics using Spark.
