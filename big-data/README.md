@@ -81,7 +81,7 @@ All the involved parties need to bring up a local environment to participate in 
 > * Docker installed locally. Installation instructions [here](https://docs.docker.com/engine/install/).
 > * PowerShell installed locally. Installation instructions [here](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell).
 >
-> You can also use GitHub Codespaces to create the local environment which would have the above prerequisites pre-installed.
+> It is **recommended to use GitHub Codespaces** to create the local environment which would have the above prerequisites pre-installed.
 
 Each party requires an independent environment. To create such an environment, open a separate powershell window for each party and run the following commands:
 
