@@ -3,7 +3,7 @@
 This repository demonstrates usage of an [Azure **_Confidential Clean Room_** (**CCR**)](https://github.com/Azure/azure-cleanroom) for multi-party collaboration.
 
 # Big Data Samples <!-- omit from toc -->
-Please see [here](big-data/README.md) instead for the steps to follow for running clean rooms for big data analytics using Spark.
+Please see [here](big-data/CONTEXT.md) to learn more about clean rooms for big data analytics. 
 
 # Table of Contents <!-- omit from toc -->
 <!--
