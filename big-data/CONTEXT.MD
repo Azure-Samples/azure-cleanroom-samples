@@ -3,12 +3,14 @@ Azure Confidential Clean Rooms (ACCR) enable secure sharing of privacy-sensitive
 
 We’re now launching an improved version of ACCR focused on big data analytics, which may be useful for customers across all industries, but particularly those in marketing and advertising who may want to analyze large amounts of privacy-sensitive data across different organizations securely using SQL queries. This version allows Spark SQL queries to be executed in a distributed, confidential compute based Apache Spark engine (OSS Spark Engine offering, integrated into the ACCR), thus enabling big data analytics in a fully secure and verifiable manner.
 
-Based on the feedback we’ve received from preview, we’ve also simplified the clean room setup/onboarding, membership and contract management in this version by handling these automatically from the ACCR end. The following are some of the key changes from the previous version:
+Based on the feedback we’ve received from preview, we’ve also simplified the clean room setup/onboarding, membership and contract management in this version by handling these automatically from the ACCR end. The following are some of the key aspects of this version:
 - Spark Engine Integration
+- Voting on the queries before execution
 - User based collaborations instead of certificates
 - Support for Non-Azure collaborators
-- Option for Encryption of the data
-- Privacy preserving functions
+- Verifiability / Audit
+- Option for encryption of datasets
+- Privacy
 
 ## Personas Involved
 ### Clean room owner [CO], who:
