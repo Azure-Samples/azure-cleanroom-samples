@@ -1,6 +1,0 @@
-FROM otel/opentelemetry-collector-contrib:0.103.0
-
-WORKDIR /
-
-USER 10001:10001
-COPY telemetry/otel-collector-config.yaml /etc/otelcol-contrib/config.yaml
