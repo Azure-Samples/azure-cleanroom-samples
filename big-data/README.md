@@ -26,12 +26,12 @@ This repository demonstrates usage of an [Azure **_Confidential Clean Room_** (*
   - [Upload data (northwind, woodgrove)](#upload-data-northwind-woodgrove)
   - [Configure resource access for clean room (northwind, woodgrove)](#configure-resource-access-for-clean-room-northwind-woodgrove)
 - [Setting up query execution](#setting-up-query-execution)
+  - [Governance UI (northwind, woodgrove)](#governance-ui-northwind-woodgrove)
   - [Adding query to execute in the collaboration (woodgrove)](#adding-query-to-execute-in-the-collaboration-woodgrove)
   - [Agreeing upon the query for execution (northwind, woodgrove)](#agreeing-upon-the-query-for-execution-northwind-woodgrove)
 - [Using the clean room](#using-the-clean-room)
   - [Executing the query (woodgrove)](#executing-the-query-woodgrove)
   - [View output (woodgrove)](#view-output-woodgrove)
-  - [Governance UI (northwind, woodgrove)](#governance-ui-northwind-woodgrove)
 - [Advanced Topics](#advanced-topics)
   - [How do I specify a date range for query execution ?](#how-do-i-specify-a-date-range-for-query-execution-)
   - [Troubleshooting](#troubleshooting)
@@ -336,6 +336,17 @@ The managed identities created earlier as part of [publishing the data](#publish
 ```
 
 # Setting up query execution
+
+## Governance UI (northwind, woodgrove)
+
+You can see various artifacts like the datasets / audit events / queries being managed in the consortium by opening the link displayed by the below script:
+```powershell
+./scripts/consortium/ui.ps1
+```
+```powershell
+Open http://localhost:xxx in your browser to access the governance portal.
+```
+
 ## Adding query to execute in the collaboration (woodgrove)
 
 The following command adds details about the query to be executed within the clean room:
@@ -369,16 +380,6 @@ The party interested in getting the query results (*woodgrove* in our case) can 
 ## View output (woodgrove)
 
 The query execution output is written to the datasinks configured. Check the Azure storage container or S3 bucket to see the output files that would get generated.
-
-## Governance UI (northwind, woodgrove)
-
-You can see various artifacts being managed in the consortium by opening the link displayed by the below script:
-```powershell
-./scripts/consortium/ui.ps1
-```
-```powershell
-Open http://localhost:xxx in your browser to access the governance portal.
-```
 
 # Advanced Topics
 ## How do I specify a date range for query execution ?
