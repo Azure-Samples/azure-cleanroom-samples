@@ -59,7 +59,7 @@ if ("woodgrove" -eq $persona) {
     $outputDir = "$PSScriptRoot/datasink/$persona/output"
     $outputSchema = [ordered]@{
         "author"             = @{ "type" = "string" }
-        "Number_Of_Mentions" = @{ "type" = "integer" }
+        "Number_Of_Mentions" = @{ "type" = "long" }
     }
     $outputSchema | ConvertTo-Json -Depth 100 | Out-File $outputDir/schema.json
     Write-Log OperationCompleted `
