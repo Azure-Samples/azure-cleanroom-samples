@@ -395,6 +395,16 @@ The demos can optionally run by reading the data only for the specified date ran
 The run-query.ps1 should have both the start and end dates mentioned for the query to read the data only from the specified date range.
 If no date range is mentioned in the run-query.ps1, all the data from the data sources is loaded and used for running the query.
 
+## How do I provide my sample data and sample query?
+1. Do not run the step to generate data i.e. ./scripts/data/generate-data.ps1
+2. Add sample data for northwind to the folder big-data/demos/$demo/datasource/northwind/input. You can directly add data files or organize them in the form of folders, if required.
+3. Add the schema corresponding to the northwind data in the above folder as schema.json
+4. Add sample data for woodgrove to the folder  big-data/demos/$demo/datasource/woodgrove/input. You can directly add data files or organize them in the form of folders, if required.
+5. Add the schema corresponding to the woodgrove data in the above folder as schema.json
+6. Modify the query present in big-data/demos/$demo/query/woodgrove/query1/query.txt . This query should refer to northwind's and woodgrove's data as publisher_data and consumer_data respectively. If you want to change these, you can visit add-query.ps1 and make the changes accordingly. 
+7. Add the schema corresponding to the expected query output in big-data/demos/$demo/datasink/woodgrove/output as schema.json
+8. Now, run the rest of the steps starting from ./scripts/data/publish-data.ps1
+
 ## How do I switch between demos? (northwind, woodgrove)
 Switching demos involves the below steps:
 1. Exit the persona specific environment.
