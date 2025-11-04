@@ -25,12 +25,16 @@ function Get-TimeStamp {
 function Invoke-SqlJobAndWait {
     param (
         [string]$queryDocumentId,
+        [string]$collaborationContext,
         [string]$analyticsEndpoint,
         [Nullable[DateTimeOffset]]$startDate,
         [Nullable[DateTimeOffset]]$endDate
     )
 
-    $token = (az cleanroom governance client get-access-token --query accessToken -o tsv --name $cgsClient)
+    Write-Host "Setting collaboration context to '$collaborationContext'"
+    az cleanroom collaboration context set --collaboration-name $collaborationContext
+
+    $token = (az cleanroom governance client get-access-token --query accessToken -o tsv --name $collaborationContext)
     $script:submissionJson = $null
     & {
         # Disable $PSNativeCommandUseErrorActionPreference for this scriptblock
@@ -103,6 +107,7 @@ function Invoke-SqlJobAndWait {
 }
 
 $queryDocumentId = Get-Content $publicDir/analytics.query-id
+$contractId = Get-Content $publicDir/analytics.contract-id
 
 $kubeConfig = "$publicDir/k8s-credentials.yaml"
 if (-not (Test-Path -Path $kubeConfig)) {
@@ -111,7 +116,13 @@ if (-not (Test-Path -Path $kubeConfig)) {
 Get-Job -Command "*kubectl proxy --port 8181*" | Stop-Job
 Get-Job -Command "*kubectl proxy --port 8181*" | Remove-Job
 kubectl proxy --port 8181 --kubeconfig $kubeConfig &
-$analyticsEndpoint = "http://localhost:8181/api/v1/namespaces/cleanroom-spark-analytics-agent/services/https:cleanroom-spark-analytics-agent:443/proxy"
+
+$deploymentInformation = (az cleanroom governance deployment information show `
+        --contract-id $contractId `
+        --governance-client $cgsClient | ConvertFrom-Json)
+
+Write-Output "Submitting SQL job to analytics endpoint: $($deploymentInformation.data.url)"
+$analyticsEndpoint = $deploymentInformation.data.url
 
 $timeout = New-TimeSpan -Minutes 1
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -136,6 +147,7 @@ if ((-not $startDate -and $endDate) -or (-not $endDate -and $startDate)) {
 Write-Output "Executing query '$queryDocumentId' as '$persona'..."
 Invoke-SqlJobAndWait `
     -queryDocumentId $queryDocumentId `
+    -collaborationContext $cgsClient `
     -analyticsEndpoint $analyticsEndpoint `
     -startDate $startDate `
     -endDate $endDate

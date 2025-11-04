@@ -87,7 +87,9 @@ if (Test-Path -Path $datasourcePath) {
                 --backingstore-type Aws_S3 `
                 --backingstore-id $awsUrl `
                 --aws-config-cgs-secret-id $awsConfigCgsSecretId `
-                --container-name $bucketName
+                --container-name $bucketName `
+                --schema-format "csv" `
+                --schema-fields "date:date,time:string,author:string,mentions:string"
             $datastorePath = "$datastoreDir/$datastoreName"
             mkdir -p $datastorePath
             Write-Log OperationCompleted `
@@ -112,7 +114,9 @@ if (Test-Path -Path $datasourcePath) {
                     --secretstore $persona-local-store `
                     --encryption-mode CPK `
                     --backingstore-type Azure_BlobStorage `
-                    --backingstore-id $sa
+                    --backingstore-id $sa `
+                    --schema-format "csv" `
+                    --schema-fields "date:date,time:string,author:string,mentions:string"
             }
             elseif ($demo -eq "analytics-sse" -or $demo -eq "analytics-s3-sse") {
                 az cleanroom datastore add `
@@ -120,7 +124,9 @@ if (Test-Path -Path $datasourcePath) {
                     --config $datastoreConfig `
                     --encryption-mode SSE `
                     --backingstore-type Azure_BlobStorage `
-                    --backingstore-id $sa                
+                    --backingstore-id $sa `
+                    --schema-format "csv" `
+                    --schema-fields "date:date,time:string,author:string,mentions:string"
             }
             else {
                 throw "Demo $demo not handled in publish-data. Fix this."
@@ -176,7 +182,9 @@ if (Test-Path -Path $datasinkPath) {
                 --backingstore-type Aws_S3 `
                 --backingstore-id $awsUrl `
                 --aws-config-cgs-secret-id $awsConfigCgsSecretId `
-                --container-name $bucketName
+                --container-name $bucketName `
+                --schema-format "csv" `
+                --schema-fields "author:string,Number_Of_Mentions:long,Restricted_Sum:number"
             Write-Log OperationCompleted `
                 "Created data store '$datastoreName' backed by S3 bucket '$bucketName'."
         }
@@ -189,7 +197,9 @@ if (Test-Path -Path $datasinkPath) {
                     --secretstore $persona-local-store `
                     --encryption-mode CPK `
                     --backingstore-type Azure_BlobStorage `
-                    --backingstore-id $sa
+                    --backingstore-id $sa `
+                    --schema-format "csv" `
+                    --schema-fields "author:string,Number_Of_Mentions:long,Restricted_Sum:number"
             }
             elseif ($demo -eq "analytics-sse" -or $demo -eq "analytics-s3-sse") {
                 az cleanroom datastore add `
@@ -197,7 +207,9 @@ if (Test-Path -Path $datasinkPath) {
                     --config $datastoreConfig `
                     --encryption-mode SSE `
                     --backingstore-type Azure_BlobStorage `
-                    --backingstore-id $sa
+                    --backingstore-id $sa `
+                    --schema-format "csv" `
+                    --schema-fields "author:string,Number_Of_Mentions:long,Restricted_Sum:number"
             }
             else {
                 throw "Demo $demo not handled in publish-data. Fix this."
@@ -219,9 +231,6 @@ else {
 # Create datasource/datasink entries in the configuration file.
 #
 pwsh $PSScriptRoot/../specification/initialize-specification.ps1 -demo $demo
-pwsh $PSScriptRoot/../specification/add-specification-data.ps1 -demo $demo
 
-#
-# Publish the datasource/datasink entries from the configuration file as dataset documents in the collaboration.
-#
-pwsh $PSScriptRoot/../specification/add-dataset.ps1 -demo $demo
+# And add the datasources/datasinks to the specification and publish
+pwsh $PSScriptRoot/../specification/add-specification-data.ps1 -demo $demo

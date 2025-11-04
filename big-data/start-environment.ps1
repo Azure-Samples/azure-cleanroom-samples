@@ -8,7 +8,7 @@ param(
     [string]$demo,
 
     [string]$resourceGroup = "",
-    [string]$resourceGroupLocation = "westus",
+    [string]$resourceGroupLocation = "westeurope",
 
     [string]$imageName = "azure-cleanroom-samples",
     [string]$dockerFileDir = "./big-data/docker",
@@ -23,7 +23,7 @@ param(
     [switch]$shareCredentials,
 
     [string]$repo = "cleanroomemuprregistry.azurecr.io",
-    [string]$tag = "18033861982"
+    [string]$tag = "19042425821"
 )
 
 #https://learn.microsoft.com/en-us/powershell/scripting/learn/experimental-features?view=powershell-7.4#psnativecommanderroractionpreference

@@ -4,7 +4,7 @@ param(
     [string]$persona,
 
     [string]$resourceGroup = "",
-    [string]$resourceGroupLocation = "westus",
+    [string]$resourceGroupLocation = "westeurope",
 
     [string]$imageName = "azure-cleanroom-samples",
     [string]$dockerFileDir = "./docker",

@@ -41,16 +41,6 @@ $contractConfigResult = (Get-Content $contractConfig | ConvertFrom-Json)
 $environmentConfigResult = Get-Content $environmentConfig | ConvertFrom-Json
 
 #
-# Create a KEK with SKR policy, wrap DEKs with the KEK and put in kv.
-#
-az cleanroom config wrap-deks `
-    --contract-id $contractId `
-    --cleanroom-config $contractConfigResult.contractFragment `
-    --datastore-config $datastoreConfig `
-    --secretstore-config $secretStoreConfig `
-    --governance-client $cgsClient
-
-#
 # Setup managed identity access to storage/KV in collaborator tenant.
 #
 $managedIdentity = $contractConfigResult.mi

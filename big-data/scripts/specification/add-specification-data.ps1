@@ -6,10 +6,11 @@ param(
     [string]$kekName = $($($(New-Guid).Guid) -replace '-').ToLower(),
 
     [string]$samplesRoot = "/home/samples",
+    [string]$publicDir = "$samplesRoot/demo-resources/public",
     [string]$privateDir = "$samplesRoot/demo-resources/private",
     [string]$demosRoot = "$samplesRoot/demos",
+    [string]$governanceClient = "azure-cleanroom-samples-governance-client-$persona",
 
-    [string]$contractConfig = "$privateDir/$resourceGroup-$demo.generated.json",
     [string]$secretstoreConfig = "$privateDir/secretstores.config",
     [string]$datastoreConfig = "$privateDir/datastores.config",
     [string]$datasourcePath = "$demosRoot/$demo/datasource/$persona",
@@ -22,29 +23,47 @@ $PSNativeCommandUseErrorActionPreference = $true
 
 Import-Module $PSScriptRoot/../common/common.psm1
 
-$contractConfigResult = Get-Content $contractConfig | ConvertFrom-Json
-
 Write-Log OperationStarted `
-    "Adding datasources and datasinks for '$persona' in the '$demo' demo to" `
-    "'$($contractConfigResult.contractFragment)'..."
+    "Adding datasources and datasinks for '$persona' in the '$demo' demo"
 
+az cleanroom collaboration context set `
+    --collaboration-name $governanceClient
+
+$contractId = Get-Content $publicDir/analytics.contract-id
 if (Test-Path -Path $datasourcePath) {
     $dirs = Get-ChildItem -Path $datasourcePath -Directory -Name
     foreach ($dir in $dirs) {
         $datastoreName = "$demo-$persona-$dir".ToLower()
         $datasourceName = "$persona-$dir".ToLower()
-        az cleanroom config add-datasource `
-            --cleanroom-config $contractConfigResult.contractFragment `
-            --name $datasourceName `
-            --datastore-config $datastoreConfig `
-            --datastore-name $datastoreName `
-            --secretstore-config $secretStoreConfig `
-            --dek-secret-store $persona-dek-store `
-            --kek-secret-store $persona-kek-store `
-            --kek-name $kekName `
-            --identity "$persona-identity"
+
+        if ($persona -eq "woodgrove" -and $demo -eq "analytics-s3-sse") {
+            az cleanroom collaboration dataset publish `
+                --contract-id $contractId `
+                --dataset-name $datasourceName `
+                --datastore-name $datastoreName `
+                --identity-name cleanroom_cgs_oidc `
+                --policy-access-mode read `
+                --policy-allowed-fields "date,author,mentions" `
+                --datastore-config-file $datastoreConfig
+        }
+        else {
+            az cleanroom collaboration dataset publish `
+                --contract-id $contractId `
+                --dataset-name $datasourceName `
+                --datastore-name $datastoreName `
+                --dek-secret-store-name $persona-dek-store `
+                --kek-secret-store-name $persona-kek-store `
+                --identity-name $persona-identity `
+                --policy-access-mode read `
+                --policy-allowed-fields "date,author,mentions" `
+                --datastore-config-file $datastoreConfig `
+                --secretstore-config-file $secretstoreConfig
+        }
+
         Write-Log OperationCompleted `
             "Added datasource '$datasourceName' ($datastoreName)."
+
+        $datasourceName | Out-File $publicDir/$datasourceName.dataset-id
     }
 }
 else {
@@ -57,18 +76,35 @@ if (Test-Path -Path $datasinkPath) {
     foreach ($dir in $dirs) {
         $datastoreName = "$demo-$persona-$dir".ToLower()
         $datasinkName = "$persona-$dir".ToLower()
-        az cleanroom config add-datasink `
-            --cleanroom-config $contractConfigResult.contractFragment `
-            --name $datasinkName `
-            --datastore-config $datastoreConfig `
-            --datastore-name $datastoreName `
-            --secretstore-config $secretStoreConfig `
-            --dek-secret-store $persona-dek-store `
-            --kek-secret-store $persona-kek-store `
-            --kek-name $kekName `
-            --identity "$persona-identity"
+
+        if ($persona -eq "woodgrove" -and $demo -eq "analytics-s3-sse") {
+            az cleanroom collaboration dataset publish `
+                --contract-id $contractId `
+                --dataset-name $datasinkName `
+                --datastore-name $datastoreName `
+                --identity-name cleanroom_cgs_oidc `
+                --policy-access-mode write `
+                --policy-allowed-fields "author,Number_Of_Mentions" `
+                --datastore-config-file $datastoreConfig
+        }
+        else {
+            az cleanroom collaboration dataset publish `
+                --contract-id $contractId `
+                --dataset-name $datasinkName `
+                --datastore-name $datastoreName `
+                --dek-secret-store-name $persona-dek-store `
+                --kek-secret-store-name $persona-kek-store `
+                --identity-name $persona-identity `
+                --policy-access-mode write `
+                --policy-allowed-fields "author,Number_Of_Mentions" `
+                --datastore-config-file $datastoreConfig `
+                --secretstore-config-file $secretstoreConfig
+        }
+
         Write-Log OperationCompleted `
             "Added datasink '$datasinkName' ($datastoreName)."
+
+        $datasinkName | Out-File $publicDir/$datasinkName.dataset-id
     }
 }
 else {
