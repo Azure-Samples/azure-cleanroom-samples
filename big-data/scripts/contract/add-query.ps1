@@ -34,7 +34,7 @@ if (Test-Path -Path $queryPath) {
 
         az cleanroom collaboration spark-sql publish `
             --application-name $queryName `
-            --application-querysegment-config-file $queryPath/$dir/segmentedQuery.yaml `
+            --application-query $queryPath/$dir/segmentedQuery.yaml `
             --application-input-dataset "publisher_data:$(Get-Content "$publicDir/northwind-input.dataset-id"), consumer_data:$(Get-Content "$publicDir/woodgrove-input.dataset-id")" `
             --application-output-dataset "datasink:$(Get-Content "$publicDir/woodgrove-output.dataset-id")" `
             --contract-id $contractId
