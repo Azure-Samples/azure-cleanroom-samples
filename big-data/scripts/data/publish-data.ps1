@@ -20,7 +20,15 @@ param(
     [string]$datastoreDir = "$privateDir/datastores",
     [string]$demoPath = "$demosRoot/$demo",
     [string]$datasourcePath = "$demoPath/datasource/$persona",
-    [string]$datasinkPath = "$demoPath/datasink/$persona"
+    [string]$datasinkPath = "$demoPath/datasink/$persona",
+
+    [string]$inputSchemaFormat = "csv",
+    [string]$inputSchema = "date:date,time:string,author:string,mentions:string",
+    [string]$outputSchemaFormat = "csv",
+    [string]$outputSchema = "author:string,Number_Of_Mentions:long,Restricted_Sum:number",
+    [string]$allowedInputFields = "date,author,mentions",
+    [string]$allowedOutputFields = "author,Number_Of_Mentions"
+
 )
 
 #https://learn.microsoft.com/en-us/powershell/scripting/learn/experimental-features?view=powershell-7.4#psnativecommanderroractionpreference
@@ -88,8 +96,8 @@ if (Test-Path -Path $datasourcePath) {
                 --backingstore-id $awsUrl `
                 --aws-config-cgs-secret-id $awsConfigCgsSecretId `
                 --container-name $bucketName `
-                --schema-format "csv" `
-                --schema-fields "date:date,time:string,author:string,mentions:string"
+                --schema-format $inputSchemaFormat `
+                --schema-fields $inputSchema
             $datastorePath = "$datastoreDir/$datastoreName"
             mkdir -p $datastorePath
             Write-Log OperationCompleted `
@@ -115,8 +123,8 @@ if (Test-Path -Path $datasourcePath) {
                     --encryption-mode CPK `
                     --backingstore-type Azure_BlobStorage `
                     --backingstore-id $sa `
-                    --schema-format "csv" `
-                    --schema-fields "date:date,time:string,author:string,mentions:string"
+                    --schema-format $inputSchemaFormat `
+                    --schema-fields $inputSchema
             }
             elseif ($demo -eq "analytics-sse" -or $demo -eq "analytics-s3-sse") {
                 az cleanroom datastore add `
@@ -125,8 +133,8 @@ if (Test-Path -Path $datasourcePath) {
                     --encryption-mode SSE `
                     --backingstore-type Azure_BlobStorage `
                     --backingstore-id $sa `
-                    --schema-format "csv" `
-                    --schema-fields "date:date,time:string,author:string,mentions:string"
+                    --schema-format $inputSchemaFormat `
+                    --schema-fields $inputSchema
             }
             else {
                 throw "Demo $demo not handled in publish-data. Fix this."
@@ -183,8 +191,8 @@ if (Test-Path -Path $datasinkPath) {
                 --backingstore-id $awsUrl `
                 --aws-config-cgs-secret-id $awsConfigCgsSecretId `
                 --container-name $bucketName `
-                --schema-format "csv" `
-                --schema-fields "author:string,Number_Of_Mentions:long,Restricted_Sum:number"
+                --schema-format $outputSchemaFormat `
+                --schema-fields $outputSchema
             Write-Log OperationCompleted `
                 "Created data store '$datastoreName' backed by S3 bucket '$bucketName'."
         }
@@ -198,8 +206,8 @@ if (Test-Path -Path $datasinkPath) {
                     --encryption-mode CPK `
                     --backingstore-type Azure_BlobStorage `
                     --backingstore-id $sa `
-                    --schema-format "csv" `
-                    --schema-fields "author:string,Number_Of_Mentions:long,Restricted_Sum:number"
+                    --schema-format $outputSchemaFormat `
+                    --schema-fields $outputSchema
             }
             elseif ($demo -eq "analytics-sse" -or $demo -eq "analytics-s3-sse") {
                 az cleanroom datastore add `
@@ -208,8 +216,8 @@ if (Test-Path -Path $datasinkPath) {
                     --encryption-mode SSE `
                     --backingstore-type Azure_BlobStorage `
                     --backingstore-id $sa `
-                    --schema-format "csv" `
-                    --schema-fields "author:string,Number_Of_Mentions:long,Restricted_Sum:number"
+                    --schema-format $outputSchemaFormat `
+                    --schema-fields $outputSchema
             }
             else {
                 throw "Demo $demo not handled in publish-data. Fix this."
@@ -233,4 +241,5 @@ else {
 pwsh $PSScriptRoot/../specification/initialize-specification.ps1 -demo $demo
 
 # And add the datasources/datasinks to the specification and publish
-pwsh $PSScriptRoot/../specification/add-specification-data.ps1 -demo $demo
+pwsh $PSScriptRoot/../specification/add-specification-data.ps1 -demo $demo `
+    -allowedInputFields $allowedInputFields -allowedOutputFields $allowedOutputFields

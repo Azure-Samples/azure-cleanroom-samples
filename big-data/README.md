@@ -361,10 +361,8 @@ To view the audit events, follow this path on the Governance UI (on the left pan
 These events will have all details on the query execution, such as:
   1. Query execution start, the associated document id and the query runId
   2. Loading input dataset and statistics like the input row count.
-  3. Kmin failure details like the pre-execution failures on the configured conditions.
-  4. Query failure errors and execution completion
-  5. Writing output on success and statistics like the output row count.
-  6. Kmin failure details like post-execution failures on the configured filtering.
+  3. Query failure and execution completion
+  4. Writing output on success and statistics like the output row count.
 
 A few examples of statistics:
 ![alt text](../assets/audit-loadstats.png)

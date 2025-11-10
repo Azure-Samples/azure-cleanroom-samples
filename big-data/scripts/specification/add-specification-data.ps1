@@ -14,7 +14,10 @@ param(
     [string]$secretstoreConfig = "$privateDir/secretstores.config",
     [string]$datastoreConfig = "$privateDir/datastores.config",
     [string]$datasourcePath = "$demosRoot/$demo/datasource/$persona",
-    [string]$datasinkPath = "$demosRoot/$demo/datasink/$persona"
+    [string]$datasinkPath = "$demosRoot/$demo/datasink/$persona",
+
+    [string]$allowedInputFields = "date,author,mentions",
+    [string]$allowedOutputFields = "author,Number_Of_Mentions"
 )
 
 #https://learn.microsoft.com/en-us/powershell/scripting/learn/experimental-features?view=powershell-7.4#psnativecommanderroractionpreference
@@ -43,7 +46,7 @@ if (Test-Path -Path $datasourcePath) {
                 --datastore-name $datastoreName `
                 --identity-name cleanroom_cgs_oidc `
                 --policy-access-mode read `
-                --policy-allowed-fields "date,author,mentions" `
+                --policy-allowed-fields $allowedInputFields `
                 --datastore-config-file $datastoreConfig
         }
         else {
@@ -55,7 +58,7 @@ if (Test-Path -Path $datasourcePath) {
                 --kek-secret-store-name $persona-kek-store `
                 --identity-name $persona-identity `
                 --policy-access-mode read `
-                --policy-allowed-fields "date,author,mentions" `
+                --policy-allowed-fields $allowedInputFields `
                 --datastore-config-file $datastoreConfig `
                 --secretstore-config-file $secretstoreConfig
         }
@@ -84,7 +87,7 @@ if (Test-Path -Path $datasinkPath) {
                 --datastore-name $datastoreName `
                 --identity-name cleanroom_cgs_oidc `
                 --policy-access-mode write `
-                --policy-allowed-fields "author,Number_Of_Mentions" `
+                --policy-allowed-fields $allowedOutputFields `
                 --datastore-config-file $datastoreConfig
         }
         else {
@@ -96,7 +99,7 @@ if (Test-Path -Path $datasinkPath) {
                 --kek-secret-store-name $persona-kek-store `
                 --identity-name $persona-identity `
                 --policy-access-mode write `
-                --policy-allowed-fields "author,Number_Of_Mentions" `
+                --policy-allowed-fields $allowedOutputFields `
                 --datastore-config-file $datastoreConfig `
                 --secretstore-config-file $secretstoreConfig
         }
