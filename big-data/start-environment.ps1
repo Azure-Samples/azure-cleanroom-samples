@@ -23,7 +23,7 @@ param(
     [switch]$shareCredentials,
 
     [string]$repo = "cleanroomemuprregistry.azurecr.io",
-    [string]$tag = "19071407933"
+    [string]$tag = "19262066459"
 )
 
 #https://learn.microsoft.com/en-us/powershell/scripting/learn/experimental-features?view=powershell-7.4#psnativecommanderroractionpreference
