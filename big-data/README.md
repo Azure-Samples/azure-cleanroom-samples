@@ -462,84 +462,20 @@ To publish these datasets, the [script](scripts/specification/add-specification-
 
 ## How do I provide my sample data and sample query?
 1. Do not run the step to generate data i.e. ./scripts/data/generate-data.ps1
-2. Add sample data for northwind to the folder big-data/demos/$demo/datasource/northwind/input. You can directly add data files or organize them in the form of folders, if required.
-3. Add the schema corresponding to the northwind data in the above folder as schema.json. The schema file should be of the following format
-    ```json
-    {
-      "format": "csv",
-      "fields": [
-        {
-          "fieldName": "line_item_id",
-          "fieldType": "long"
-        },
-        {
-          "fieldName": "campaign",
-          "fieldType": "string"
-        }
-      ]
-    }
-    ```
-5. Add the columns or fields from northwind's data allowed to be used in the query as policy.json in the above folder. The policy file should be of the following format.   
-    ```json
-    {
-      "accessMode": "read",
-      "allowedFields": [
-        "line_item_id",
-        "campaign"
-      ]
-    }
-    ```
-7. Add sample data for woodgrove to the folder  big-data/demos/$demo/datasource/woodgrove/input. You can directly add data files or organize them in the form of folders, if required.
-8. Add the schema corresponding to the woodgrove data in the above folder as schema.json. The format would be similar to #4.
-9. Add the columns or fields from woodgrove's data allowed to be used in the query as policy.json in the above folder. The format would be similar to #5.
-10. Add the schema corresponding to the expected query output in big-data/demos/$demo/datasink/woodgrove/output as schema.json. The format would be similar to #4.
-11. Add the columns or fields allowed to be present in the output as policy.json in the above folder. The format would be similar to #5 excepting that the accessMode must be "write".
-12. Identify the location where the datastore for datasources are being created for the demo of your choice in ./scripts/data/publish-data.ps1 and refer the schema files created in the previous steps in `az cleanroom datastore add` command. The following shows the same for analytics-sse demo.   
-    ```bash
-        az cleanroom datastore add \
-        --name $datastoreName \
-        --config $datastoreConfig \
-        --encryption-mode SSE \
-        --backingstore-type Azure_BlobStorage \
-        --backingstore-id $sa \
-        --schema-file "$demoPath/datasource/$persona/$dir/schema.json"
-    ```
-13. Identify the location where the datastore for datasink (for output) is being created for the demo of your choice in ./scripts/data/publish-data.ps1 and refer the schema files created in the previous steps in `az cleanroom datastore add` command. The following shows the same for analytics-sse demo.
-      ```bash
-        az cleanroom datastore add \
-        --name $datastoreName \
-        --config $datastoreConfig \
-        --encryption-mode SSE \
-        --backingstore-type Azure_BlobStorage \
-        --backingstore-id $sa \
-        --schema-file "$demoPath/datasink/$persona/$dir/schema.json"
-    ```
-14. Identify the location where the datasets corresponding to your datasources (for northwind and woodgrove) are being published in ./scripts/specification/add-specification-data.ps1 and refer the policy files created in the previous steps in `az cleanroom collaboration dataset publish` command. The following shows the same for analytics-sse demo.
-     ```bash
-      az cleanroom collaboration dataset publish \
-    --contract-id $contractId \
-    --dataset-name $datasourceName \
-    --datastore-name $datastoreName \
-    --dek-secret-store-name $persona-dek-store \
-    --kek-secret-store-name $persona-kek-store \
-    --identity-name $persona-identity \
-    --policy-file $demosRoot/$demo/datasource/$persona/$dir/policy.json \
-    --datastore-config-file $datastoreConfig \
-    ```
-15. Identify the location where the datasets corresponding to your datasink (for woodgrove) is being published in ./scripts/specification/add-specification-data.ps1 and refer the policy files created in the previous steps in `az cleanroom collaboration dataset publish` command. The following shows the same for analytics-sse demo.
-    ```bash
-      az cleanroom collaboration dataset publish \
-    --contract-id $contractId \
-    --dataset-name $datasinkName \
-    --datastore-name $datastoreName \
-    --dek-secret-store-name $persona-dek-store \
-    --kek-secret-store-name $persona-kek-store \
-    --identity-name $persona-identity \
-    --policy-file $demosRoot/$demo/datasink/$persona/$dir/policy.json \
-    --datastore-config-file $datastoreConfig \
-    ```
-16. Replace the query present in big-data/demos/$demo/query/woodgrove/query1/segmentedQuery.yaml with your query. It can have a single segment or multiple segments as required. This query should refer to northwind's and woodgrove's data as publisher_data and consumer_data respectively. If you want to change these, you can visit add-query.ps1 and make the changes accordingly. 
-17. Now, run the rest of the steps starting from ./scripts/data/publish-data.ps1
+2. Add sample data for northwind or woodgrove to the respective folder big-data/demos/$demo/datasource/$persona/input. You can directly add the data files or organize them in the form of folders, if required.
+3. Call the publish-data.ps1 script with the following parameters for northwind:
+   ```powershell
+      ./scripts/data/publish-data.ps1 -inputSchemaFormat <inputSchemaFormat> -inputSchema <inputSchema> -allowedInputFields <allowedInputFields> 
+   ```
+   Call the publish-data.ps1 script with the following parameters for woodgrove:
+   ```powershell
+      ./scripts/data/publish-data.ps1 -inputSchemaFormat <inputSchemaFormat> -inputSchema <inputSchema> -allowedInputFields <allowedInputFields> -outputSchemaFormat <outputSchemaFormat> -outputSchema <outputSchema> -allowedOutputFields <allowedOutputFields> 
+   ```
+   The allowed inputSchemaFormat and outputSchemaFormat are "csv", "json" and "parquet" <br>
+   The inputSchema and outputSchema should be comma separated pairs of columnName:datatype like "line_item_id:long,campign:string" <br>
+   The allowedInputFields and allowedOutputFields should be comma separated values of columnNames like "line_item_id,campaign" <br>
+5. Replace the query present in big-data/demos/$demo/query/woodgrove/query1/segmentedQuery.yaml with your query. It can have a single segment or multiple segments as required. This query should refer to northwind's and woodgrove's data as publisher_data and consumer_data respectively. If you want to change these, you can visit add-query.ps1 and make the changes accordingly. 
+6. Now, run the rest of the steps starting from adding the query 
 
 ## How do I switch between demos? (northwind, woodgrove)
 Switching demos involves the below steps:
