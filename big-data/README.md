@@ -471,8 +471,8 @@ To publish these datasets, the [script](scripts/specification/add-specification-
    ```powershell
       ./scripts/data/publish-data.ps1 -inputSchemaFormat <inputSchemaFormat> -inputSchema <inputSchema> -allowedInputFields <allowedInputFields> -outputSchemaFormat <outputSchemaFormat> -outputSchema <outputSchema> -allowedOutputFields <allowedOutputFields> 
    ```
-   The allowed inputSchemaFormat and outputSchemaFormat are "csv", "json" and "parquet" <br>
-   The inputSchema and outputSchema should be comma separated pairs of columnName:datatype like "line_item_id:long,campign:string" <br>
+   The allowed values for inputSchemaFormat and outputSchemaFormat are "csv", "json" and "parquet" <br>
+   The inputSchema and outputSchema should be comma separated pairs of columnName:datatype like "line_item_id:long,campaign:string" <br>
    The allowedInputFields and allowedOutputFields should be comma separated values of columnNames like "line_item_id,campaign" <br>
 5. Replace the query present in big-data/demos/$demo/query/woodgrove/query1/segmentedQuery.yaml with your query. It can have a single segment or multiple segments as required. This query should refer to northwind's and woodgrove's data as publisher_data and consumer_data respectively. If you want to change these, you can visit add-query.ps1 and make the changes accordingly. 
 6. Now, run the rest of the steps starting from adding the query 
