@@ -1,0 +1,17 @@
+{
+  "keyVault": {
+    "name": "kv-12e040fbd089ebf313db0",
+    "id": "/subscriptions/2427679b-6638-48e5-8774-6096cd849451/resourceGroups/jswoodgrove-cleanroom-cpk-rg/providers/Microsoft.KeyVault/vaults/kv-12e040fbd089ebf313db0"
+  },
+  "storageAccount": {
+    "name": "sa12e040fbd089ebf313db08",
+    "id": "/subscriptions/2427679b-6638-48e5-8774-6096cd849451/resourceGroups/jswoodgrove-cleanroom-cpk-rg/providers/Microsoft.Storage/storageAccounts/sa12e040fbd089ebf313db08"
+  },
+  "managedIdentity": {
+    "id": "/subscriptions/2427679b-6638-48e5-8774-6096cd849451/resourcegroups/jswoodgrove-cleanroom-cpk-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-12e040fbd089ebf313db0",
+    "clientId": "c7eed3de-aa4c-4069-9786-1e509ab15b1b",
+    "tenantId": "72f988bf-86f1-41af-91ab-2d7cd011db47",
+    "principalId": "b5311703-791b-44a3-ab25-e5e8e12d1520",
+    "name": "id-12e040fbd089ebf313db0"
+  }
+}
