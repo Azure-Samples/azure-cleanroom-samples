@@ -539,7 +539,33 @@ $result | ConvertTo-Json -Depth 10
 </code></pre>
 <hr>
 <h2>Step 11: View results</h2>
-<p>View run history and audit events:</p>
+<p>Once the query completes, the results are written to Woodgrove&#39;s output
+storage container (<code>woodgrove-output</code>). Since SSE mode is used, Azure Storage
+handles decryption transparently &mdash; you can download the results directly.</p>
+<p><strong>11a. List output blobs:</strong></p>
+<pre><code class="language-powershell">az storage blob list `
+    --account-name $StorageAccount `
+    --container-name &quot;woodgrove-output&quot; `
+    --auth-mode login `
+    --output table
+</code></pre>
+<p><strong>11b. Download results:</strong></p>
+<pre><code class="language-powershell">$ResultsDir = &quot;./results&quot;
+New-Item -ItemType Directory -Path $ResultsDir -Force | Out-Null
+
+az storage blob download-batch `
+    --account-name $StorageAccount `
+    --source &quot;woodgrove-output&quot; `
+    --destination $ResultsDir `
+    --auth-mode login
+</code></pre>
+<p><strong>11c. View the downloaded data:</strong></p>
+<pre><code class="language-powershell">Get-ChildItem $ResultsDir -Recurse -File | ForEach-Object {
+    Write-Host &quot;--- $($_.Name) ---&quot; -ForegroundColor Cyan
+    Get-Content $_.FullName | Select-Object -First 20
+}
+</code></pre>
+<p><strong>11d. View run history and audit events:</strong></p>
 <pre><code class="language-powershell"># Query run history
 az managedcleanroom frontend analytics query runhistory list `
     --collaboration-id $CollaborationId `
@@ -653,7 +679,7 @@ the query (Step 8).</p>
 <td>11</td>
 <td>View results</td>
 <td>Direct CLI</td>
-<td><code>az managedcleanroom frontend analytics query runhistory list</code>, <code>auditevent list</code></td>
+<td><code>az storage blob list</code>, <code>az storage blob download-batch</code>, <code>az managedcleanroom frontend analytics query runhistory list</code>, <code>auditevent list</code></td>
 </tr>
 </tbody></table>
 <blockquote>

@@ -544,7 +544,112 @@ $result | ConvertTo-Json -Depth 10
 
 ## Step 11: View results
 
-View run history and audit events:
+Once the query completes, the results are written to Woodgrove's output storage
+container (`woodgrove-output`). In CPK mode the results are encrypted with the
+same DEK used during upload. To download and read them, you need to reconstruct
+the DEK from the wrapped secret in Key Vault using the local KEK private key.
+
+**11a. Reconstruct the DEK:**
+
+The raw DEK was generated in memory during Step 4 and only its wrapped (RSA-OAEP-SHA256
+encrypted) form was stored in Key Vault. The KEK private PEM was saved locally.
+
+```powershell
+# Retrieve the wrapped DEK (hex string) from Key Vault
+$wrappedDekHex = az keyvault secret show `
+    --vault-name $KeyVault `
+    --name "woodgrove-output-dek-wrapped" `
+    --query value -o tsv
+
+# Convert hex string back to bytes
+$wrappedDekBytes = [byte[]]::new($wrappedDekHex.Length / 2)
+for ($i = 0; $i -lt $wrappedDekHex.Length; $i += 2) {
+    $wrappedDekBytes[$i / 2] = [Convert]::ToByte($wrappedDekHex.Substring($i, 2), 16)
+}
+
+# Load the KEK private key (saved during Step 4)
+$kekPemPath = Join-Path $OutDir $ResourceGroup "woodgrove-kek-private.pem"
+$kekPem = Get-Content $kekPemPath -Raw
+$rsa = [System.Security.Cryptography.RSA]::Create()
+$rsa.ImportFromPem($kekPem)
+
+# Unwrap (decrypt) the DEK
+$dekBytes = $rsa.Decrypt($wrappedDekBytes,
+    [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
+$dekBase64 = [Convert]::ToBase64String($dekBytes)
+$dekSha256Base64 = [Convert]::ToBase64String(
+    [System.Security.Cryptography.SHA256]::HashData($dekBytes))
+
+$rsa.Dispose()
+Write-Host "DEK reconstructed successfully." -ForegroundColor Green
+```
+
+**11b. List output blobs:**
+
+```powershell
+az storage blob list `
+    --account-name $StorageAccount `
+    --container-name "woodgrove-output" `
+    --auth-mode login `
+    --output table
+```
+
+**11c. Download and decrypt results:**
+
+Since CPK blobs require the encryption key in the request headers, use the
+REST API to download each blob:
+
+```powershell
+$ResultsDir = "./results"
+New-Item -ItemType Directory -Path $ResultsDir -Force | Out-Null
+
+$tokenJson = az account get-access-token `
+    --resource https://storage.azure.com --output json | ConvertFrom-Json
+$accessToken = $tokenJson.accessToken
+
+# Get blob endpoint
+$storageJson = az storage account show `
+    --name $StorageAccount `
+    --resource-group $ResourceGroup `
+    --output json | ConvertFrom-Json
+$blobEndpoint = $storageJson.primaryEndpoints.blob
+
+# List and download each blob
+$blobs = az storage blob list `
+    --account-name $StorageAccount `
+    --container-name "woodgrove-output" `
+    --auth-mode login `
+    --output json | ConvertFrom-Json
+
+foreach ($blob in $blobs) {
+    $blobUrl = "${blobEndpoint}woodgrove-output/$($blob.name)"
+    $localPath = Join-Path $ResultsDir $blob.name
+    New-Item -ItemType Directory -Path (Split-Path $localPath) -Force | Out-Null
+
+    $headers = @{
+        "Authorization"              = "Bearer $accessToken"
+        "x-ms-version"               = "2024-11-04"
+        "x-ms-encryption-key"        = $dekBase64
+        "x-ms-encryption-key-sha256" = $dekSha256Base64
+        "x-ms-encryption-algorithm"  = "AES256"
+    }
+
+    Invoke-RestMethod -Uri $blobUrl -Method Get -Headers $headers `
+        -OutFile $localPath
+    Write-Host "Downloaded: $($blob.name)" -ForegroundColor Green
+}
+```
+
+**11d. View the downloaded data:**
+
+```powershell
+Get-ChildItem $ResultsDir -Recurse -File | ForEach-Object {
+    Write-Host "--- $($_.Name) ---" -ForegroundColor Cyan
+    Get-Content $_.FullName | Select-Object -First 20
+}
+```
+
+**11e. View run history and audit events:**
 
 ```powershell
 # Query run history
@@ -619,6 +724,6 @@ Events include query execution start/completion, input/output row counts, datase
 | 8 | Publish query | **Direct CLI** | `az managedcleanroom frontend analytics query publish --body @file`, `consent set --consent-action enable`, `query show` |
 | 9 | Vote on query | **Direct CLI** | `az managedcleanroom frontend analytics query vote accept` (×2), `query show` |
 | 10 | Run query | **Direct CLI** | `az managedcleanroom frontend analytics query run`, `query runresult show` (polling) |
-| 11 | View results | **Direct CLI** | `az managedcleanroom frontend analytics query runhistory list`, `auditevent list` |
+| 11 | View results | **Direct CLI** | `az keyvault secret show` (wrapped DEK), RSA unwrap (local KEK PEM), `az storage blob list`, `Invoke-RestMethod` (CPK download), `az managedcleanroom frontend analytics query runhistory list`, `auditevent list` |
 
 > **No `az cleanroom` dependency.** All steps use standard Azure CLI or the `az managedcleanroom` extension.

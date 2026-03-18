@@ -536,7 +536,43 @@ $result | ConvertTo-Json -Depth 10
 
 ## Step 11: View results
 
-View run history and audit events:
+Once the query completes, the results are written to Woodgrove's output
+storage container (`woodgrove-output`). Since SSE mode is used, Azure Storage
+handles decryption transparently &mdash; you can download the results directly.
+
+**11a. List output blobs:**
+
+```powershell
+az storage blob list `
+    --account-name $StorageAccount `
+    --container-name "woodgrove-output" `
+    --auth-mode login `
+    --output table
+```
+
+**11b. Download results:**
+
+```powershell
+$ResultsDir = "./results"
+New-Item -ItemType Directory -Path $ResultsDir -Force | Out-Null
+
+az storage blob download-batch `
+    --account-name $StorageAccount `
+    --source "woodgrove-output" `
+    --destination $ResultsDir `
+    --auth-mode login
+```
+
+**11c. View the downloaded data:**
+
+```powershell
+Get-ChildItem $ResultsDir -Recurse -File | ForEach-Object {
+    Write-Host "--- $($_.Name) ---" -ForegroundColor Cyan
+    Get-Content $_.FullName | Select-Object -First 20
+}
+```
+
+**11d. View run history and audit events:**
 
 ```powershell
 # Query run history
@@ -600,6 +636,6 @@ the query (Step 8).
 | 8 | Publish query | Direct CLI | Query specification JSON + `az managedcleanroom frontend analytics query publish --body @file`, `consent set --consent-action enable` |
 | 9 | Vote on query | Direct CLI | `az managedcleanroom frontend analytics query vote accept` |
 | 10 | Run query | Direct CLI | `az managedcleanroom frontend analytics query run`, `query runresult show` (polling) |
-| 11 | View results | Direct CLI | `az managedcleanroom frontend analytics query runhistory list`, `auditevent list` |
+| 11 | View results | Direct CLI | `az storage blob list`, `az storage blob download-batch`, `az managedcleanroom frontend analytics query runhistory list`, `auditevent list` |
 
 > **No `az cleanroom` dependency.** All steps use standard Azure CLI or the `az managedcleanroom` extension.
