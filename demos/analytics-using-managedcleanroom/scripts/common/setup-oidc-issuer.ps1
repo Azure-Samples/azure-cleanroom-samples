@@ -22,14 +22,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
-# Runs an az command, returning $null instead of throwing if it fails.
-function Invoke-AzSafe {
-    param([string[]]$Arguments)
-    $PSNativeCommandUseErrorActionPreference = $false
-    $result = & az @Arguments 2>$null
-    if ($LASTEXITCODE -eq 0) { return $result }
-    return $null
-}
+. "$PSScriptRoot/utils.ps1"
 
 # -- Load generated resource names -----------------------------------------------
 $namesFile = Join-Path $outDir $resourceGroup "names.generated.ps1"
@@ -42,15 +35,6 @@ if (-not (Test-Path $namesFile)) {
 $outputDir = Join-Path $outDir $resourceGroup
 if (-not (Test-Path $outputDir)) {
     New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-}
-
-function Get-ResourceNameHash {
-    param([string]$seed)
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($seed)
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    $hash = $sha.ComputeHash($bytes)
-    $hex = -join ($hash | ForEach-Object { $_.ToString("x2") })
-    return $hex
 }
 
 $subscriptionId = az account show --query id -o tsv

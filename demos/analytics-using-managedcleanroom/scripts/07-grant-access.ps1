@@ -5,8 +5,8 @@
 .DESCRIPTION
     Run by: Each collaborator (Northwind and Woodgrove).
     Configures RBAC roles and federated credentials so the cleanroom workload
-    can access the collaborator's storage account. For SSE, Key Vault access
-    is not required (no client-side encryption keys).
+    can access the collaborator's storage account. For CPK, also grants
+    Key Vault access (Crypto Officer + Secrets User).
 
     Prerequisites:
     - 04-prepare-resources.ps1 must have been run.
@@ -15,8 +15,11 @@
 .PARAMETER resourceGroup
     Azure resource group containing the resources.
 
-.PARAMETER collaborationName
-    Name of the collaboration resource.
+.PARAMETER variant
+    Encryption variant: "sse" or "cpk".
+
+.PARAMETER collaborationId
+    Collaboration identifier.
 
 .PARAMETER contractId
     Contract identifier used to compute the federation subject (default: analytics).
@@ -30,6 +33,10 @@
 param(
     [Parameter(Mandatory)]
     [string]$resourceGroup,
+
+    [Parameter(Mandatory)]
+    [ValidateSet("sse", "cpk")]
+    [string]$variant,
 
     [Parameter(Mandatory)]
     [string]$collaborationId,
@@ -58,14 +65,15 @@ $subject = "$contractId-$userId"
 Write-Host "Granting access for subject: $subject" -ForegroundColor Cyan
 Write-Host "Issuer URL: $issuerUrl" -ForegroundColor Yellow
 
-# Call common setup-access.ps1 without Key Vault setup (SSE doesn't need KV for the cleanroom).
-Write-Host "`n=== Setting up access ===" -ForegroundColor Cyan
+# Call common setup-access.ps1. CPK needs Key Vault RBAC; SSE does not.
+$setupKv = ($variant -eq "cpk")
+Write-Host "`n=== Setting up access ($variant) ===" -ForegroundColor Cyan
 & "$PSScriptRoot/common/setup-access.ps1" `
     -resourceGroup $resourceGroup `
     -collaborationId $collaborationId `
     -subject $subject `
     -issuerUrl $issuerUrl `
     -outDir $outDir `
-    -setupKeyVault:$false
+    -setupKeyVault:$setupKv
 
 Write-Host "`nAccess granted for subject '$subject'." -ForegroundColor Green

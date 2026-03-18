@@ -1,0 +1,36 @@
+{
+  "inputDatasets": {
+    "northwind": {
+      "schema": {
+        "format": "csv",
+        "fields": [
+          { "fieldName": "audience_id", "fieldType": "string" },
+          { "fieldName": "hashed_email", "fieldType": "string" },
+          { "fieldName": "annual_income", "fieldType": "long" },
+          { "fieldName": "region", "fieldType": "string" }
+        ]
+      },
+      "allowedFields": ["hashed_email", "annual_income", "region"]
+    },
+    "woodgrove": {
+      "schema": {
+        "format": "csv",
+        "fields": [
+          { "fieldName": "user_id", "fieldType": "string" },
+          { "fieldName": "hashed_email", "fieldType": "string" },
+          { "fieldName": "purchase_history", "fieldType": "string" }
+        ]
+      },
+      "allowedFields": ["hashed_email", "purchase_history"]
+    }
+  },
+  "outputDataset": {
+    "schema": {
+      "format": "csv",
+      "fields": [
+        { "fieldName": "user_id", "fieldType": "string" }
+      ]
+    },
+    "allowedFields": ["user_id"]
+  }
+}

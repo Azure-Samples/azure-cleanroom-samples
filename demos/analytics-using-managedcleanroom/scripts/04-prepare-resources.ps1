@@ -1,19 +1,20 @@
 <#
 .SYNOPSIS
-    Provisions Azure resources for the SSE analytics scenario.
+    Provisions Azure resources for an analytics scenario (SSE or CPK).
 
 .DESCRIPTION
     Run by: Each collaborator (Northwind and Woodgrove).
-    Calls the common prepare-resources.ps1 script with storageType "blob"
-    to create a storage account, Key Vault, and managed identity.
+    Calls the common prepare-resources.ps1 script to create a resource group,
+    storage account, managed identity and RBAC assignments.
 
-    For SSE (Server-Side Encryption), Azure Storage handles encryption at rest.
-    No client-side encryption keys are needed.
-
-    Prerequisites: Azure CLI logged in with appropriate permissions.
+    - SSE: Skips Key Vault (Azure handles encryption at rest).
+    - CPK: Creates a Key Vault (Premium SKU) for encryption keys.
 
 .PARAMETER resourceGroup
     Azure resource group for provisioning resources.
+
+.PARAMETER variant
+    Encryption variant: "sse" (server-side) or "cpk" (customer-provided key).
 
 .PARAMETER location
     Azure region (default: westus).
@@ -25,6 +26,10 @@ param(
     [Parameter(Mandatory)]
     [string]$resourceGroup,
 
+    [Parameter(Mandatory)]
+    [ValidateSet("sse", "cpk")]
+    [string]$variant,
+
     [string]$location = "westus",
 
     [string]$outDir = "./generated"
@@ -33,13 +38,16 @@ param(
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
-Write-Host "Preparing resources for SSE analytics scenario..." -ForegroundColor Cyan
-Write-Host "Storage type: blob (SSE - server-side encryption)" -ForegroundColor Yellow
+$label = if ($variant -eq "sse") { "SSE — server-side encryption" } else { "CPK — customer-provided key" }
+Write-Host "Preparing resources for $label scenario..." -ForegroundColor Cyan
+
+$skipKv = ($variant -eq "sse")
 
 & "$PSScriptRoot/common/prepare-resources.ps1" `
     -resourceGroup $resourceGroup `
     -location $location `
     -outDir $outDir `
-    -storageType blob
+    -storageType blob `
+    -skipKeyVault:$skipKv
 
 Write-Host "`nResource preparation complete." -ForegroundColor Green
