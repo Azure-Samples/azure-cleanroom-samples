@@ -186,17 +186,9 @@ if (-not (Test-Path $tempDir)) {
 # -- Publish input dataset ------------------------------------------------------
 Write-Host "=== Publishing input dataset '$($inputMeta.name)' ===" -ForegroundColor Cyan
 
-$inputBodyJson = New-DatasetBody `
-    -Meta $inputMeta `
-    -Identity $identityMeta `
-    -AccessMode "read" `
-    -AllowedFields @("date", "author", "mentions")
+$inputSchemaFile = Join-Path $tempDir "$persona-input-schema.json"
+$inputMeta.schema | ConvertTo-Json -Depth 10 | Out-File -FilePath $inputSchemaFile -Encoding utf8
 
-$inputBodyFile = Join-Path $tempDir "$persona-input-dataset-body.json"
-$inputBodyJson | Out-File -FilePath $inputBodyFile -Encoding utf8
-Write-Host "Dataset specification saved to: $inputBodyFile" -ForegroundColor Yellow
-
-# Check if already published (skip if so — idempotency).
 $existingInput = Invoke-AzSafe @("managedcleanroom", "frontend", "analytics", "dataset", "show", "--collaboration-id", $collaborationId, "--document-id", $inputMeta.name)
 if ($existingInput) {
     Write-Host "Input dataset '$($inputMeta.name)' already published (skipped)." -ForegroundColor Yellow
@@ -204,7 +196,18 @@ if ($existingInput) {
     az managedcleanroom frontend analytics dataset publish `
         --collaboration-id $collaborationId `
         --document-id $inputMeta.name `
-        --body "@$inputBodyFile"
+        --storage-account-url $inputMeta.storeUrl `
+        --container-name $inputMeta.containerName `
+        --storage-account-type $inputMeta.storeType `
+        --encryption-mode "SSE" `
+        --schema-file "@$inputSchemaFile" `
+        --schema-format $inputMeta.schema.format `
+        --access-mode "read" `
+        --allowed-fields "date,author,mentions" `
+        --identity-name $identityMeta.identityName `
+        --identity-client-id $identityMeta.clientId `
+        --identity-tenant-id $identityMeta.tenantId `
+        --identity-issuer-url "https://cgs/oidc"
     Write-Host "Input dataset published." -ForegroundColor Green
 }
 
@@ -216,16 +219,9 @@ az managedcleanroom frontend analytics dataset show `
 if ($persona -eq "woodgrove" -and $datastoreMeta.output) {
     Write-Host "`n=== Publishing output dataset '$($datastoreMeta.output.name)' ===" -ForegroundColor Cyan
 
-    $outputBodyJson = New-DatasetBody `
-        -Meta $datastoreMeta.output `
-        -Identity $identityMeta `
-        -AccessMode "write" `
-        -AllowedFields @("author", "Number_Of_Mentions")
+    $outputSchemaFile = Join-Path $tempDir "woodgrove-output-schema.json"
+    $datastoreMeta.output.schema | ConvertTo-Json -Depth 10 | Out-File -FilePath $outputSchemaFile -Encoding utf8
 
-    $outputBodyFile = Join-Path $tempDir "woodgrove-output-dataset-body.json"
-    $outputBodyJson | Out-File -FilePath $outputBodyFile -Encoding utf8
-
-    # Check if already published (skip if so).
     $existingOutput = Invoke-AzSafe @("managedcleanroom", "frontend", "analytics", "dataset", "show", "--collaboration-id", $collaborationId, "--document-id", $datastoreMeta.output.name)
     if ($existingOutput) {
         Write-Host "Output dataset '$($datastoreMeta.output.name)' already published (skipped)." -ForegroundColor Yellow
@@ -233,7 +229,18 @@ if ($persona -eq "woodgrove" -and $datastoreMeta.output) {
         az managedcleanroom frontend analytics dataset publish `
             --collaboration-id $collaborationId `
             --document-id $datastoreMeta.output.name `
-            --body "@$outputBodyFile"
+            --storage-account-url $datastoreMeta.output.storeUrl `
+            --container-name $datastoreMeta.output.containerName `
+            --storage-account-type $datastoreMeta.output.storeType `
+            --encryption-mode "SSE" `
+            --schema-file "@$outputSchemaFile" `
+            --schema-format $datastoreMeta.output.schema.format `
+            --access-mode "write" `
+            --allowed-fields "author,Number_Of_Mentions" `
+            --identity-name $identityMeta.identityName `
+            --identity-client-id $identityMeta.clientId `
+            --identity-tenant-id $identityMeta.tenantId `
+            --identity-issuer-url "https://cgs/oidc"
         Write-Host "Output dataset published." -ForegroundColor Green
     }
 
