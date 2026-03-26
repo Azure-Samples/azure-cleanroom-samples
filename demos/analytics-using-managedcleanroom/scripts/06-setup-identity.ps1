@@ -28,6 +28,9 @@
 
 .PARAMETER outDir
     Output directory for generated metadata (default: ./generated).
+
+.PARAMETER persona
+    Persona (northwind or woodgrove) for naming/logging.
 #>
 param(
     [Parameter(Mandatory)]
@@ -45,6 +48,9 @@ param(
 
     [string]$outDir = "./generated"
 )
+
+# Configure Private CleanRoom cloud and verify local user auth
+. "$PSScriptRoot/common/setup-local-auth.ps1"
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true

@@ -81,6 +81,47 @@ if ($setupKeyVault) {
     Write-Host "Key Vault role assignments complete." -ForegroundColor Green
 }
 
+# -- Wait for RBAC propagation --------------------------------------------------
+Write-Host "`nWaiting for RBAC propagation..." -ForegroundColor Cyan
+Write-Host "Role assignments can take 60-120 seconds to propagate..." -ForegroundColor Yellow
+Write-Host "Waiting 90 seconds..." -ForegroundColor Yellow
+Start-Sleep -Seconds 90
+
+# Verify storage role is queryable
+Write-Host "Verifying storage role assignment..." -ForegroundColor Yellow
+$maxRetries = 10
+$retryInterval = 15
+$rolesVerified = $false
+
+for ($i = 1; $i -le $maxRetries; $i++) {
+    $assignments = Invoke-AzSafe @("role", "assignment", "list", 
+        "--assignee", $principalId, 
+        "--scope", $storageId)
+    
+    if ($assignments) {
+        $assignmentsList = $assignments | ConvertFrom-Json
+        $storageRoleFound = $assignmentsList | Where-Object { $_.roleDefinitionName -eq "Storage Blob Data Owner" }
+        
+        if ($storageRoleFound) {
+            Write-Host "  Storage role assignment verified." -ForegroundColor Green
+            $rolesVerified = $true
+            break
+        }
+    }
+    
+    if ($i -lt $maxRetries) {
+        Write-Host "  Role not yet queryable. Retrying in $retryInterval seconds (attempt $i/$maxRetries)..." -ForegroundColor Yellow
+        Start-Sleep -Seconds $retryInterval
+    }
+}
+
+if (-not $rolesVerified) {
+    Write-Host "  WARNING: Could not verify role assignment. It may still be propagating." -ForegroundColor Yellow
+    Write-Host "  Proceeding anyway - dataset publishing may need to retry if permissions aren't ready." -ForegroundColor Yellow
+}
+
+Write-Host "RBAC propagation wait complete." -ForegroundColor Green
+
 # -- Federated Credential -------------------------------------------------------
 $federationName = "$subject-federation"
 Write-Host "Creating federated credential '$federationName'..." -ForegroundColor Cyan

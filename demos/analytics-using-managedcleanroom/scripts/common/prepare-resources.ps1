@@ -82,6 +82,29 @@ $storageJson = az @storageArgs | ConvertFrom-Json
 $storageId = $storageJson.id
 Write-Host "Storage account '$storageAccountName' created." -ForegroundColor Green
 
+# Poll for storage account to be fully available
+Write-Host "Waiting for storage account to be fully provisioned..." -ForegroundColor Yellow
+$maxRetries = 15
+$retryInterval = 10
+
+for ($i = 1; $i -le $maxRetries; $i++) {
+    $PSNativeCommandUseErrorActionPreference = $false
+    $accountState = az storage account show --name $storageAccountName --resource-group $resourceGroup --query "provisioningState" -o tsv 2>$null
+    
+    if ($accountState -eq "Succeeded") {
+        Write-Host "  Storage account is ready." -ForegroundColor Green
+        break
+    }
+    
+    if ($i -lt $maxRetries) {
+        Write-Host "  Provisioning state: $accountState. Waiting $retryInterval seconds (attempt $i/$maxRetries)..." -ForegroundColor Yellow
+        Start-Sleep -Seconds $retryInterval
+    }
+    else {
+        Write-Host "  WARNING: Storage account may not be fully ready after $($maxRetries * $retryInterval) seconds." -ForegroundColor Yellow
+    }
+}
+
 # -- Key Vault -------------------------------------------------------------------
 Write-Host "Creating Key Vault '$keyVaultName' (premium, RBAC)..." -ForegroundColor Cyan
 $existingKv = Invoke-AzSafe @("keyvault", "show", "--name", $keyVaultName, "--resource-group", $resourceGroup, "--output", "json")
@@ -122,15 +145,36 @@ if ($existingId) {
 }
 
 # -- RBAC Role Assignments ------------------------------------------------------
-Write-Host "Assigning RBAC roles to the logged-in user..." -ForegroundColor Cyan
-$callerObjectId = az ad signed-in-user show --query id -o tsv
+Write-Host "Assigning RBAC roles to the caller..." -ForegroundColor Cyan
 
-# Key Vault roles (skip if already assigned)
-Invoke-AzSafe @("role", "assignment", "create", "--role", "Key Vault Crypto Officer", "--assignee-object-id", $callerObjectId, "--assignee-principal-type", "User", "--scope", $kvId, "--output", "none")
-Invoke-AzSafe @("role", "assignment", "create", "--role", "Key Vault Secrets Officer", "--assignee-object-id", $callerObjectId, "--assignee-principal-type", "User", "--scope", $kvId, "--output", "none")
+# Detect whether we are logged in as a user or a service principal.
+$accountInfo = az account show --query "user" -o json 2>$null | ConvertFrom-Json
+$principalType = "User"
+$callerObjectId = $null
 
-# Storage role (skip if already assigned)
-Invoke-AzSafe @("role", "assignment", "create", "--role", "Storage Blob Data Contributor", "--assignee-object-id", $callerObjectId, "--assignee-principal-type", "User", "--scope", $storageId, "--output", "none")
+if ($accountInfo.type -eq "servicePrincipal") {
+    Write-Host "  Detected service principal login." -ForegroundColor Yellow
+    $PSNativeCommandUseErrorActionPreference = $false
+    $callerObjectId = az ad sp show --id $accountInfo.name --query id -o tsv 2>$null
+    $PSNativeCommandUseErrorActionPreference = $true
+    $principalType = "ServicePrincipal"
+} else {
+    # Normal user login
+    $callerObjectId = az ad signed-in-user show --query id -o tsv
+}
+
+if (-not $callerObjectId) {
+    Write-Warning "Could not determine caller object ID - skipping RBAC role assignments."
+} else {
+    Write-Host "  Caller object ID: $callerObjectId (type: $principalType)" -ForegroundColor Gray
+
+    # Key Vault roles (skip if already assigned)
+    Invoke-AzSafe @("role", "assignment", "create", "--role", "Key Vault Crypto Officer", "--assignee-object-id", $callerObjectId, "--assignee-principal-type", $principalType, "--scope", $kvId, "--output", "none")
+    Invoke-AzSafe @("role", "assignment", "create", "--role", "Key Vault Secrets Officer", "--assignee-object-id", $callerObjectId, "--assignee-principal-type", $principalType, "--scope", $kvId, "--output", "none")
+
+    # Storage role (skip if already assigned)
+    Invoke-AzSafe @("role", "assignment", "create", "--role", "Storage Blob Data Contributor", "--assignee-object-id", $callerObjectId, "--assignee-principal-type", $principalType, "--scope", $storageId, "--output", "none")
+}
 
 Write-Host "RBAC role assignments completed." -ForegroundColor Green
 

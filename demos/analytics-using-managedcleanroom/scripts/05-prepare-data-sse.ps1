@@ -38,6 +38,9 @@ param(
     [string]$outDir = "./generated"
 )
 
+# Configure Private CleanRoom cloud and verify local user auth
+. "$PSScriptRoot/common/setup-local-auth.ps1"
+
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 

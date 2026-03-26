@@ -1,0 +1,4 @@
+{
+  "data": "SELECT author, COUNT(*) AS Total_Tweets, COUNT(DISTINCT CASE WHEN mentions IS NOT NULL AND mentions != '' THEN mentions END) AS Unique_Mentions FROM (SELECT * FROM publisher_view UNION ALL SELECT * FROM consumer_view) AS combined_data GROUP BY author ORDER BY Total_Tweets DESC LIMIT 10",
+  "executionSequence": 2
+}

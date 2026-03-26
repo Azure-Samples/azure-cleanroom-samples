@@ -68,6 +68,9 @@
 
 .PARAMETER outDir
     Output directory for generated configuration files (default: ./generated).
+
+.PARAMETER persona
+    Persona (northwind or woodgrove) for naming/logging.
 #>
 param(
     [Parameter(Mandatory)]
@@ -82,6 +85,28 @@ param(
 
     [string]$outDir = "./generated"
 )
+
+# Configure Private CleanRoom cloud for dogfood environment
+Write-Host "Configuring Private CleanRoom cloud..." -ForegroundColor Cyan
+$env:UsePrivateCleanRoomNamespace = "true"
+$privateCloudName = "PrivateCleanroomAzureCloud"
+
+# Register the private cloud if not already registered
+$existingCloud = az cloud list --query "[?name=='$privateCloudName']" -o json 2>$null | ConvertFrom-Json
+if (-not $existingCloud) {
+    Write-Host "  Registering Private CleanRoom cloud..." -ForegroundColor Yellow
+    az cloud register --name $privateCloudName --endpoint-resource-manager "https://eastus2euap.management.azure.com/" 2>&1 | Out-Null
+    Write-Host "  Private CleanRoom cloud registered." -ForegroundColor Green
+}
+
+# Set and login with managed identity
+az cloud set --name $privateCloudName 2>&1 | Out-Null
+az login --identity --allow-no-subscriptions 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Failed to login with managed identity"
+    exit 1
+}
+Write-Host "Private CleanRoom cloud configuration complete." -ForegroundColor Green
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true

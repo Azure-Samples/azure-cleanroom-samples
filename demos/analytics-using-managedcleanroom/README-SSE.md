@@ -42,6 +42,7 @@ This walkthrough demonstrates multi-party big data analytics using a **Managed C
   - [Audit events](#audit-events)
 
 - [Appendix: CLI commands per step](#appendix-cli-commands-per-step)
+- [Local Testing Notes](#local-testing-notes)
 
 ## Overview
 
@@ -973,3 +974,101 @@ Events include query execution start/completion, input/output row counts, datase
 | 12 | View results | `managedcleanroom` | `az managedcleanroom frontend analytics query runhistory list`, `auditevent list` |
 
 > **No `az cleanroom` dependency.** All steps use standard Azure CLI or the publicly available `az managedcleanroom` extension. Step 8 constructs the DatasetSpecification JSON natively in PowerShell.
+
+---
+
+## Local Testing Notes
+
+This section documents practical learnings from running the E2E flow locally (single user, both personas, no VMs).
+
+### Python 3.13 CLI Bug — Use Direct REST Instead
+
+The `az managedcleanroom frontend` CLI extension fails on Python 3.13:
+```
+AttributeError: 'tuple' object has no attribute 'token'
+```
+
+`Profile.get_raw_token()` returns a tuple in Python 3.13, but `BearerTokenCredentialPolicy` expects an `AccessToken` object. The bug affects all `az managedcleanroom frontend analytics` commands (dataset publish, query publish, vote, run, etc.).
+
+**Workaround**: Scripts 08-12 use direct REST calls via `scripts/common/frontend-rest-helpers.ps1` instead of the CLI. This helper library provides PowerShell wrappers for all frontend API endpoints. See `E2E-TEST-FINDINGS.md` for the full API reference.
+
+### MSAL IdToken for MSA Guest Accounts
+
+If the collaborator account is an MSA guest (e.g., `user@gmail.com` invited to an MSFT-tenant collaboration), ARM access tokens will not work for frontend authentication. The frontend service reads claims `preferred_username -> upn -> sub`, and MSA ARM tokens lack the first two, falling back to an opaque pairwise `sub` identifier that causes `InvalidUserIdentifier` errors.
+
+**Fix**: Use MSAL device-code flow to obtain an IdToken:
+
+```powershell
+Install-Module MSAL.PS -Scope CurrentUser -Force
+$token = Get-MsalToken -ClientId "8a3849c1-81c5-4d62-b83e-3bb2bb11251a" `
+    -TenantId "common" -Scopes "User.Read" -DeviceCode
+$token.IdToken | Out-File -FilePath "/tmp/msal-idtoken.txt" -NoNewline
+```
+
+The `frontend-rest-helpers.ps1` `Get-FrontendToken` function will automatically pick up the cached IdToken from `/tmp/msal-idtoken.txt`. Priority chain:
+1. `$env:CLEANROOM_FRONTEND_TOKEN` (environment variable override)
+2. `/tmp/msal-idtoken.txt` (cached MSAL IdToken)
+3. `az account get-access-token` (ARM fallback — fails for MSA guests)
+
+### Local Auth Setup (`setup-local-auth.ps1`)
+
+Scripts 04-12 dot-source `scripts/common/setup-local-auth.ps1` which replaces VM managed identity boilerplate. It:
+- Verifies the user is logged in via `az login`
+- Ensures the active cloud is `AzureCloud` (scripts 04-12 do not need `PrivateCleanroomAzureCloud`)
+- Sets `$env:UsePrivateCleanRoomNamespace = "true"`
+- Optionally switches the active subscription
+
+No VMs or managed identities are required for the test runner — the user's own `az login` credentials handle all ARM operations.
+
+### OIDC Whitelisted Storage Account (MSFT-Hosted Collaborations)
+
+When a collaboration is hosted in the MSFT internal tenant (`72f988bf-...`), the OIDC issuer URL must point to a **whitelisted** storage account. Azure AD rejects federated identity credentials with arbitrary issuer URLs.
+
+A pre-provisioned whitelisted storage account is available:
+
+| Property | Value |
+|---|---|
+| SA Name | `cleanroomoidc` |
+| Resource Group | `azcleanroom-ctest-rg` |
+| Subscription | `AzureCleanRoom-NonProd` (`fccb68eb-8ccf-49a6-a69a-7ea3c2867e9c`) |
+| Static Website URL | `https://cleanroomoidc.z22.web.core.windows.net` |
+
+To upload OIDC documents to this SA, log in as an account with `Storage Blob Data Contributor` on the `fccb68eb-...` subscription, then upload:
+
+```powershell
+az storage blob upload --account-name cleanroomoidc --container-name '$web' `
+    --name "$collaborationId/.well-known/openid-configuration" `
+    --file ./openid-configuration.json --content-type "application/json" `
+    --overwrite --auth-mode login
+
+az storage blob upload --account-name cleanroomoidc --container-name '$web' `
+    --name "$collaborationId/openid/v1/jwks" `
+    --file ./jwks.json --content-type "application/json" `
+    --overwrite --auth-mode login
+```
+
+Verify public accessibility:
+```bash
+curl https://cleanroomoidc.z22.web.core.windows.net/$collaborationId/.well-known/openid-configuration
+curl https://cleanroomoidc.z22.web.core.windows.net/$collaborationId/openid/v1/jwks
+```
+
+> [!NOTE]
+> After calling `setIssuerUrl` from an MSA account, the issuer info shows `issuerUrl: null` at the top level. The per-tenant `tenantData.issuerUrl` is set correctly. The top-level field may only be settable by the collaboration owner.
+
+### frontend-rest-helpers.ps1 Quick Reference
+
+Key functions for making frontend REST calls:
+
+| Function | Description |
+|---|---|
+| `New-FrontendContext -Endpoint $url -CollaborationId $id` | Creates context hashtable |
+| `Get-FrontendToken` | Resolves auth token via priority chain |
+| `Publish-FrontendDataset -Context $ctx -DocId $id -Body $obj` | Publish dataset |
+| `Set-FrontendConsent -Context $ctx -DocId $id -Action enable` | Enable execution consent |
+| `Publish-FrontendQuery -Context $ctx -DocId $id -Body $obj` | Publish query |
+| `Invoke-FrontendQueryVoteAccept -Context $ctx -DocId $id` | Vote accept |
+| `Invoke-FrontendQueryRun -Context $ctx -DocId $id` | Submit query run |
+| `Get-FrontendQueryRunResult -Context $ctx -JobId $id` | Poll run result |
+
+All functions use `-SkipCertificateCheck` (dogfood self-signed cert) and append `?api-version=2026-03-01-preview` automatically.

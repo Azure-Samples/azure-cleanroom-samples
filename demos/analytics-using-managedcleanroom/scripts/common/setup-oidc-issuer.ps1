@@ -16,7 +16,9 @@ param(
     [Parameter(Mandatory)]
     [string]$frontendEndpoint,
 
-    [string]$outDir = "./generated"
+    [string]$outDir = "./generated",
+
+    [string]$apiVersion = "2026-03-01-preview"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -77,16 +79,33 @@ az storage blob service-properties update `
     --auth-mode login `
     --output none
 
-# -- RBAC for logged-in user -----------------------------------------------------
+# -- RBAC for the caller ---------------------------------------------------------
 $oidcStorageId = az storage account show `
     --name $oidcStorageAccountName `
     --resource-group $resourceGroup `
     --query id -o tsv
 
-$callerObjectId = az ad signed-in-user show --query id -o tsv
+# Detect whether we are logged in as a user or a service principal.
+$accountInfo = az account show --query "user" -o json 2>$null | ConvertFrom-Json
+$principalType = "User"
+$callerObjectId = $null
+
+if ($accountInfo.type -eq "servicePrincipal") {
+    Write-Host "  Detected service principal login." -ForegroundColor Yellow
+    $PSNativeCommandUseErrorActionPreference = $false
+    $callerObjectId = az ad sp show --id $accountInfo.name --query id -o tsv 2>$null
+    $PSNativeCommandUseErrorActionPreference = $true
+    $principalType = "ServicePrincipal"
+} else {
+    $callerObjectId = az ad signed-in-user show --query id -o tsv
+}
 
 Write-Host "Assigning 'Storage Blob Data Contributor' on OIDC storage account..." -ForegroundColor Cyan
-Invoke-AzSafe @("role", "assignment", "create", "--role", "Storage Blob Data Contributor", "--assignee-object-id", $callerObjectId, "--assignee-principal-type", "User", "--scope", $oidcStorageId, "--output", "none")
+if ($callerObjectId) {
+    Invoke-AzSafe @("role", "assignment", "create", "--role", "Storage Blob Data Contributor", "--assignee-object-id", $callerObjectId, "--assignee-principal-type", $principalType, "--scope", $oidcStorageId, "--output", "none")
+} else {
+    Write-Warning "Could not determine caller object ID - skipping OIDC storage RBAC."
+}
 
 # -- Retrieve Static Website URL ------------------------------------------------
 Write-Host "Retrieving static website URL..." -ForegroundColor Cyan
@@ -118,21 +137,51 @@ $openidConfig | Out-File -FilePath $openidConfigPath -Encoding utf8
 # The frontend exposes JWKS at GET /collaborations/{id}/oidc/keys, but no CLI command
 # wraps it yet. We call the endpoint directly using the configured frontend endpoint.
 
+# $frontendEndpoint may already include /collaborations — normalize to base URL.
+$feBase = $frontendEndpoint.TrimEnd('/')
+if ($feBase.EndsWith('/collaborations')) {
+    $feBase = $feBase.Substring(0, $feBase.Length - '/collaborations'.Length)
+}
+
 Write-Host "Fetching OIDC issuer info from managed cleanroom..." -ForegroundColor Cyan
-$oidcIssuerInfo = az managedcleanroom frontend oidc issuerinfo show `
-    --collaboration-id $collaborationId | ConvertFrom-Json
 
-Write-Host "OIDC issuer info:" -ForegroundColor Yellow
-$oidcIssuerInfo | ConvertTo-Json -Depth 5
+# Token resolution for frontend calls: env var → cached MSAL IdToken → ARM token.
+# MSA guest accounts need MSAL IdToken (ARM tokens lack preferred_username claim).
+function Get-FrontendTokenLocal {
+    if ($env:CLEANROOM_FRONTEND_TOKEN) { return $env:CLEANROOM_FRONTEND_TOKEN }
+    $msalFile = "/tmp/msal-idtoken.txt"
+    if (Test-Path $msalFile) {
+        $t = (Get-Content $msalFile -Raw).Trim()
+        if ($t) { return $t }
+    }
+    return (az account get-access-token --query accessToken -o tsv)
+}
 
-Write-Host "Fetching JWKS from frontend endpoint (direct REST call)..." -ForegroundColor Cyan
-$token = az account get-access-token --query accessToken -o tsv
+$token = Get-FrontendTokenLocal
 $headers = @{
     Authorization  = "Bearer $token"
     "Content-Type" = "application/json"
 }
-$jwksUrl = "$($frontendEndpoint.TrimEnd('/'))/collaborations/$collaborationId/oidc/keys"
-$jwksResponse = Invoke-RestMethod -Uri $jwksUrl -Headers $headers -Method Get
+
+$oidcInfoUrl = "$feBase/collaborations/$collaborationId/oidc/issuerinfo?api-version=$apiVersion"
+Write-Host "  GET $oidcInfoUrl" -ForegroundColor Gray
+try {
+    $oidcIssuerInfo = Invoke-RestMethod -Uri $oidcInfoUrl -Headers $headers -Method Get -SkipCertificateCheck
+    Write-Host "OIDC issuer info:" -ForegroundColor Yellow
+    $oidcIssuerInfo | ConvertTo-Json -Depth 5
+} catch {
+    Write-Warning "Failed to fetch OIDC issuer info: $_"
+    Write-Host "  Continuing anyway (issuer info is informational only)..." -ForegroundColor Yellow
+}
+
+Write-Host "Fetching JWKS from frontend endpoint (direct REST call)..." -ForegroundColor Cyan
+$token = Get-FrontendTokenLocal
+$headers = @{
+    Authorization  = "Bearer $token"
+    "Content-Type" = "application/json"
+}
+$jwksUrl = "$feBase/collaborations/$collaborationId/oidc/keys?api-version=$apiVersion"
+$jwksResponse = Invoke-RestMethod -Uri $jwksUrl -Headers $headers -Method Get -SkipCertificateCheck
 $jwksJson = $jwksResponse | ConvertTo-Json -Depth 10
 
 $jwksPath = Join-Path $outputDir "jwks.json"
@@ -169,13 +218,19 @@ az storage blob upload `
 # command wraps it yet (confirmed: only `oidc issuerinfo show` exists in the CLI).
 
 Write-Host "Registering issuer URL with managed cleanroom (direct REST call)..." -ForegroundColor Cyan
+$token = Get-FrontendTokenLocal
+$headers = @{
+    Authorization  = "Bearer $token"
+    "Content-Type" = "application/json"
+}
 $setIssuerBody = @{ url = $issuerUrl } | ConvertTo-Json
 Invoke-RestMethod `
-    -Uri "$($frontendEndpoint.TrimEnd('/'))/collaborations/$collaborationId/oidc/setIssuerUrl" `
+    -Uri "$feBase/collaborations/$collaborationId/oidc/setIssuerUrl?api-version=$apiVersion" `
     -Headers $headers `
     -Method Post `
     -Body $setIssuerBody `
-    -ContentType "application/json"
+    -ContentType "application/json" `
+    -SkipCertificateCheck
 Write-Host "Issuer URL registered with CGS." -ForegroundColor Green
 
 # -- Save issuer URL ------------------------------------------------------------
