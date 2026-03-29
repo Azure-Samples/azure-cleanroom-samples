@@ -416,7 +416,7 @@ az storage blob download --account-name $woodgroveSA `
 
 **Symptom**: `'tuple' object has no attribute 'token'` on `az managedcleanroom frontend` commands.
 
-**Fix**: Use direct REST calls via `frontend-rest-helpers.ps1` (all scripts already do this).
+**Fix**: Use direct REST calls via `frontend-helpers.ps1` (all scripts already do this).
 
 ### PENDING_RERUN State
 

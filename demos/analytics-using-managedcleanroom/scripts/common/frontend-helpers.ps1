@@ -327,6 +327,13 @@ function Invoke-AzCli {
     <#
     .SYNOPSIS
         Runs an az CLI command, parses JSON output, throws on failure.
+    .NOTES
+        Temporarily disables $PSNativeCommandUseErrorActionPreference to prevent
+        PowerShell from throwing NativeCommandExitException when az writes warnings
+        to stderr (e.g., SSL verification disabled, token source messages). Without
+        this, callers that set $PSNativeCommandUseErrorActionPreference = $true
+        (like the numbered E2E scripts) would see false failures on successful
+        commands that happen to emit stderr output.
     #>
     param(
         [string[]]$Arguments,
@@ -335,21 +342,31 @@ function Invoke-AzCli {
     $logPrefix = if ($Description) { "$Description — " } else { "" }
     Write-Host "  ${logPrefix}az $($Arguments -join ' ')" -ForegroundColor DarkGray
 
-    $result = & az @Arguments 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        $errText = $result -join "`n"
-        Write-Host "  ERROR: az command failed: $errText" -ForegroundColor Red
-        throw "CLI command failed: az $($Arguments -join ' ')`n$errText"
-    }
-    if ($result) {
-        try {
-            return ($result | ConvertFrom-Json)
-        } catch {
-            # Not JSON output — return raw
-            return $result
+    $savedPref = $PSNativeCommandUseErrorActionPreference
+    $PSNativeCommandUseErrorActionPreference = $false
+    try {
+        $result = & az @Arguments 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $errText = $result -join "`n"
+            Write-Host "  ERROR: az command failed: $errText" -ForegroundColor Red
+            throw "CLI command failed: az $($Arguments -join ' ')`n$errText"
         }
+        # Filter out stderr ErrorRecord objects that 2>&1 captures alongside
+        # stdout strings (e.g., SSL verification warnings). Only pass actual
+        # string output to the JSON parser.
+        $stdout = $result | Where-Object { $_ -is [string] }
+        if ($stdout) {
+            try {
+                return ($stdout | ConvertFrom-Json)
+            } catch {
+                # Not JSON output — return raw
+                return $stdout
+            }
+        }
+        return $null
+    } finally {
+        $PSNativeCommandUseErrorActionPreference = $savedPref
     }
-    return $null
 }
 
 # =============================================================================

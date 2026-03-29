@@ -48,7 +48,15 @@ param(
 
     [string]$outDir = "./generated",
 
-    [string]$TokenFile
+    [string]$TokenFile,
+
+    [ValidateSet("rest", "cli")]
+    [string]$ApiMode = "rest",
+
+    # For MSFT-tenant collaborations, use -OidcStorageAccount "cleanroomoidc"
+    # to upload OIDC documents to the whitelisted storage account instead of
+    # creating a new one in the resource group.
+    [string]$OidcStorageAccount
 )
 
 # Configure Private CleanRoom cloud and verify local user auth
@@ -67,12 +75,18 @@ if (-not (Test-Path $namesFile)) {
 
 # Step 1: Set up OIDC issuer (this script already uses standard Azure CLI only).
 Write-Host "=== Step 1: Setting up OIDC issuer ===" -ForegroundColor Cyan
-& "$PSScriptRoot/common/setup-oidc-issuer.ps1" `
-    -resourceGroup $resourceGroup `
-    -collaborationId $collaborationId `
-    -frontendEndpoint $frontendEndpoint `
-    -outDir $outDir `
-    -TokenFile $TokenFile
+$oidcArgs = @{
+    resourceGroup    = $resourceGroup
+    collaborationId  = $collaborationId
+    frontendEndpoint = $frontendEndpoint
+    outDir           = $outDir
+    TokenFile        = $TokenFile
+    ApiMode          = $ApiMode
+}
+if ($OidcStorageAccount) {
+    $oidcArgs["OidcStorageAccount"] = $OidcStorageAccount
+}
+& "$PSScriptRoot/common/setup-oidc-issuer.ps1" @oidcArgs
 
 # Step 2: Read issuer URL.
 Write-Host "`n=== Step 2: Reading issuer URL ===" -ForegroundColor Cyan

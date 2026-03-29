@@ -23,7 +23,13 @@ param(
     [string]$TokenFile,
 
     [ValidateSet("rest", "cli")]
-    [string]$ApiMode = "rest"
+    [string]$ApiMode = "rest",
+
+    # For MSFT-tenant collaborations, use -OidcStorageAccount "cleanroomoidc"
+    # (whitelisted SA in azcleanroom-ctest-rg on AzureCleanRoom-NonProd subscription).
+    # When set, skips SA creation / static-website / RBAC and uploads OIDC documents
+    # to the pre-existing account using $collaborationId as the blob path prefix.
+    [string]$OidcStorageAccount
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,67 +68,79 @@ function Get-ResourceNameHash {
 }
 
 $subscriptionId = az account show --query id -o tsv
-$hash = Get-ResourceNameHash -seed "$subscriptionId-$resourceGroup"
-$oidcStorageAccountName = ("oidc" + $hash).Substring(0, 24).ToLower() -replace '[^a-z0-9]', ''
-$containerName = ("oidc-" + $hash).Substring(0, 24).ToLower() -replace '[^a-z0-9-]', ''
 
-# -- Create OIDC Storage Account ------------------------------------------------
-$location = az group show --name $resourceGroup --query location -o tsv
-
-Write-Host "Creating OIDC storage account '$oidcStorageAccountName'..." -ForegroundColor Cyan
-az storage account create `
-    --name $oidcStorageAccountName `
-    --resource-group $resourceGroup `
-    --location $location `
-    --sku Standard_LRS `
-    --output none
-
-# Enable static website hosting.
-Write-Host "Enabling static website on '$oidcStorageAccountName'..." -ForegroundColor Cyan
-az storage blob service-properties update `
-    --account-name $oidcStorageAccountName `
-    --static-website `
-    --auth-mode login `
-    --output none
-
-# -- RBAC for the caller ---------------------------------------------------------
-$oidcStorageId = az storage account show `
-    --name $oidcStorageAccountName `
-    --resource-group $resourceGroup `
-    --query id -o tsv
-
-# Detect whether we are logged in as a user or a service principal.
-$accountInfo = az account show --query "user" -o json 2>$null | ConvertFrom-Json
-$principalType = "User"
-$callerObjectId = $null
-
-if ($accountInfo.type -eq "servicePrincipal") {
-    Write-Host "  Detected service principal login." -ForegroundColor Yellow
-    $PSNativeCommandUseErrorActionPreference = $false
-    $callerObjectId = az ad sp show --id $accountInfo.name --query id -o tsv 2>$null
-    $PSNativeCommandUseErrorActionPreference = $true
-    $principalType = "ServicePrincipal"
+if ($OidcStorageAccount) {
+    # -- Using a pre-existing whitelisted OIDC storage account ----------------------
+    # Skip SA creation, static website enabling, and RBAC assignment.
+    $oidcStorageAccountName = $OidcStorageAccount
+    $containerName = $collaborationId
+    $staticWebUrl = "https://${oidcStorageAccountName}.z22.web.core.windows.net"
+    $issuerUrl = "$staticWebUrl/$containerName"
+    Write-Host "Using pre-existing OIDC storage account '$oidcStorageAccountName'." -ForegroundColor Cyan
+    Write-Host "Issuer URL: $issuerUrl" -ForegroundColor Yellow
 } else {
-    $callerObjectId = az ad signed-in-user show --query id -o tsv
+    # -- Create a new OIDC storage account in the resource group --------------------
+    $hash = Get-ResourceNameHash -seed "$subscriptionId-$resourceGroup"
+    $oidcStorageAccountName = ("oidc" + $hash).Substring(0, 24).ToLower() -replace '[^a-z0-9]', ''
+    $containerName = ("oidc-" + $hash).Substring(0, 24).ToLower() -replace '[^a-z0-9-]', ''
+
+    $location = az group show --name $resourceGroup --query location -o tsv
+
+    Write-Host "Creating OIDC storage account '$oidcStorageAccountName'..." -ForegroundColor Cyan
+    az storage account create `
+        --name $oidcStorageAccountName `
+        --resource-group $resourceGroup `
+        --location $location `
+        --sku Standard_LRS `
+        --output none
+
+    # Enable static website hosting.
+    Write-Host "Enabling static website on '$oidcStorageAccountName'..." -ForegroundColor Cyan
+    az storage blob service-properties update `
+        --account-name $oidcStorageAccountName `
+        --static-website `
+        --auth-mode login `
+        --output none
+
+    # -- RBAC for the caller ---------------------------------------------------------
+    $oidcStorageId = az storage account show `
+        --name $oidcStorageAccountName `
+        --resource-group $resourceGroup `
+        --query id -o tsv
+
+    # Detect whether we are logged in as a user or a service principal.
+    $accountInfo = az account show --query "user" -o json 2>$null | ConvertFrom-Json
+    $principalType = "User"
+    $callerObjectId = $null
+
+    if ($accountInfo.type -eq "servicePrincipal") {
+        Write-Host "  Detected service principal login." -ForegroundColor Yellow
+        $PSNativeCommandUseErrorActionPreference = $false
+        $callerObjectId = az ad sp show --id $accountInfo.name --query id -o tsv 2>$null
+        $PSNativeCommandUseErrorActionPreference = $true
+        $principalType = "ServicePrincipal"
+    } else {
+        $callerObjectId = az ad signed-in-user show --query id -o tsv
+    }
+
+    Write-Host "Assigning 'Storage Blob Data Contributor' on OIDC storage account..." -ForegroundColor Cyan
+    if ($callerObjectId) {
+        Invoke-AzSafe @("role", "assignment", "create", "--role", "Storage Blob Data Contributor", "--assignee-object-id", $callerObjectId, "--assignee-principal-type", $principalType, "--scope", $oidcStorageId, "--output", "none")
+    } else {
+        Write-Warning "Could not determine caller object ID - skipping OIDC storage RBAC."
+    }
+
+    # -- Retrieve Static Website URL ------------------------------------------------
+    Write-Host "Retrieving static website URL..." -ForegroundColor Cyan
+    $staticWebUrl = az storage account show `
+        --name $oidcStorageAccountName `
+        --resource-group $resourceGroup `
+        --query "primaryEndpoints.web" -o tsv
+    $staticWebUrl = $staticWebUrl.TrimEnd('/')
+
+    $issuerUrl = "$staticWebUrl/$containerName"
+    Write-Host "Issuer URL: $issuerUrl" -ForegroundColor Yellow
 }
-
-Write-Host "Assigning 'Storage Blob Data Contributor' on OIDC storage account..." -ForegroundColor Cyan
-if ($callerObjectId) {
-    Invoke-AzSafe @("role", "assignment", "create", "--role", "Storage Blob Data Contributor", "--assignee-object-id", $callerObjectId, "--assignee-principal-type", $principalType, "--scope", $oidcStorageId, "--output", "none")
-} else {
-    Write-Warning "Could not determine caller object ID - skipping OIDC storage RBAC."
-}
-
-# -- Retrieve Static Website URL ------------------------------------------------
-Write-Host "Retrieving static website URL..." -ForegroundColor Cyan
-$staticWebUrl = az storage account show `
-    --name $oidcStorageAccountName `
-    --resource-group $resourceGroup `
-    --query "primaryEndpoints.web" -o tsv
-$staticWebUrl = $staticWebUrl.TrimEnd('/')
-
-$issuerUrl = "$staticWebUrl/$containerName"
-Write-Host "Issuer URL: $issuerUrl" -ForegroundColor Yellow
 
 # -- Build openid-configuration.json --------------------------------------------
 Write-Host "Building OpenID configuration document..." -ForegroundColor Cyan
