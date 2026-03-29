@@ -46,7 +46,9 @@ param(
     [Parameter(Mandatory)]
     [string]$frontendEndpoint,
 
-    [string]$outDir = "./generated"
+    [string]$outDir = "./generated",
+
+    [string]$TokenFile
 )
 
 # Configure Private CleanRoom cloud and verify local user auth
@@ -69,7 +71,8 @@ Write-Host "=== Step 1: Setting up OIDC issuer ===" -ForegroundColor Cyan
     -resourceGroup $resourceGroup `
     -collaborationId $collaborationId `
     -frontendEndpoint $frontendEndpoint `
-    -outDir $outDir
+    -outDir $outDir `
+    -TokenFile $TokenFile
 
 # Step 2: Read issuer URL.
 Write-Host "`n=== Step 2: Reading issuer URL ===" -ForegroundColor Cyan

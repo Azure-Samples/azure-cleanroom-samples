@@ -32,7 +32,12 @@ param(
     [Parameter(Mandatory)]
     [string]$frontendEndpoint,
 
-    [string]$persona
+    [string]$persona,
+
+    [string]$TokenFile,
+
+    [ValidateSet("rest", "cli")]
+    [string]$ApiMode = "rest"
 )
 
 # Configure Private CleanRoom cloud and verify local user auth
@@ -41,25 +46,36 @@ param(
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
-# Load common frontend REST helpers
-. "$PSScriptRoot/common/frontend-rest-helpers.ps1"
-$feCtx = New-FrontendContext -frontendEndpoint $frontendEndpoint
+# Load common frontend helpers (supports REST and CLI modes)
+. "$PSScriptRoot/common/frontend-helpers.ps1"
+$feCtx = New-FrontendContext -frontendEndpoint $frontendEndpoint -ApiMode $ApiMode
 
 # Step 1: Get run history.
 Write-Host "=== Query Run History ===" -ForegroundColor Cyan
-$runHistory = Get-FrontendQueryRunHistory -Context $feCtx `
-    -CollaborationId $collaborationId `
-    -DocumentId $queryName
+$runHistory = $null
+try {
+    $runHistory = Get-FrontendQueryRunHistory -Context $feCtx `
+        -CollaborationId $collaborationId `
+        -DocumentId $queryName `
+        -TokenFile $TokenFile
+}
+catch {
+    $errMsg = $_.Exception.Message
+    if ($errMsg -match "NotFound|No run history") {
+        Write-Host "No run history found (runs may still be in progress)." -ForegroundColor Yellow
+    } else {
+        Write-Host "Error fetching run history: $errMsg" -ForegroundColor Red
+    }
+}
 if ($runHistory) {
     $runHistory | ConvertTo-Json -Depth 10
-} else {
-    Write-Host "No run history found." -ForegroundColor Yellow
 }
 
 # Step 2: Get audit events.
 Write-Host "`n=== Audit Events ===" -ForegroundColor Cyan
 $auditEvents = Get-FrontendAuditEvents -Context $feCtx `
-    -CollaborationId $collaborationId
+    -CollaborationId $collaborationId `
+    -TokenFile $TokenFile
 if ($auditEvents) {
     $auditEvents | ConvertTo-Json -Depth 10
 } else {

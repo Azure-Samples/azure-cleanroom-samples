@@ -46,7 +46,12 @@ param(
     [Parameter(Mandatory)]
     [string]$frontendEndpoint,
 
-    [string]$outDir = "./generated"
+    [string]$outDir = "./generated",
+
+    [string]$TokenFile,
+
+    [ValidateSet("rest", "cli")]
+    [string]$ApiMode = "rest"
 )
 
 # Configure Private CleanRoom cloud and verify local user auth
@@ -55,9 +60,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
-# Load common frontend REST helpers
-. "$PSScriptRoot/common/frontend-rest-helpers.ps1"
-$feCtx = New-FrontendContext -frontendEndpoint $frontendEndpoint
+# Load common frontend helpers (supports REST and CLI modes)
+. "$PSScriptRoot/common/frontend-helpers.ps1"
+$feCtx = New-FrontendContext -frontendEndpoint $frontendEndpoint -ApiMode $ApiMode
 
 # -- Load generated resource names ----------------------------------------------
 $namesFile = Join-Path $outDir $resourceGroup "names.generated.ps1"
@@ -81,6 +86,15 @@ if (-not (Test-Path $identityMetadataFile)) {
     exit 1
 }
 $identityMeta = Get-Content $identityMetadataFile -Raw | ConvertFrom-Json
+
+# Load OIDC issuer URL from generated metadata
+$issuerUrlFile = Join-Path $outDir $resourceGroup "issuer-url.txt"
+if (-not (Test-Path $issuerUrlFile)) {
+    Write-Host "ERROR: '$issuerUrlFile' not found. Run 06-setup-identity.ps1 first." -ForegroundColor Red
+    exit 1
+}
+$oidcIssuerUrl = (Get-Content $issuerUrlFile -Raw).Trim()
+Write-Host "Using OIDC issuer URL: $oidcIssuerUrl" -ForegroundColor Cyan
 
 $inputMeta = $datastoreMeta.input
 
@@ -117,7 +131,7 @@ function New-DatasetPublishBody {
             name      = $Identity.identityName
             clientId  = $Identity.clientId
             tenantId  = $Identity.tenantId
-            issuerUrl = "https://cgs/oidc"
+            issuerUrl = $script:oidcIssuerUrl
         }
     }
 
@@ -131,7 +145,7 @@ function New-DatasetPublishBody {
 # -- Publish input dataset ------------------------------------------------------
 Write-Host "=== Publishing input dataset '$($inputMeta.name)' ===" -ForegroundColor Cyan
 
-$existingInput = Get-FrontendDataset -Context $feCtx -CollaborationId $collaborationId -DocumentId $inputMeta.name
+$existingInput = Get-FrontendDataset -Context $feCtx -CollaborationId $collaborationId -DocumentId $inputMeta.name -TokenFile $TokenFile
 if ($existingInput) {
     Write-Host "Input dataset '$($inputMeta.name)' already published (skipped)." -ForegroundColor Yellow
 } else {
@@ -144,12 +158,13 @@ if ($existingInput) {
     Publish-FrontendDataset -Context $feCtx `
         -CollaborationId $collaborationId `
         -DocumentId $inputMeta.name `
-        -Body $inputBody
+        -Body $inputBody `
+        -TokenFile $TokenFile
     Write-Host "Input dataset published." -ForegroundColor Green
 }
 
 # Show the dataset
-$datasetInfo = Get-FrontendDataset -Context $feCtx -CollaborationId $collaborationId -DocumentId $inputMeta.name
+$datasetInfo = Get-FrontendDataset -Context $feCtx -CollaborationId $collaborationId -DocumentId $inputMeta.name -TokenFile $TokenFile
 if ($datasetInfo) {
     $datasetInfo | ConvertTo-Json -Depth 10
 }
@@ -158,7 +173,7 @@ if ($datasetInfo) {
 if ($persona -eq "woodgrove" -and $datastoreMeta.output) {
     Write-Host "`n=== Publishing output dataset '$($datastoreMeta.output.name)' ===" -ForegroundColor Cyan
 
-    $existingOutput = Get-FrontendDataset -Context $feCtx -CollaborationId $collaborationId -DocumentId $datastoreMeta.output.name
+    $existingOutput = Get-FrontendDataset -Context $feCtx -CollaborationId $collaborationId -DocumentId $datastoreMeta.output.name -TokenFile $TokenFile
     if ($existingOutput) {
         Write-Host "Output dataset '$($datastoreMeta.output.name)' already published (skipped)." -ForegroundColor Yellow
     } else {
@@ -171,11 +186,12 @@ if ($persona -eq "woodgrove" -and $datastoreMeta.output) {
         Publish-FrontendDataset -Context $feCtx `
             -CollaborationId $collaborationId `
             -DocumentId $datastoreMeta.output.name `
-            -Body $outputBody
+            -Body $outputBody `
+            -TokenFile $TokenFile
         Write-Host "Output dataset published." -ForegroundColor Green
     }
 
-    $outputInfo = Get-FrontendDataset -Context $feCtx -CollaborationId $collaborationId -DocumentId $datastoreMeta.output.name
+    $outputInfo = Get-FrontendDataset -Context $feCtx -CollaborationId $collaborationId -DocumentId $datastoreMeta.output.name -TokenFile $TokenFile
     if ($outputInfo) {
         $outputInfo | ConvertTo-Json -Depth 10
     }
@@ -185,10 +201,10 @@ Write-Host "`nDataset publishing complete for '$persona'." -ForegroundColor Gree
 
 # -- Enable execution consent on published datasets -----------------------------
 Write-Host "`n=== Enabling execution consent on datasets ===" -ForegroundColor Cyan
-Set-FrontendConsent -Context $feCtx -CollaborationId $collaborationId -DocumentId $inputMeta.name -Action "enable"
+Set-FrontendConsent -Context $feCtx -CollaborationId $collaborationId -DocumentId $inputMeta.name -Action "enable" -TokenFile $TokenFile
 Write-Host "Execution consent enabled for input dataset '$($inputMeta.name)'." -ForegroundColor Green
 
 if ($persona -eq "woodgrove" -and $datastoreMeta.output) {
-    Set-FrontendConsent -Context $feCtx -CollaborationId $collaborationId -DocumentId $datastoreMeta.output.name -Action "enable"
+    Set-FrontendConsent -Context $feCtx -CollaborationId $collaborationId -DocumentId $datastoreMeta.output.name -Action "enable" -TokenFile $TokenFile
     Write-Host "Execution consent enabled for output dataset '$($datastoreMeta.output.name)'." -ForegroundColor Green
 }

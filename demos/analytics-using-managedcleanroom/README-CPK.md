@@ -679,8 +679,16 @@ Using the provided script:
 ./scripts/07-grant-access.ps1 `
     -resourceGroup $NORTHWIND_RESOURCE_GROUP `
     -collaborationId $COLLABORATION_ID `
-    -contractId "analytics" `
+    -contractId "Analytics" `
     -userId "<northwind-user-id>" `
+    -outDir $OUT_DIR
+
+# Run by Woodgrove
+./scripts/07-grant-access.ps1 `
+    -resourceGroup $WOODGROVE_RESOURCE_GROUP `
+    -collaborationId $COLLABORATION_ID `
+    -contractId "Analytics" `
+    -userId "<woodgrove-user-id>" `
     -outDir $OUT_DIR
 
 # Run by Woodgrove
@@ -704,7 +712,7 @@ This script:
 9. Creates a **federated credential** on the managed identity (`az identity federated-credential create --issuer --subject --audiences "api://AzureADTokenExchange"`)
 
 > [!NOTE]
-> The `userId` is the collaborator's object ID in the CCF governance. You can obtain it by running `az ad signed-in-user show --query id -o tsv`, or it may be returned during the invitation acceptance (Step 2). The `contractId` defaults to `"analytics"` unless a different contract was configured.
+> The `userId` is the collaborator's object ID in the CCF governance. You can obtain it by running `az ad signed-in-user show --query id -o tsv`, or it may be returned during the invitation acceptance (Step 2). The `contractId` defaults to `"Analytics"` (capital A) — **this is case-sensitive**. The Spark agent uses `"Analytics"` as the contract ID in the federated credential subject (`Analytics-{ownerId}`). Using lowercase `"analytics"` will cause silent token exchange failures at query execution time.
 
 > [!CAUTION]
 > **Partially confirmed — subject format and audience validated from source code, but retrieval is a gap.** Analysis of the Spark analytics agent (`src/workloads/analytics/cleanroom-spark-analytics-agent/Controllers/QueriesController.cs` on `user/ashank/frontendAuth` branch):
@@ -793,7 +801,7 @@ This script constructs the **DatasetSpecification JSON** natively in PowerShell 
 > **DatasetSpecification format verified against frontend source.** The JSON body matches `DatasetInputDetails` (`src/workloads/frontend/Models/CGS/DatasetInputDetails.cs`): `{ "data": { name, datasetSchema, datasetAccessPolicy, datasetAccessPoint } }`. The `AccessPoint.protection.encryptionSecrets` structure (DEK/KEK with `backingResource` pointing to Key Vault) matches the cleanroom `EncryptionSecrets` model. The frontend performs **no field-level validation** — it passes the AccessPoint through to CGS verbatim (`DatasetDocumentPublisher.cs:73-84`). Publishing will succeed, but the cleanroom runtime may fail if any derived values are wrong.
 >
 > **Specific runtime risks (see `.NOTES` in script for details):**
-> - `tokenIssuer.url` is set to `https://cgs/oidc` (v5.0.0 symbolic reference) — old samples used the actual OIDC issuer URL
+> - ~~`tokenIssuer.url` is set to `https://cgs/oidc` (v5.0.0 symbolic reference) — old samples used the actual OIDC issuer URL~~ **FIXED**: `issuerUrl`/`tokenIssuer.url` must be the **public OIDC URL** (e.g., `https://cleanroomoidc.z22.web.core.windows.net/{collaborationId}`), NOT `"https://cgs/oidc"`. Using the internal CGS hostname causes AAD to reject with `AADSTS700211: No matching federated identity record found for presented assertion issuer`. The script now reads from `generated/{rg}/issuer-url.txt`.
 > - `backingResource.id` for DEK/KEK uses logical names (`$persona-dek-store`) — if CGS resolves these against a registry, they'd fail since we didn't register via `secretstore add`
 > - `protection.configuration` uses Python-style single-quoted dict — if CGS parses as JSON, use double quotes
 > - `store.id` uses the datastore name — if CGS expects the ARM resource ID, change to `storeId` from metadata
@@ -1021,5 +1029,8 @@ Events include query execution start/completion, input/output row counts, datase
 | 10 | Vote on query | `managedcleanroom` | `az managedcleanroom frontend analytics query show`, `query vote accept --body` |
 | 11 | Run query | `managedcleanroom` | `az managedcleanroom frontend analytics query run`, `query runresult show` (polling) |
 | 12 | View results | `managedcleanroom` | `az managedcleanroom frontend analytics query runhistory list`, `auditevent list` |
+| 13 | Run status | _(REST)_ | `GET /collaborations/{id}/analytics/runs/{jobId}` via `frontend-rest-helpers.ps1` — polls for COMPLETED/FAILED |
+| 14 | Run history | _(REST)_ | `GET /collaborations/{id}/analytics/queries/{docId}/runs` via `frontend-rest-helpers.ps1` — standalone with 404 handling |
+| 15 | Audit events | _(REST)_ | `GET /collaborations/{id}/analytics/auditevents` via `frontend-rest-helpers.ps1` — standalone with `value[]` wrapper parsing |
 
 > **No `az cleanroom` dependency.** All steps use standard Azure CLI or the publicly available `az managedcleanroom` extension. Step 8 constructs the DatasetSpecification JSON (with CPK encryption secrets) natively in PowerShell.

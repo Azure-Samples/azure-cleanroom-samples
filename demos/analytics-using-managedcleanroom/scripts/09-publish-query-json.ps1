@@ -57,7 +57,10 @@ param(
     [string]$frontendEndpoint,
 
     [string]$persona,
-    [string]$outDir = "./generated"
+    [string]$outDir = "./generated",
+
+    [ValidateSet("rest", "cli")]
+    [string]$ApiMode = "rest"
 )
 
 # Configure Private CleanRoom cloud and verify local user auth
@@ -66,9 +69,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
-# Load common frontend REST helpers
-. "$PSScriptRoot/common/frontend-rest-helpers.ps1"
-$feCtx = New-FrontendContext -frontendEndpoint $frontendEndpoint
+# Load common frontend helpers (supports REST and CLI modes)
+. "$PSScriptRoot/common/frontend-helpers.ps1"
+$feCtx = New-FrontendContext -frontendEndpoint $frontendEndpoint -ApiMode $ApiMode
 
 if (-not (Test-Path $queryDir)) {
     Write-Host "ERROR: Query directory '$queryDir' not found." -ForegroundColor Red

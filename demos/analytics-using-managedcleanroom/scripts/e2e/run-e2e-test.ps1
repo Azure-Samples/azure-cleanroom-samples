@@ -64,6 +64,9 @@ param(
 
     [string]$outDir = "./generated",
 
+    [ValidateSet("rest", "cli")]
+    [string]$apiMode = "rest",
+
     [switch]$cleanupOnSuccess,
 
     [switch]$cleanupOnFailure
@@ -586,6 +589,7 @@ try {
                 appKeyVaultName = $appKeyVaultName
                 frontendEndpoint = $frontendEndpoint
                 outDir = $outDir
+                ApiMode = $apiMode
             }
         },
         @{
@@ -598,6 +602,7 @@ try {
                 appKeyVaultName = $appKeyVaultName
                 frontendEndpoint = $frontendEndpoint
                 outDir = $outDir
+                ApiMode = $apiMode
             }
         }
     )
@@ -622,6 +627,7 @@ try {
             appKeyVaultName = $appKeyVaultName
             frontendEndpoint = $frontendEndpoint
             outDir = $outDir
+            ApiMode = $apiMode
         }
         
         if ($subscription) { $queryParams.subscription = $subscription }
@@ -639,6 +645,7 @@ try {
             appKeyVaultName = $appKeyVaultName
             frontendEndpoint = $frontendEndpoint
             outDir = $outDir
+            ApiMode = $apiMode
         }
         
         if ($subscription) { $queryParams.subscription = $subscription }
@@ -664,6 +671,7 @@ try {
                 appKeyVaultName = $appKeyVaultName
                 frontendEndpoint = $frontendEndpoint
                 outDir = $outDir
+                ApiMode = $apiMode
             }
         },
         @{
@@ -675,6 +683,7 @@ try {
                 appKeyVaultName = $appKeyVaultName
                 frontendEndpoint = $frontendEndpoint
                 outDir = $outDir
+                ApiMode = $apiMode
             }
         }
     )
@@ -697,6 +706,7 @@ try {
         appKeyVaultName = $appKeyVaultName
         frontendEndpoint = $frontendEndpoint
         outDir = $outDir
+        ApiMode = $apiMode
     }
     
     if ($subscription) { $runParams.subscription = $subscription }
@@ -717,6 +727,7 @@ try {
         appKeyVaultName = $appKeyVaultName
         frontendEndpoint = $frontendEndpoint
         outDir = $outDir
+        ApiMode = $apiMode
     }
     
     if ($subscription) { $resultsParams.subscription = $subscription }

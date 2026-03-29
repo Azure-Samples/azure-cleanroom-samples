@@ -52,6 +52,9 @@ param(
     [ValidateSet("inline", "json")]
     [string]$queryFormat = "inline",
     
+    [ValidateSet("rest", "cli")]
+    [string]$apiMode = "rest",
+    
     [switch]$skipInfrastructure,
     [switch]$cleanupOnSuccess,
     [switch]$cleanupOnFailure,
@@ -186,6 +189,7 @@ Write-Host "========================================" -ForegroundColor Magenta
 Write-Host "Configuration:" -ForegroundColor White
 Write-Host "  Encryption Type:  $encryptionType" -ForegroundColor Gray
 Write-Host "  Query Format:     $queryFormat" -ForegroundColor Gray
+Write-Host "  API Mode:         $apiMode" -ForegroundColor Gray
 Write-Host "  Location:         $($config.location)" -ForegroundColor Gray
 Write-Host "  Northwind VM:     $($config.northwindVM)" -ForegroundColor Gray
 Write-Host "  Woodgrove VM:     $($config.woodgroveVM)" -ForegroundColor Gray
@@ -527,6 +531,7 @@ try {
             collaborationName = $collaborationName
             collaborationResourceGroup = $resourceGroupName
             frontendEndpoint = $config.frontendEndpoint
+            ApiMode = $apiMode
         } `
         -timeout $config.timeouts.dataset
     
@@ -548,6 +553,7 @@ try {
             collaborationName = $collaborationName
             collaborationResourceGroup = $resourceGroupName
             frontendEndpoint = $config.frontendEndpoint
+            ApiMode = $apiMode
         } `
         -timeout $config.timeouts.dataset
     
@@ -575,6 +581,7 @@ try {
             collaborationName = $collaborationName
             resourceGroupName = $resourceGroupName
             frontendEndpoint = $config.frontendEndpoint
+            ApiMode = $apiMode
         } `
         -timeout $config.timeouts.query
     
@@ -600,6 +607,7 @@ try {
             collaborationName = $collaborationName
             resourceGroupName = $resourceGroupName
             frontendEndpoint = $config.frontendEndpoint
+            ApiMode = $apiMode
         } `
         -timeout $config.timeouts.vote
     
@@ -619,6 +627,7 @@ try {
             collaborationName = $collaborationName
             resourceGroupName = $resourceGroupName
             frontendEndpoint = $config.frontendEndpoint
+            ApiMode = $apiMode
         } `
         -timeout $config.timeouts.vote
     
@@ -643,6 +652,7 @@ try {
             collaborationName = $collaborationName
             resourceGroupName = $resourceGroupName
             frontendEndpoint = $config.frontendEndpoint
+            ApiMode = $apiMode
         } `
         -timeout $config.timeouts.execute
     
@@ -667,6 +677,7 @@ try {
             collaborationName = $collaborationName
             resourceGroupName = $resourceGroupName
             frontendEndpoint = $config.frontendEndpoint
+            ApiMode = $apiMode
         } `
         -timeout $config.timeouts.results
     
@@ -695,6 +706,7 @@ Write-Host "  Northwind RG:      $northwindRG" -ForegroundColor Green
 Write-Host "  Woodgrove RG:      $woodgroveRG" -ForegroundColor Green
 Write-Host "  Encryption:        $encryptionType" -ForegroundColor Green
 Write-Host "  Query Format:      $queryFormat" -ForegroundColor Green
+Write-Host "  API Mode:          $apiMode" -ForegroundColor Green
 Write-Host "  Duration:          $minutes min $seconds sec" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""

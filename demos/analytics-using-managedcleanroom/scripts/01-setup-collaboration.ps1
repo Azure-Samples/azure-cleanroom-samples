@@ -244,21 +244,12 @@ foreach ($collaborator in $collaborators) {
     
     Write-Host "Adding collaborator: $displayName (MI Principal ID: $miPrincipalId)..." -ForegroundColor Yellow
     
-    # Construct the REST API payload
-    $payload = @{
-        Collaborator = @{
-            UserIdentifier = $miPrincipalId
-            ObjectId = $miPrincipalId
-            TenantId = $tenantId
-        }
-    } | ConvertTo-Json -Compress
-    
-    # Call the REST API using az rest
-    # Note: Using --method POST because add-collaborator is a POST operation
-    $restUrl = "https://eastus2euap.management.azure.com${collaborationId}/addCollaborator?api-version=2025-01-31-preview"
-    
+    # Use CLI command to add collaborator (preferred over REST)
     $PSNativeCommandUseErrorActionPreference = $false
-    $addResult = az rest --method POST --url $restUrl --body $payload 2>&1
+    $addResult = az managedcleanroom collaboration add-collaborator `
+        --resource-group $resourceGroupName `
+        --collaboration-name $collaborationName `
+        --user-identifier $miPrincipalId 2>&1
     
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  Collaborator '$displayName' added successfully." -ForegroundColor Green
@@ -271,6 +262,17 @@ foreach ($collaborator in $collaborators) {
             throw "Failed to add collaborator '$displayName'"
         }
     }
+
+    # REST fallback (commented out — use if CLI add-collaborator is unavailable):
+    # $payload = @{
+    #     Collaborator = @{
+    #         UserIdentifier = $miPrincipalId
+    #         ObjectId = $miPrincipalId
+    #         TenantId = $tenantId
+    #     }
+    # } | ConvertTo-Json -Compress
+    # $restUrl = "https://eastus2euap.management.azure.com${collaborationId}/addCollaborator?api-version=2025-01-31-preview"
+    # $addResult = az rest --method POST --url $restUrl --body $payload 2>&1
 }
 
 Write-Host "Collaborator addition complete." -ForegroundColor Green

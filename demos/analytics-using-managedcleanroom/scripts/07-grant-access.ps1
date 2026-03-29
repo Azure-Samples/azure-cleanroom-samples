@@ -37,7 +37,7 @@ param(
     [Parameter(Mandatory)]
     [string]$collaborationId,
 
-    [string]$contractId = "analytics",
+    [string]$contractId = "Analytics",
 
     [Parameter(Mandatory)]
     [string]$userId,

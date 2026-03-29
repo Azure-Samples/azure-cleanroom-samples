@@ -44,7 +44,12 @@ param(
 
     [int]$timeoutMinutes = 60,
 
-    [string]$persona
+    [string]$persona,
+
+    [string]$TokenFile,
+
+    [ValidateSet("rest", "cli")]
+    [string]$ApiMode = "rest"
 )
 
 # Configure Private CleanRoom cloud and verify local user auth
@@ -53,21 +58,25 @@ param(
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
-# Load common frontend REST helpers
-. "$PSScriptRoot/common/frontend-rest-helpers.ps1"
-$feCtx = New-FrontendContext -frontendEndpoint $frontendEndpoint
+# Load common frontend helpers (supports REST and CLI modes)
+. "$PSScriptRoot/common/frontend-helpers.ps1"
+$feCtx = New-FrontendContext -frontendEndpoint $frontendEndpoint -ApiMode $ApiMode
 
 # Submit the query run.
 Write-Host "=== Submitting query run ===" -ForegroundColor Cyan
 $runResponse = Invoke-FrontendQueryRun -Context $feCtx `
     -CollaborationId $collaborationId `
-    -DocumentId $queryName
+    -DocumentId $queryName `
+    -TokenFile $TokenFile
 
 Write-Host "Query run submitted." -ForegroundColor Green
 $runResponse | ConvertTo-Json -Depth 5
 
-# Extract the job ID from the response (confirmed field: jobId).
+# Extract the job ID from the response (field may be "jobId" or "id" depending on API version).
 $jobId = $runResponse.jobId
+if (-not $jobId) {
+    $jobId = $runResponse.id
+}
 if (-not $jobId) {
     Write-Host "ERROR: Could not extract job ID from run response." -ForegroundColor Red
     Write-Host "Response was:" -ForegroundColor Red
@@ -91,7 +100,8 @@ while ([datetime]::UtcNow -lt $timeout) {
 
     $result = Get-FrontendQueryRunResult -Context $feCtx `
         -CollaborationId $collaborationId `
-        -JobId $jobId
+        -JobId $jobId `
+        -TokenFile $TokenFile
 
     if (-not $result) {
         Write-Host "Polling... (attempt $pollCount, waiting for result)" -ForegroundColor Yellow

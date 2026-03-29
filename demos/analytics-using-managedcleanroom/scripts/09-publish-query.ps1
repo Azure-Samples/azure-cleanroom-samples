@@ -58,7 +58,12 @@ param(
 
     [string]$outDir = "./generated",
 
-    [string]$persona
+    [string]$persona,
+
+    [string]$TokenFile,
+
+    [ValidateSet("rest", "cli")]
+    [string]$ApiMode = "rest"
 )
 
 # Configure Private CleanRoom cloud and verify local user auth
@@ -67,9 +72,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
-# Load common frontend REST helpers
-. "$PSScriptRoot/common/frontend-rest-helpers.ps1"
-$feCtx = New-FrontendContext -frontendEndpoint $frontendEndpoint
+# Load common frontend helpers (supports REST and CLI modes)
+. "$PSScriptRoot/common/frontend-helpers.ps1"
+$feCtx = New-FrontendContext -frontendEndpoint $frontendEndpoint -ApiMode $ApiMode
 
 if (-not (Test-Path $queryDir)) {
     Write-Host "ERROR: Query directory '$queryDir' not found." -ForegroundColor Red
@@ -92,7 +97,7 @@ $segment2Sql = (Get-Content $segment2File -Raw).Trim()
 $segment3Sql = (Get-Content $segment3File -Raw).Trim()
 
 # Check if already published
-$existingQuery = Get-FrontendQuery -Context $feCtx -CollaborationId $collaborationId -DocumentId $queryName
+$existingQuery = Get-FrontendQuery -Context $feCtx -CollaborationId $collaborationId -DocumentId $queryName -TokenFile $TokenFile
 if ($existingQuery) {
     Write-Host "Query '$queryName' already published (skipped)." -ForegroundColor Yellow
 } else {
@@ -131,19 +136,17 @@ if ($existingQuery) {
     Publish-FrontendQuery -Context $feCtx `
         -CollaborationId $collaborationId `
         -DocumentId $queryName `
-        -Body $queryBody
+        -Body $queryBody `
+        -TokenFile $TokenFile
     Write-Host "Query '$queryName' published." -ForegroundColor Green
 }
 
 Write-Host "`nVerifying query state..." -ForegroundColor Cyan
-$queryInfo = Get-FrontendQuery -Context $feCtx -CollaborationId $collaborationId -DocumentId $queryName
+$queryInfo = Get-FrontendQuery -Context $feCtx -CollaborationId $collaborationId -DocumentId $queryName -TokenFile $TokenFile
 if ($queryInfo) {
     $queryInfo | ConvertTo-Json -Depth 10
 }
 
 Write-Host "`nAll collaborators must now vote to approve this query before execution." -ForegroundColor Yellow
-
-# -- Enable execution consent on query -------------------------------------------
-Write-Host "`n=== Enabling execution consent on query ===" -ForegroundColor Cyan
-Set-FrontendConsent -Context $feCtx -CollaborationId $collaborationId -DocumentId $queryName -Action "enable"
-Write-Host "Execution consent enabled for query '$queryName'." -ForegroundColor Green
+Write-Host "NOTE: Execution consent can only be enabled AFTER the query is accepted (voted on)." -ForegroundColor Yellow
+Write-Host "Run 10-vote-query.ps1 next — it will vote AND enable consent." -ForegroundColor Yellow

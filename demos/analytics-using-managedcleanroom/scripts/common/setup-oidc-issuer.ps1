@@ -18,7 +18,12 @@ param(
 
     [string]$outDir = "./generated",
 
-    [string]$apiVersion = "2026-03-01-preview"
+    [string]$apiVersion = "2026-03-01-preview",
+
+    [string]$TokenFile,
+
+    [ValidateSet("rest", "cli")]
+    [string]$ApiMode = "rest"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -131,23 +136,13 @@ $openidConfig = @{
 $openidConfigPath = Join-Path $outputDir "openid-configuration.json"
 $openidConfig | Out-File -FilePath $openidConfigPath -Encoding utf8
 
-# -- Fetch JWKS from managed cleanroom frontend (direct REST call) ---------------
-# TODO: Replace this direct REST call with CLI command when available:
-#   az managedcleanroom frontend oidc keys show --collaboration-id $collaborationId
-# The frontend exposes JWKS at GET /collaborations/{id}/oidc/keys, but no CLI command
-# wraps it yet. We call the endpoint directly using the configured frontend endpoint.
-
-# $frontendEndpoint may already include /collaborations — normalize to base URL.
-$feBase = $frontendEndpoint.TrimEnd('/')
-if ($feBase.EndsWith('/collaborations')) {
-    $feBase = $feBase.Substring(0, $feBase.Length - '/collaborations'.Length)
-}
-
-Write-Host "Fetching OIDC issuer info from managed cleanroom..." -ForegroundColor Cyan
-
-# Token resolution for frontend calls: env var → cached MSAL IdToken → ARM token.
+# Token resolution for frontend calls: TokenFile → env var → cached MSAL IdToken → ARM token.
 # MSA guest accounts need MSAL IdToken (ARM tokens lack preferred_username claim).
 function Get-FrontendTokenLocal {
+    if ($script:TokenFile -and (Test-Path $script:TokenFile)) {
+        $t = (Get-Content $script:TokenFile -Raw).Trim()
+        if ($t) { return $t }
+    }
     if ($env:CLEANROOM_FRONTEND_TOKEN) { return $env:CLEANROOM_FRONTEND_TOKEN }
     $msalFile = "/tmp/msal-idtoken.txt"
     if (Test-Path $msalFile) {
@@ -157,32 +152,80 @@ function Get-FrontendTokenLocal {
     return (az account get-access-token --query accessToken -o tsv)
 }
 
-$token = Get-FrontendTokenLocal
-$headers = @{
-    Authorization  = "Bearer $token"
-    "Content-Type" = "application/json"
+# -- Fetch JWKS from managed cleanroom frontend ----------------------------------
+# Supports two modes:
+#   CLI mode:  Uses az managedcleanroom frontend oidc commands
+#   REST mode: Makes direct REST calls to the frontend endpoint
+
+# $frontendEndpoint may already include /collaborations — normalize to base URL.
+$feBase = $frontendEndpoint.TrimEnd('/')
+if ($feBase.EndsWith('/collaborations')) {
+    $feBase = $feBase.Substring(0, $feBase.Length - '/collaborations'.Length)
 }
 
-$oidcInfoUrl = "$feBase/collaborations/$collaborationId/oidc/issuerinfo?api-version=$apiVersion"
-Write-Host "  GET $oidcInfoUrl" -ForegroundColor Gray
-try {
-    $oidcIssuerInfo = Invoke-RestMethod -Uri $oidcInfoUrl -Headers $headers -Method Get -SkipCertificateCheck
-    Write-Host "OIDC issuer info:" -ForegroundColor Yellow
-    $oidcIssuerInfo | ConvertTo-Json -Depth 5
-} catch {
-    Write-Warning "Failed to fetch OIDC issuer info: $_"
-    Write-Host "  Continuing anyway (issuer info is informational only)..." -ForegroundColor Yellow
-}
+Write-Host "Fetching OIDC issuer info from managed cleanroom (mode: $ApiMode)..." -ForegroundColor Cyan
 
-Write-Host "Fetching JWKS from frontend endpoint (direct REST call)..." -ForegroundColor Cyan
-$token = Get-FrontendTokenLocal
-$headers = @{
-    Authorization  = "Bearer $token"
-    "Content-Type" = "application/json"
+if ($ApiMode -eq "cli") {
+    # -- CLI mode: Configure the CLI extension and use oidc commands --
+    $token = Get-FrontendTokenLocal
+    $env:MANAGEDCLEANROOM_ACCESS_TOKEN = $token
+    $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
+    # SDK URL templates already include /collaborations/ prefix — use bare base URL.
+    az managedcleanroom frontend configure --endpoint $feBase 2>&1 | Out-Null
+
+    # Fetch OIDC issuer info
+    try {
+        $oidcIssuerInfoJson = az managedcleanroom frontend oidc issuerinfo show `
+            --collaboration-id $collaborationId 2>&1
+        if ($LASTEXITCODE -eq 0 -and $oidcIssuerInfoJson) {
+            $oidcIssuerInfo = $oidcIssuerInfoJson | ConvertFrom-Json
+            Write-Host "OIDC issuer info:" -ForegroundColor Yellow
+            $oidcIssuerInfo | ConvertTo-Json -Depth 5
+        }
+    } catch {
+        Write-Warning "Failed to fetch OIDC issuer info: $_"
+        Write-Host "  Continuing anyway (issuer info is informational only)..." -ForegroundColor Yellow
+    }
+
+    # Fetch JWKS
+    Write-Host "Fetching JWKS from frontend endpoint (CLI)..." -ForegroundColor Cyan
+    $jwksRaw = az managedcleanroom frontend oidc keys `
+        --collaboration-id $collaborationId
+    if ($LASTEXITCODE -ne 0 -or -not $jwksRaw) {
+        throw "Failed to fetch JWKS via CLI"
+    }
+    $jwksResponse = $jwksRaw | ConvertFrom-Json
+    $jwksJson = $jwksResponse | ConvertTo-Json -Depth 10
+} else {
+    # -- REST mode: Direct REST calls (original approach) --
+
+    $token = Get-FrontendTokenLocal
+    $headers = @{
+        Authorization  = "Bearer $token"
+        "Content-Type" = "application/json"
+    }
+
+    $oidcInfoUrl = "$feBase/collaborations/$collaborationId/oidc/issuerinfo?api-version=$apiVersion"
+    Write-Host "  GET $oidcInfoUrl" -ForegroundColor Gray
+    try {
+        $oidcIssuerInfo = Invoke-RestMethod -Uri $oidcInfoUrl -Headers $headers -Method Get -SkipCertificateCheck
+        Write-Host "OIDC issuer info:" -ForegroundColor Yellow
+        $oidcIssuerInfo | ConvertTo-Json -Depth 5
+    } catch {
+        Write-Warning "Failed to fetch OIDC issuer info: $_"
+        Write-Host "  Continuing anyway (issuer info is informational only)..." -ForegroundColor Yellow
+    }
+
+    Write-Host "Fetching JWKS from frontend endpoint (direct REST call)..." -ForegroundColor Cyan
+    $token = Get-FrontendTokenLocal
+    $headers = @{
+        Authorization  = "Bearer $token"
+        "Content-Type" = "application/json"
+    }
+    $jwksUrl = "$feBase/collaborations/$collaborationId/oidc/keys?api-version=$apiVersion"
+    $jwksResponse = Invoke-RestMethod -Uri $jwksUrl -Headers $headers -Method Get -SkipCertificateCheck
+    $jwksJson = $jwksResponse | ConvertTo-Json -Depth 10
 }
-$jwksUrl = "$feBase/collaborations/$collaborationId/oidc/keys?api-version=$apiVersion"
-$jwksResponse = Invoke-RestMethod -Uri $jwksUrl -Headers $headers -Method Get -SkipCertificateCheck
-$jwksJson = $jwksResponse | ConvertTo-Json -Depth 10
 
 $jwksPath = Join-Path $outputDir "jwks.json"
 $jwksJson | Out-File -FilePath $jwksPath -Encoding utf8
@@ -212,25 +255,38 @@ az storage blob upload `
     --output none
 
 # -- Register issuer URL with CGS ------------------------------------------------
-# TODO: Replace this direct REST call with CLI command when available:
-#   az managedcleanroom frontend oidc set-issuer-url --url $issuerUrl --collaboration-id $collaborationId
-# The frontend exposes this at POST /collaborations/{id}/oidc/setIssuerUrl, but no CLI
-# command wraps it yet (confirmed: only `oidc issuerinfo show` exists in the CLI).
 
-Write-Host "Registering issuer URL with managed cleanroom (direct REST call)..." -ForegroundColor Cyan
-$token = Get-FrontendTokenLocal
-$headers = @{
-    Authorization  = "Bearer $token"
-    "Content-Type" = "application/json"
+Write-Host "Registering issuer URL with managed cleanroom (mode: $ApiMode)..." -ForegroundColor Cyan
+
+if ($ApiMode -eq "cli") {
+    # CLI mode
+    $token = Get-FrontendTokenLocal
+    $env:MANAGEDCLEANROOM_ACCESS_TOKEN = $token
+    $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
+    az managedcleanroom frontend configure --endpoint $feBase 2>&1 | Out-Null
+
+    az managedcleanroom frontend oidc set-issuer-url `
+        --collaboration-id $collaborationId `
+        --url $issuerUrl
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to register issuer URL via CLI"
+    }
+} else {
+    # REST mode (original approach)
+    $token = Get-FrontendTokenLocal
+    $headers = @{
+        Authorization  = "Bearer $token"
+        "Content-Type" = "application/json"
+    }
+    $setIssuerBody = @{ url = $issuerUrl } | ConvertTo-Json
+    Invoke-RestMethod `
+        -Uri "$feBase/collaborations/$collaborationId/oidc/setIssuerUrl?api-version=$apiVersion" `
+        -Headers $headers `
+        -Method Post `
+        -Body $setIssuerBody `
+        -ContentType "application/json" `
+        -SkipCertificateCheck
 }
-$setIssuerBody = @{ url = $issuerUrl } | ConvertTo-Json
-Invoke-RestMethod `
-    -Uri "$feBase/collaborations/$collaborationId/oidc/setIssuerUrl?api-version=$apiVersion" `
-    -Headers $headers `
-    -Method Post `
-    -Body $setIssuerBody `
-    -ContentType "application/json" `
-    -SkipCertificateCheck
 Write-Host "Issuer URL registered with CGS." -ForegroundColor Green
 
 # -- Save issuer URL ------------------------------------------------------------
