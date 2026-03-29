@@ -2,7 +2,7 @@
 
 ## Description
 
-This skill helps run and debug end-to-end (E2E) tests for the Azure Managed Clean Room analytics demo using **local user authentication** (no VMs, no managed identity boilerplate, no app registrations). Scripts 04-12 use `az login` credentials for ARM operations and MSAL device-code IdTokens for frontend REST calls.
+This skill helps run and debug end-to-end (E2E) tests for the Azure Managed Clean Room analytics demo using **local user authentication** (no VMs, no managed identity boilerplate, no app registrations). Scripts 04-15 use `az login` credentials for ARM operations and MSAL device-code IdTokens for frontend REST calls.
 
 ## When to Use This Skill
 
@@ -14,6 +14,7 @@ Use this skill when you need to:
 - Set up MSAL IdToken authentication for MSA guest accounts
 - Configure OIDC issuers for MSFT-hosted collaborations
 - Publish datasets, queries, vote, run queries, or view results via the frontend
+- Monitor Spark job lifecycle (status, run history, audit events)
 
 ## Architecture
 
@@ -25,8 +26,14 @@ ARM operations (storage, KV, MI, RBAC):
 
 Frontend operations (datasets, queries, OIDC):
   MSAL device-code flow -> IdToken -> Bearer token in REST calls
-  Token cached at /tmp/msal-idtoken.txt
+  Token cached at /tmp/msal-idtoken-{persona}.txt
 ```
+
+**Two-persona auth from a single machine**: Use separate token files for each persona:
+- `/tmp/msal-idtoken-notsaksham.txt` — `notsaksham@gmail.com` (Woodgrove)
+- `/tmp/msal-idtoken-collaboratorA.txt` — `anantshankar17@outlook.com` (Northwind)
+
+Scripts accept a `-TokenFile` parameter to select which persona's token to use for frontend calls.
 
 **Why MSAL IdToken?** The frontend (`TokenUtilities.ExtractUserInfoFromToken`) reads claims: `preferred_username -> upn -> sub`. MSA guest accounts (e.g., `notsaksham@gmail.com`) lack `preferred_username` and `upn` in ARM access tokens, falling back to opaque `sub`. MSAL IdTokens include `preferred_username`, fixing this.
 
@@ -34,10 +41,10 @@ Frontend operations (datasets, queries, OIDC):
 
 1. **No VMs** -- Run scripts from a developer workstation
 2. **No managed identity code** -- `setup-local-auth.ps1` replaces all MI boilerplate
-3. **No cloud switching for scripts 04-12** -- Only scripts 01-02 (collaboration creation via `Private.CleanRoom` RP) need `PrivateCleanroomAzureCloud`
-4. **Direct REST calls** -- The `az managedcleanroom frontend` CLI has a Python 3.13 bug (`'tuple' object has no attribute 'token'`); all frontend calls use `Invoke-RestMethod` via `frontend-rest-helpers.ps1`
+3. **No cloud switching for scripts 04-15** -- Only scripts 01-02 (collaboration creation via `Private.CleanRoom` RP) need `PrivateCleanroomAzureCloud`
+4. **Direct REST calls** -- The `az managedcleanroom frontend` CLI has a Python 3.13 bug (`'tuple' object has no attribute 'token'`); all frontend calls use `Invoke-RestMethod` via `frontend-helpers.ps1`
 5. **No `createContract` call** -- Never call the createContract endpoint
-6. **Single user, both personas** -- One `az login` session runs both northwind and woodgrove steps sequentially
+6. **Single user, both personas** -- One `az login` session runs ARM ops; separate MSAL token files handle frontend auth per persona
 
 ### Frontend
 
@@ -47,27 +54,54 @@ Frontend operations (datasets, queries, OIDC):
 - **TLS**: `-SkipCertificateCheck` required (dogfood self-signed cert)
 - **Auth**: `Authorization: Bearer {MSAL-IdToken}` header
 
+### ARM
+
+- **Endpoint**: `https://eastus2euap.management.azure.com/`
+- **API version**: `2025-10-31-preview`
+- **Subscription**: `fccb68eb-8ccf-49a6-a69a-7ea3c2867e9c` (AzureCleanRoom-NonProd)
+- ARM operations require: `az account set --subscription fccb68eb-8ccf-49a6-a69a-7ea3c2867e9c`
+
+### Direct Analytics Endpoint (bypass frontend)
+
+The analytics workload has a direct API endpoint:
+
+| Operation | Method | URL |
+|---|---|---|
+| Run query | POST | `https://analytics-{id}.westus.cloudapp.azure.com/queries/{queryId}/run` |
+| Job status | GET | `https://analytics-{id}.westus.cloudapp.azure.com/status/{jobId}` |
+| Run history | GET | `https://analytics-{id}.westus.cloudapp.azure.com/queries/{queryId}/runs` |
+
+Auth: `x-ms-cleanroom-authorization: Bearer <MSAL IdToken>`
+
 ## Prerequisites
 
 1. **Azure CLI** (2.50.0+) with `managedcleanroom` extension
 2. **PowerShell Core 7.0+**
 3. **`az login`** with Contributor + User Access Administrator on the target subscription
-4. **MSAL IdToken** cached at `/tmp/msal-idtoken.txt` (see Token Setup below)
+4. **MSAL IdTokens** cached at `/tmp/msal-idtoken-{persona}.txt` (see Token Setup below)
 5. **Collaboration** already created (scripts 01-02 are separate; handled by collaboration owner)
 
-### MSAL IdToken Setup
+### MSAL IdToken Setup (Per Persona)
 
 ```powershell
 Install-Module MSAL.PS -Scope CurrentUser -Force
+
+# Login as persona 1 (e.g., notsaksham@gmail.com)
 $token = Get-MsalToken -ClientId "8a3849c1-81c5-4d62-b83e-3bb2bb11251a" `
   -TenantId "common" -Scopes "User.Read" -DeviceCode
-$token.IdToken | Out-File -FilePath "/tmp/msal-idtoken.txt" -NoNewline
+$token.IdToken | Out-File -FilePath "/tmp/msal-idtoken-notsaksham.txt" -NoNewline
+
+# Login as persona 2 (e.g., anantshankar17@outlook.com)
+$token = Get-MsalToken -ClientId "8a3849c1-81c5-4d62-b83e-3bb2bb11251a" `
+  -TenantId "common" -Scopes "User.Read" -DeviceCode
+$token.IdToken | Out-File -FilePath "/tmp/msal-idtoken-collaboratorA.txt" -NoNewline
 ```
 
 The token is resolved by `Get-FrontendToken` with this priority chain:
-1. `$env:CLEANROOM_FRONTEND_TOKEN` (environment variable override)
-2. `/tmp/msal-idtoken.txt` (cached MSAL IdToken -- preferred for MSA accounts)
-3. `az account get-access-token` (ARM fallback -- fails for MSA guests)
+1. `-TokenFile` parameter (explicit per-persona token file)
+2. `$env:CLEANROOM_FRONTEND_TOKEN` (environment variable override)
+3. `/tmp/msal-idtoken.txt` (cached MSAL IdToken -- fallback)
+4. `az account get-access-token` (ARM fallback -- fails for MSA guests)
 
 ## Working Directory
 
@@ -83,12 +117,12 @@ demos/analytics-using-managedcleanroom/
 | File | Purpose |
 |---|---|
 | `scripts/common/setup-local-auth.ps1` | Replaces MI boilerplate. Verifies `az login`, sets `UsePrivateCleanRoomNamespace`, ensures AzureCloud. Dot-sourced by every numbered script. |
-| `scripts/common/frontend-rest-helpers.ps1` | All frontend API wrappers with MSAL IdToken priority chain, `-SkipCertificateCheck`, `api-version`. |
+| `scripts/common/frontend-helpers.ps1` | All frontend API wrappers with MSAL IdToken priority chain, `-SkipCertificateCheck`, `api-version`. |
 | `scripts/common/prepare-resources.ps1` | Provisions resource group, storage account, Key Vault (premium), managed identity. Assigns RBAC. Outputs `names.generated.ps1` and `resources.generated.json`. |
 | `scripts/common/setup-oidc-issuer.ps1` | OIDC setup: fetch JWKS from frontend, create discovery doc, upload to storage static website, register issuer URL via `setIssuerUrl`. |
 | `scripts/common/setup-access.ps1` | RBAC assignments on storage/KV for managed identity + federated credential creation for OIDC token exchange. |
 
-### E2E Scripts (04-12)
+### E2E Scripts (04-15)
 
 | Script | Persona | Purpose |
 |---|---|---|
@@ -101,6 +135,9 @@ demos/analytics-using-managedcleanroom/
 | `10-vote-query.ps1` | Both | Vote accept on published query |
 | `11-run-query.ps1` | Woodgrove | Submit query run, poll for completion |
 | `12-view-results.ps1` | Any | Display run history + audit events |
+| `13-run-status.ps1` | Any | Check/poll specific job status by job ID |
+| `14-run-history.ps1` | Any | Standalone run history with stats, 404 handling |
+| `15-audit-events.ps1` | Any | Standalone audit events with Spark lifecycle tracking |
 
 ## Execution Flow
 
@@ -133,9 +170,12 @@ demos/analytics-using-managedcleanroom/
  +-> 09-publish-query.ps1 (woodgrove only)
  |    CONSUMES: query segment .txt files
  |
- +-> 10-vote-query.ps1 (both personas)
- +-> 11-run-query.ps1 (woodgrove only)
- +-> 12-view-results.ps1 (any persona)
+  +-> 10-vote-query.ps1 (both personas)
+  +-> 11-run-query.ps1 (woodgrove only)
+  +-> 12-view-results.ps1 (any persona)
+  +-> 13-run-status.ps1 (any persona, requires jobId from 11)
+  +-> 14-run-history.ps1 (any persona)
+  +-> 15-audit-events.ps1 (any persona)
 ```
 
 ### Running (Single User, Both Personas)
@@ -223,6 +263,9 @@ All calls require:
 ### Request Body Structures
 
 **Dataset Publish** (`POST .../datasets/{docId}/publish`):
+
+Returns **204 No Content** on success (no response body).
+
 ```json
 {
   "name": "<document_id>",
@@ -236,10 +279,12 @@ All calls require:
   },
   "identity": {
     "name": "...", "clientId": "...", "tenantId": "...",
-    "issuerUrl": "https://cgs/oidc"
+    "issuerUrl": "https://cleanroomoidc.z22.web.core.windows.net/{collaborationId}"
   }
 }
 ```
+
+> **CRITICAL**: The `issuerUrl` in `identity` must be the **public OIDC URL** (e.g., `https://cleanroomoidc.z22.web.core.windows.net/{collaborationId}`), NOT `"https://cgs/oidc"`. Using `"https://cgs/oidc"` causes AAD token exchange failure: `AADSTS700211: No matching federated identity record found for presented assertion issuer`. This was a critical bug discovered during E2E testing — see `E2E-TEST-FINDINGS.md` for details.
 
 **Query Publish** (`POST .../queries/{docId}/publish`):
 ```json
@@ -252,12 +297,67 @@ All calls require:
 }
 ```
 
-**Consent** (`PUT .../consent/{docId}`): `{ "consentAction": "enable|disable" }`
-**Vote** (`POST .../queries/{docId}/vote`): `{ "voteAction": "accept|reject" }`
-**Query Run** (`POST .../queries/{docId}/run`): `{ "runId": "<uuid>" }`
-**setIssuerUrl** (`POST .../oidc/setIssuerUrl`): `{ "url": "<issuer-url>" }`
+**Consent** (`PUT .../consent/{docId}`): `{ "consentAction": "enable|disable" }` — returns 204
+**Vote** (`POST .../queries/{docId}/vote`): `{ "voteAction": "accept|reject", "proposalId": "..." }` — returns 204
+**Query Run** (`POST .../queries/{docId}/run`): `{ "runId": "<uuid>" }` — returns 200
+**setIssuerUrl** (`POST .../oidc/setIssuerUrl`): `{ "url": "<issuer-url>" }` — returns 200
 
-## frontend-rest-helpers.ps1 Functions
+### Response Structures
+
+**Query Run Response** (`POST .../queries/{docId}/run`):
+```json
+{"status": "success", "id": "cl-spark-{uuid}", "dryRun": null}
+```
+Note: The field is `id`, NOT `jobId`. Scripts should check both for compatibility.
+
+**Run History** (`GET .../queries/{docId}/runs`):
+Returns 404 `NotFound` when no runs have reached terminal state. Success response:
+```json
+{
+  "queryId": "...",
+  "latestRun": {
+    "runId": "...", "startTime": "...", "endTime": "...",
+    "isSuccessful": true, "error": null,
+    "stats": { "rowsRead": 13872, "rowsWritten": 248 },
+    "durationSeconds": 968
+  },
+  "runs": [ ... ],
+  "summary": {
+    "totalRuns": 1, "successfulRuns": 1, "failedRuns": 0,
+    "totalRuntimeSeconds": 968, "avgDurationSeconds": 968.0,
+    "totalRowsRead": 13872, "totalRowsWritten": 248
+  }
+}
+```
+
+**Audit Events** (`GET .../auditevents`):
+```json
+{
+  "value": [
+    {
+      "scope": "...", "id": "SparkApplicationSubmitted",
+      "timestamp": 1743098765000, "timestampIso": "",
+      "data": { "source": "analytics-agent", "message": "..." }
+    }
+  ],
+  "nextLink": null
+}
+```
+
+### Spark Job States
+
+Known states: `SUBMITTED`, `RUNNING`, `COMPLETED`, `FAILED`, `SUBMISSION_FAILED`, `PENDING_RERUN`, `INVALIDATING`, `SUCCEEDING`, `FAILING`, `SUSPENDING`, `SUSPENDED`, `RESUMING`, `UNKNOWN`
+
+Typical lifecycle: `SUBMITTED → PENDING_RERUN → SUBMITTED (retry) → RUNNING → COMPLETED`
+
+### Output Path Pattern
+
+Query output is written to:
+```
+{container}/Analytics/{date}/{runId}/part-00000-{uuid}.csv
+```
+
+## frontend-helpers.ps1 Functions
 
 | Function | Description |
 |---|---|
@@ -361,7 +461,7 @@ The top-level `issuerUrl` remains `null` when set by an MSA user. The per-tenant
 
 **Symptom**: `az managedcleanroom frontend` commands fail with `'tuple' object has no attribute 'token'`.
 
-**Fix**: Use direct REST calls via `frontend-rest-helpers.ps1` instead of the CLI.
+**Fix**: Use direct REST calls via `frontend-helpers.ps1` instead of the CLI.
 
 ### RBAC Propagation Delays
 
@@ -370,8 +470,14 @@ After `setup-access.ps1` assigns roles, there's a 90-second built-in wait plus a
 ## Important Rules
 
 1. **Never call `createContract`** -- this endpoint is not used in the local-auth flow
-2. **Never switch cloud for scripts 04-12** -- only scripts 01-02 need `PrivateCleanroomAzureCloud`
+2. **Never switch cloud for scripts 04-15** -- only scripts 01-02 need `PrivateCleanroomAzureCloud`
 3. **Never modify MI (managed identity) setup** -- MI is not needed for local auth
 4. **Always use `-SkipCertificateCheck`** on all frontend REST calls
 5. **Always include `?api-version=2026-03-01-preview`** on all frontend REST calls
 6. **Idempotency**: All scripts are idempotent -- they check existence before creating resources/datasets/queries
+7. **`issuerUrl` MUST be the public OIDC URL** (e.g., `https://cleanroomoidc.z22.web.core.windows.net/{collaborationId}`), NEVER `"https://cgs/oidc"` -- see Critical Findings in `E2E-TEST-FINDINGS.md`
+8. **`contractId` is case-sensitive**: Use `"Analytics"` (capital A), not `"analytics"` -- the Spark agent uses capital A
+9. **`securityPolicyOption` is NOT a valid input to `enableWorkload`** -- only `workloadType` is accepted
+10. **Both parties must vote** on the query -- both datasets are required for execution
+11. **Dataset publish returns 204 No Content** -- there is no response body on success
+12. **Use `-TokenFile` parameter** for two-persona auth from a single machine

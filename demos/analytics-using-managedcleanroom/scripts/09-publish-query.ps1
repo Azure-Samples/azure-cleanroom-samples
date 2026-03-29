@@ -5,7 +5,7 @@
 .DESCRIPTION
     Run by: Woodgrove (consumer).
     Publishes a query by reading SQL segment files and calling the frontend
-    REST API directly (replaces broken az managedcleanroom frontend CLI).
+    REST API. Supports both REST API and az managedcleanroom CLI modes via -ApiMode parameter.
 
 .PARAMETER collaborationId
     The collaboration ARM resource ID.

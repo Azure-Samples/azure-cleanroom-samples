@@ -4,9 +4,9 @@
 
 .DESCRIPTION
     Run by: Woodgrove (consumer).
-    Submits a query run request via direct REST calls to the frontend service
-    (replaces broken az managedcleanroom frontend CLI), then polls for completion
+    Submits a query run request via the frontend service, then polls for completion
     until the query succeeds, fails, or times out.
+    Supports both REST API and az managedcleanroom CLI modes via -ApiMode parameter.
 
     Prerequisites:
     - 10-vote-query.ps1 must have been run by all collaborators.

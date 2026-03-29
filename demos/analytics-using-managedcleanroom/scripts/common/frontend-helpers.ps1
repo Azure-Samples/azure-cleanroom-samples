@@ -63,6 +63,9 @@
     az managedcleanroom frontend consent set -c $CID -d <name> --consent-action enable
 #>
 
+# MSAL public client application ID for managed cleanroom frontend authentication
+$script:MsalClientId = "8a3849c1-81c5-4d62-b83e-3bb2bb11251a"
+
 # =============================================================================
 # Context initialization
 # =============================================================================
@@ -150,7 +153,7 @@ function Get-FrontendToken {
     # Priority 3: ARM access token fallback
     $token = az account get-access-token --query accessToken -o tsv
     if ($LASTEXITCODE -ne 0 -or -not $token) {
-        throw "No frontend token available. Run MSAL device-code flow first:`n  `$t = Get-MsalToken -ClientId '8a3849c1-81c5-4d62-b83e-3bb2bb11251a' -TenantId 'common' -Scopes 'User.Read' -DeviceCode`n  `$t.IdToken | Out-File /tmp/msal-idtoken.txt -NoNewline"
+        throw "No frontend token available. Run MSAL device-code flow first:`n  `$t = Get-MsalToken -ClientId '$script:MsalClientId' -TenantId 'common' -Scopes 'User.Read' -DeviceCode`n  `$t.IdToken | Out-File /tmp/msal-idtoken.txt -NoNewline"
     }
     return $token
 }
@@ -436,6 +439,19 @@ function Publish-FrontendDataset {
         if ($bodyObj.datasetAccessPolicy.allowedFields) {
             $fields = $bodyObj.datasetAccessPolicy.allowedFields -join ","
             $args += @("--allowed-fields", $fields)
+        }
+
+        # Add CPK-specific DEK/KEK arguments if present
+        if ($bodyObj.dek) {
+            $args += @("--dek-keyvault-url", $bodyObj.dek.keyVaultUrl)
+            $args += @("--dek-secret-id", $bodyObj.dek.secretId)
+        }
+        if ($bodyObj.kek) {
+            $args += @("--kek-keyvault-url", $bodyObj.kek.keyVaultUrl)
+            $args += @("--kek-secret-id", $bodyObj.kek.secretId)
+            if ($bodyObj.kek.maaUrl) {
+                $args += @("--kek-maa-url", $bodyObj.kek.maaUrl)
+            }
         }
 
         try {

@@ -972,9 +972,9 @@ Events include query execution start/completion, input/output row counts, datase
 | 10 | Vote on query | `managedcleanroom` | `az managedcleanroom frontend analytics query show`, `query vote accept --body` |
 | 11 | Run query | `managedcleanroom` | `az managedcleanroom frontend analytics query run`, `query runresult show` (polling) |
 | 12 | View results | `managedcleanroom` | `az managedcleanroom frontend analytics query runhistory list`, `auditevent list` |
-| 13 | Run status | _(REST)_ | `GET /collaborations/{id}/analytics/runs/{jobId}` via `frontend-rest-helpers.ps1` — polls for COMPLETED/FAILED |
-| 14 | Run history | _(REST)_ | `GET /collaborations/{id}/analytics/queries/{docId}/runs` via `frontend-rest-helpers.ps1` — standalone with 404 handling |
-| 15 | Audit events | _(REST)_ | `GET /collaborations/{id}/analytics/auditevents` via `frontend-rest-helpers.ps1` — standalone with `value[]` wrapper parsing |
+| 13 | Run status | _(REST)_ | `GET /collaborations/{id}/analytics/runs/{jobId}` via `frontend-helpers.ps1` — polls for COMPLETED/FAILED |
+| 14 | Run history | _(REST)_ | `GET /collaborations/{id}/analytics/queries/{docId}/runs` via `frontend-helpers.ps1` — standalone with 404 handling |
+| 15 | Audit events | _(REST)_ | `GET /collaborations/{id}/analytics/auditevents` via `frontend-helpers.ps1` — standalone with `value[]` wrapper parsing |
 
 > **No `az cleanroom` dependency.** All steps use standard Azure CLI or the publicly available `az managedcleanroom` extension. Step 8 constructs the DatasetSpecification JSON natively in PowerShell.
 
@@ -993,7 +993,7 @@ AttributeError: 'tuple' object has no attribute 'token'
 
 `Profile.get_raw_token()` returns a tuple in Python 3.13, but `BearerTokenCredentialPolicy` expects an `AccessToken` object. The bug affects all `az managedcleanroom frontend analytics` commands (dataset publish, query publish, vote, run, etc.).
 
-**Workaround**: Scripts 08-12 use direct REST calls via `scripts/common/frontend-rest-helpers.ps1` instead of the CLI. This helper library provides PowerShell wrappers for all frontend API endpoints. See `E2E-TEST-FINDINGS.md` for the full API reference.
+**Workaround**: Scripts 08-12 use direct REST calls via `scripts/common/frontend-helpers.ps1` instead of the CLI. This helper library provides PowerShell wrappers for all frontend API endpoints. See `E2E-TEST-FINDINGS.md` for the full API reference.
 
 ### MSAL IdToken for MSA Guest Accounts
 
@@ -1008,7 +1008,7 @@ $token = Get-MsalToken -ClientId "8a3849c1-81c5-4d62-b83e-3bb2bb11251a" `
 $token.IdToken | Out-File -FilePath "/tmp/msal-idtoken.txt" -NoNewline
 ```
 
-The `frontend-rest-helpers.ps1` `Get-FrontendToken` function will automatically pick up the cached IdToken from `/tmp/msal-idtoken.txt`. Priority chain:
+The `frontend-helpers.ps1` `Get-FrontendToken` function will automatically pick up the cached IdToken from `/tmp/msal-idtoken.txt`. Priority chain:
 1. `$env:CLEANROOM_FRONTEND_TOKEN` (environment variable override)
 2. `/tmp/msal-idtoken.txt` (cached MSAL IdToken)
 3. `az account get-access-token` (ARM fallback — fails for MSA guests)
@@ -1059,7 +1059,7 @@ curl https://cleanroomoidc.z22.web.core.windows.net/$collaborationId/openid/v1/j
 > [!NOTE]
 > After calling `setIssuerUrl` from an MSA account, the issuer info shows `issuerUrl: null` at the top level. The per-tenant `tenantData.issuerUrl` is set correctly. The top-level field may only be settable by the collaboration owner.
 
-### frontend-rest-helpers.ps1 Quick Reference
+### frontend-helpers.ps1 Quick Reference
 
 Key functions for making frontend REST calls:
 

@@ -1029,8 +1029,8 @@ Events include query execution start/completion, input/output row counts, datase
 | 10 | Vote on query | `managedcleanroom` | `az managedcleanroom frontend analytics query show`, `query vote accept --body` |
 | 11 | Run query | `managedcleanroom` | `az managedcleanroom frontend analytics query run`, `query runresult show` (polling) |
 | 12 | View results | `managedcleanroom` | `az managedcleanroom frontend analytics query runhistory list`, `auditevent list` |
-| 13 | Run status | _(REST)_ | `GET /collaborations/{id}/analytics/runs/{jobId}` via `frontend-rest-helpers.ps1` — polls for COMPLETED/FAILED |
-| 14 | Run history | _(REST)_ | `GET /collaborations/{id}/analytics/queries/{docId}/runs` via `frontend-rest-helpers.ps1` — standalone with 404 handling |
-| 15 | Audit events | _(REST)_ | `GET /collaborations/{id}/analytics/auditevents` via `frontend-rest-helpers.ps1` — standalone with `value[]` wrapper parsing |
+| 13 | Run status | _(REST)_ | `GET /collaborations/{id}/analytics/runs/{jobId}` via `frontend-helpers.ps1` — polls for COMPLETED/FAILED |
+| 14 | Run history | _(REST)_ | `GET /collaborations/{id}/analytics/queries/{docId}/runs` via `frontend-helpers.ps1` — standalone with 404 handling |
+| 15 | Audit events | _(REST)_ | `GET /collaborations/{id}/analytics/auditevents` via `frontend-helpers.ps1` — standalone with `value[]` wrapper parsing |
 
 > **No `az cleanroom` dependency.** All steps use standard Azure CLI or the publicly available `az managedcleanroom` extension. Step 8 constructs the DatasetSpecification JSON (with CPK encryption secrets) natively in PowerShell.

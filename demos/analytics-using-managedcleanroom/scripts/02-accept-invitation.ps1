@@ -22,36 +22,8 @@ param(
     [string]$collaborationId,
 
     [Parameter(Mandatory)]
-    [string]$frontendEndpoint,
-
-    [string]$appKeyVaultName,
-
-    [string]$persona
+    [string]$frontendEndpoint
 )
-
-# === App-based authentication (if parameters provided) ===
-if ($appKeyVaultName -and $persona) {
-    Write-Host "Authenticating with app for persona '$persona'..." -ForegroundColor Cyan
-    $appCreds = & "$PSScriptRoot/common/get-app-credentials.ps1" `
-        -keyVaultName $appKeyVaultName `
-        -persona $persona
-    
-    az login --service-principal `
-        --username $appCreds.appId `
-        --password $appCreds.appSecret `
-        --tenant $appCreds.tenantId `
-        --allow-no-subscriptions | Out-Null
-    
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: App authentication failed for persona '$persona'." -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "Authenticated successfully as '$persona' app." -ForegroundColor Green
-}
-elseif ($appKeyVaultName -or $persona) {
-    Write-Host "ERROR: Both --appKeyVaultName and --persona required for app authentication." -ForegroundColor Red
-    exit 1
-}
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true

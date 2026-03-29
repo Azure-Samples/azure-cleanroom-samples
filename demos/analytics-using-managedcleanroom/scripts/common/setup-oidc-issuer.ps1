@@ -45,6 +45,7 @@ if (-not (Test-Path $namesFile)) {
     exit 1
 }
 . $namesFile
+. "$PSScriptRoot/frontend-helpers.ps1"
 
 $outputDir = Join-Path $outDir $resourceGroup
 if (-not (Test-Path $outputDir)) {
@@ -136,22 +137,6 @@ $openidConfig = @{
 $openidConfigPath = Join-Path $outputDir "openid-configuration.json"
 $openidConfig | Out-File -FilePath $openidConfigPath -Encoding utf8
 
-# Token resolution for frontend calls: TokenFile → env var → cached MSAL IdToken → ARM token.
-# MSA guest accounts need MSAL IdToken (ARM tokens lack preferred_username claim).
-function Get-FrontendTokenLocal {
-    if ($script:TokenFile -and (Test-Path $script:TokenFile)) {
-        $t = (Get-Content $script:TokenFile -Raw).Trim()
-        if ($t) { return $t }
-    }
-    if ($env:CLEANROOM_FRONTEND_TOKEN) { return $env:CLEANROOM_FRONTEND_TOKEN }
-    $msalFile = "/tmp/msal-idtoken.txt"
-    if (Test-Path $msalFile) {
-        $t = (Get-Content $msalFile -Raw).Trim()
-        if ($t) { return $t }
-    }
-    return (az account get-access-token --query accessToken -o tsv)
-}
-
 # -- Fetch JWKS from managed cleanroom frontend ----------------------------------
 # Supports two modes:
 #   CLI mode:  Uses az managedcleanroom frontend oidc commands
@@ -167,7 +152,7 @@ Write-Host "Fetching OIDC issuer info from managed cleanroom (mode: $ApiMode)...
 
 if ($ApiMode -eq "cli") {
     # -- CLI mode: Configure the CLI extension and use oidc commands --
-    $token = Get-FrontendTokenLocal
+    $token = Get-FrontendToken -TokenFile $TokenFile
     $env:MANAGEDCLEANROOM_ACCESS_TOKEN = $token
     $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
     # SDK URL templates already include /collaborations/ prefix — use bare base URL.
@@ -199,7 +184,7 @@ if ($ApiMode -eq "cli") {
 } else {
     # -- REST mode: Direct REST calls (original approach) --
 
-    $token = Get-FrontendTokenLocal
+    $token = Get-FrontendToken -TokenFile $TokenFile
     $headers = @{
         Authorization  = "Bearer $token"
         "Content-Type" = "application/json"
@@ -217,7 +202,7 @@ if ($ApiMode -eq "cli") {
     }
 
     Write-Host "Fetching JWKS from frontend endpoint (direct REST call)..." -ForegroundColor Cyan
-    $token = Get-FrontendTokenLocal
+    $token = Get-FrontendToken -TokenFile $TokenFile
     $headers = @{
         Authorization  = "Bearer $token"
         "Content-Type" = "application/json"
@@ -260,7 +245,7 @@ Write-Host "Registering issuer URL with managed cleanroom (mode: $ApiMode)..." -
 
 if ($ApiMode -eq "cli") {
     # CLI mode
-    $token = Get-FrontendTokenLocal
+    $token = Get-FrontendToken -TokenFile $TokenFile
     $env:MANAGEDCLEANROOM_ACCESS_TOKEN = $token
     $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
     az managedcleanroom frontend configure --endpoint $feBase 2>&1 | Out-Null
@@ -273,7 +258,7 @@ if ($ApiMode -eq "cli") {
     }
 } else {
     # REST mode (original approach)
-    $token = Get-FrontendTokenLocal
+    $token = Get-FrontendToken -TokenFile $TokenFile
     $headers = @{
         Authorization  = "Bearer $token"
         "Content-Type" = "application/json"

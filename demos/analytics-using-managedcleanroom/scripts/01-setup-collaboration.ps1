@@ -322,10 +322,9 @@ if (-not $provisioningComplete) {
     throw "Collaboration provisioning timeout"
 }
 
-# Use static frontend endpoint for westus region
+# Require frontend endpoint — no silent fallback to dogfood URL.
 if (-not $frontendEndpoint) {
-    $frontendEndpoint = "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net/collaborations"
-    Write-Host "Using static frontend endpoint: $frontendEndpoint" -ForegroundColor Cyan
+    throw "frontendEndpoint parameter is required. Please provide the frontend service endpoint URL."
 }
 
 # Step 6: Verify collaborators were added successfully using frontend API.

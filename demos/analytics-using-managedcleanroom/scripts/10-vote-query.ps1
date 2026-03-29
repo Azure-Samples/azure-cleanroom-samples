@@ -4,8 +4,8 @@
 
 .DESCRIPTION
     Run by: Each collaborator (Northwind and Woodgrove).
-    Votes to accept the query via direct REST calls to the frontend service
-    (replaces broken az managedcleanroom frontend CLI).
+    Votes to accept the query via the frontend service.
+    Supports both REST API and az managedcleanroom CLI modes via -ApiMode parameter.
 
     Prerequisites:
     - 09-publish-query.ps1 must have been run.

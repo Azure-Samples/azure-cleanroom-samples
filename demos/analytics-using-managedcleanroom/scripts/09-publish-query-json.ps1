@@ -4,8 +4,7 @@
 
 .DESCRIPTION
     Publishes a query by reading segment*.json files (which include executionSequence,
-    data, preConditions, postFilters). Uses direct REST calls to the frontend service
-    (replaces broken az managedcleanroom frontend CLI on Python 3.13).
+    data, preConditions, postFilters). Supports both REST API and az managedcleanroom CLI modes via -ApiMode parameter.
 
 .PARAMETER collaborationId
     The collaboration ARM resource ID.

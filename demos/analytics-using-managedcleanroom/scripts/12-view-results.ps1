@@ -5,7 +5,7 @@
 .DESCRIPTION
     Run by: Any collaborator (Northwind or Woodgrove).
     Retrieves and displays query run history and collaboration audit events
-    via direct REST calls to the frontend service (replaces broken CLI).
+    via the frontend service. Supports both REST API and az managedcleanroom CLI modes via -ApiMode parameter.
 
     Prerequisites:
     - 11-run-query.ps1 must have been run at least once.
