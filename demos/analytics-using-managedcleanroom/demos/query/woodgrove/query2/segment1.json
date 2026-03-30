@@ -1,0 +1,4 @@
+{
+  "data": "CREATE OR REPLACE TEMP VIEW publisher_view AS SELECT * FROM publisher_data",
+  "executionSequence": 1
+}

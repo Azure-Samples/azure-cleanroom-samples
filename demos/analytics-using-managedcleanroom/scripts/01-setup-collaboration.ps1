@@ -5,8 +5,13 @@
 .DESCRIPTION
     Run by: Owner (e.g., Woodgrove).
     Creates a collaboration resource, adds one or more collaborators by email,
-    enables the analytics workload, and outputs the collaboration details
-    (including the Collaboration ARM ID and Frontend Endpoint needed by all subsequent steps).
+    enables the analytics workload, polls for provisioning, and outputs the
+    collaboration details (ARM ID, frontend collaboration UUID, and frontend endpoint)
+    needed by all subsequent steps.
+
+    Requires the Private CleanRoom cloud (eastus2euap ARM endpoint) and
+    UsePrivateCleanRoomNamespace=true for the az managedcleanroom commands.
+    The script handles cloud switching automatically and restores AzureCloud afterward.
 
 .PARAMETER collaborationName
     Name for the collaboration resource.
@@ -16,13 +21,16 @@
 
 .PARAMETER collaboratorEmails
     One or more email addresses of collaborators to add to the collaboration.
-    Example: @("northwind@company.com", "woodgrove@company.com", "contoso@company.com")
+    Example: @("alice@example.com", "bob@example.com")
 
 .PARAMETER location
     Azure region for the collaboration (default: westus).
 
 .PARAMETER subscription
-    Optional Azure subscription name or ID.
+    Optional Azure subscription name or ID for the collaboration resource.
+
+.PARAMETER outDir
+    Output directory for generated files (default: ./generated).
 #>
 param(
     [Parameter(Mandatory)]
@@ -36,7 +44,9 @@ param(
 
     [string]$location = "westus",
 
-    [string]$subscription
+    [string]$subscription,
+
+    [string]$outDir = "./generated"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -85,6 +95,54 @@ function Invoke-AzIdempotent {
     throw "$ActionName failed: $errText"
 }
 
+# =============================================================================
+# Private CleanRoom Cloud Setup
+# The az managedcleanroom collaboration commands require:
+#   1. UsePrivateCleanRoomNamespace=true (selects Private.CleanRoom RP namespace)
+#   2. PrivateCleanroomAzureCloud (points ARM at eastus2euap.management.azure.com)
+# =============================================================================
+Write-Host "=== Configuring Private CleanRoom cloud ===" -ForegroundColor Cyan
+$env:UsePrivateCleanRoomNamespace = "true"
+$privateCloudName = "PrivateCleanroomAzureCloud"
+
+# Save current cloud so we can restore it later.
+$previousCloud = az cloud show --query name -o tsv 2>$null
+if (-not $previousCloud) { $previousCloud = "AzureCloud" }
+
+# Register the private cloud if not already registered.
+$existingCloud = az cloud list --query "[?name=='$privateCloudName']" -o json 2>$null | ConvertFrom-Json
+if (-not $existingCloud) {
+    Write-Host "  Registering Private CleanRoom cloud..." -ForegroundColor Yellow
+    az cloud register --name $privateCloudName --endpoint-resource-manager "https://eastus2euap.management.azure.com/" 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to register Private CleanRoom cloud"
+        exit 1
+    }
+    Write-Host "  Private CleanRoom cloud registered." -ForegroundColor Green
+} else {
+    Write-Host "  Private CleanRoom cloud already registered." -ForegroundColor Green
+}
+
+# Switch to Private CleanRoom cloud.
+if ($previousCloud -ne $privateCloudName) {
+    Write-Host "  Switching to Private CleanRoom cloud..." -ForegroundColor Yellow
+    az cloud set --name $privateCloudName 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to set Private CleanRoom cloud"
+        exit 1
+    }
+
+    # Re-login is required after cloud switch (new ARM endpoint).
+    Write-Host "  Logging in (interactive)..." -ForegroundColor Yellow
+    Write-Host "  You will be prompted to authenticate. Log in as the collaboration owner." -ForegroundColor Yellow
+    az login --allow-no-subscriptions 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to login after cloud switch"
+        exit 1
+    }
+}
+Write-Host "  Private CleanRoom cloud active." -ForegroundColor Green
+
 # Set subscription if specified.
 if ($subscription) {
     Write-Host "Setting subscription to '$subscription'..." -ForegroundColor Yellow
@@ -114,8 +172,7 @@ if ($rgExists -eq "false") {
     Write-Host "Creating resource group '$resourceGroup' in '$location'..." -ForegroundColor Yellow
     Invoke-AzCommand @("group", "create", "--name", $resourceGroup, "--location", $location, "--output", "none")
     Write-Host "Resource group created." -ForegroundColor Green
-}
-else {
+} else {
     Write-Host "Resource group '$resourceGroup' already exists." -ForegroundColor Green
 }
 
@@ -146,13 +203,13 @@ if ($existingCollab) {
     Write-Host "Collaboration '$collaborationName' created." -ForegroundColor Green
 }
 
-# Step 3: Add collaborators (skip if already added).
+# Step 3: Add collaborators by email (skip if already added).
 Write-Host "`n=== Step 3: Adding collaborators ===" -ForegroundColor Cyan
 foreach ($email in $collaboratorEmails) {
     Invoke-AzIdempotent @("managedcleanroom", "collaboration", "add-collaborator",
         "--collaboration-name", $collaborationName,
         "--resource-group", $resourceGroup,
-        "--email", $email) -ActionName "Add collaborator '$email'"
+        "--user-identifier", $email) -ActionName "Add collaborator '$email'"
 }
 Write-Host "Collaborator setup complete." -ForegroundColor Green
 
@@ -163,28 +220,103 @@ Invoke-AzIdempotent @("managedcleanroom", "collaboration", "enable-workload",
     "--resource-group", $resourceGroup,
     "--workload-type", "analytics") -ActionName "Enable analytics workload"
 
-# Step 5: Retrieve collaboration details.
-Write-Host "`n=== Step 5: Retrieving collaboration details ===" -ForegroundColor Cyan
+# Step 5: Poll for collaboration provisioning to complete.
+Write-Host "`n=== Step 5: Waiting for collaboration provisioning ===" -ForegroundColor Cyan
+
+$maxRetries = 20
+$retryInterval = 30
+
+for ($i = 1; $i -le $maxRetries; $i++) {
+    Write-Host "  Checking provisioning state (attempt $i/$maxRetries)..." -ForegroundColor Yellow
+
+    $collaboration = Invoke-AzCommand @("managedcleanroom", "collaboration", "show",
+        "--collaboration-name", $collaborationName,
+        "--resource-group", $resourceGroup) | ConvertFrom-Json
+
+    $provisioningState = $collaboration.provisioningState
+    Write-Host "  Current provisioning state: $provisioningState" -ForegroundColor Yellow
+
+    if ($provisioningState -eq "Succeeded") {
+        Write-Host "  Collaboration provisioning completed successfully!" -ForegroundColor Green
+        break
+    } elseif ($provisioningState -eq "Failed") {
+        Write-Host "ERROR: Collaboration provisioning failed!" -ForegroundColor Red
+        throw "Collaboration provisioning failed with state: $provisioningState"
+    }
+
+    if ($i -eq $maxRetries) {
+        Write-Host "WARNING: Collaboration still provisioning after $($maxRetries * $retryInterval) seconds." -ForegroundColor Red
+        throw "Collaboration provisioning timeout"
+    }
+
+    Write-Host "  Still provisioning. Waiting $retryInterval seconds..." -ForegroundColor Yellow
+    Start-Sleep -Seconds $retryInterval
+}
+
+# Step 6: Retrieve collaboration details.
+Write-Host "`n=== Step 6: Retrieving collaboration details ===" -ForegroundColor Cyan
 $collaboration = Invoke-AzCommand @("managedcleanroom", "collaboration", "show",
     "--collaboration-name", $collaborationName,
     "--resource-group", $resourceGroup) | ConvertFrom-Json
 
-$collaborationId = $collaboration.id
-# Extract frontend endpoint from workloads (confirmed from source: workloads[].endpoint — client_flatten in CLI)
-$frontendEndpoint = ($collaboration.workloads | Where-Object { $_.workloadType -eq "analytics" }).endpoint
-if (-not $frontendEndpoint) {
-    Write-Host "WARNING: Could not extract frontend endpoint from collaboration show. Workload may not be provisioned yet." -ForegroundColor Red
-    Write-Host "Run 'az managedcleanroom collaboration show' later and look for properties.workloads[].endpoint." -ForegroundColor Red
+$collaborationArmId = $collaboration.id
+
+# Extract frontend collaboration UUID (used by all frontend scripts).
+$collaborationUuid = $collaboration.collaborationId
+if (-not $collaborationUuid) {
+    Write-Host "WARNING: Could not extract collaboration UUID from ARM response." -ForegroundColor Red
+    Write-Host "You may need to get it from the frontend API after accepting the invitation." -ForegroundColor Red
 }
 
-Write-Host "`nCollaboration setup complete." -ForegroundColor Green
-Write-Host "`nCollaboration details:"
-$collaboration | ConvertTo-Json -Depth 10
+# Extract frontend endpoint from workloads array.
+$frontendEndpoint = ($collaboration.workloads | Where-Object { $_.workloadType -eq "analytics" }).endpoint
+if (-not $frontendEndpoint) {
+    Write-Host "WARNING: Could not extract frontend endpoint. Workload may not be provisioned yet." -ForegroundColor Red
+    Write-Host "Run 'az managedcleanroom collaboration show' later and check workloads[].endpoint." -ForegroundColor Red
+}
 
+# =============================================================================
+# Restore previous cloud
+# =============================================================================
+Write-Host "`n=== Restoring cloud to '$previousCloud' ===" -ForegroundColor Cyan
+az cloud set --name $previousCloud 2>&1 | Out-Null
+Write-Host "  Switched back to '$previousCloud'." -ForegroundColor Green
+Write-Host "  You may need to run 'az login' to re-authenticate with the restored cloud." -ForegroundColor Yellow
+
+# =============================================================================
+# Save outputs
+# =============================================================================
+Write-Host "`n=== Step 7: Saving collaboration details ===" -ForegroundColor Cyan
+
+if (-not (Test-Path $outDir)) {
+    New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+}
+
+# Save ARM resource ID
+$collaborationArmId | Out-File -FilePath (Join-Path $outDir "collaboration-id.txt") -Encoding utf8 -NoNewline
+Write-Host "  Collaboration ARM ID saved to: $outDir/collaboration-id.txt" -ForegroundColor Green
+
+# Save frontend collaboration UUID
+if ($collaborationUuid) {
+    $collaborationUuid | Out-File -FilePath (Join-Path $outDir "collaboration-uuid.txt") -Encoding utf8 -NoNewline
+    Write-Host "  Collaboration UUID saved to: $outDir/collaboration-uuid.txt" -ForegroundColor Green
+}
+
+# Save frontend endpoint
+if ($frontendEndpoint) {
+    $frontendEndpoint | Out-File -FilePath (Join-Path $outDir "frontend-endpoint.txt") -Encoding utf8 -NoNewline
+    Write-Host "  Frontend endpoint saved to: $outDir/frontend-endpoint.txt" -ForegroundColor Green
+}
+
+# Print summary
+Write-Host "`nCollaboration setup complete." -ForegroundColor Green
 Write-Host "`n========================================" -ForegroundColor Yellow
-Write-Host "IMPORTANT - Share the following with all collaborators:" -ForegroundColor Yellow
-Write-Host "  Collaboration ARM ID:  $collaborationId" -ForegroundColor Yellow
-Write-Host "  Frontend Endpoint:     $frontendEndpoint" -ForegroundColor Yellow
+Write-Host "COLLABORATION DETAILS" -ForegroundColor Yellow
 Write-Host "========================================" -ForegroundColor Yellow
-Write-Host "`nCollaborators need the Collaboration ARM ID for Step 2 (accept invitation)" -ForegroundColor Yellow
-Write-Host "and the Frontend Endpoint for Steps 2 and 6." -ForegroundColor Yellow
+Write-Host "  Collaboration Name:     $collaborationName" -ForegroundColor Yellow
+Write-Host "  Collaboration ARM ID:   $collaborationArmId" -ForegroundColor Yellow
+Write-Host "  Collaboration UUID:     $collaborationUuid" -ForegroundColor Yellow
+Write-Host "  Frontend Endpoint:      $frontendEndpoint" -ForegroundColor Yellow
+Write-Host "  Resource Group:         $resourceGroup" -ForegroundColor Yellow
+Write-Host "  Location:               $location" -ForegroundColor Yellow
+Write-Host "========================================" -ForegroundColor Yellow

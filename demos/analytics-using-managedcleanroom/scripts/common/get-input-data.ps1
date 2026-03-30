@@ -39,7 +39,31 @@ function Get-InputData {
         $csvPath = Join-Path $outputDir "$handle.csv"
 
         Write-Host "Downloading data for $handle from $csvUrl..."
-        Invoke-WebRequest -Uri $csvUrl -OutFile $csvPath
+        
+        # Retry logic for downloads (handles transient network failures)
+        $maxRetries = 3
+        $retryDelay = 5
+        $downloaded = $false
+        
+        for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+            try {
+                Invoke-WebRequest -Uri $csvUrl -OutFile $csvPath -ErrorAction Stop
+                $downloaded = $true
+                Write-Host "  Downloaded successfully." -ForegroundColor Green
+                break
+            }
+            catch {
+                if ($attempt -lt $maxRetries) {
+                    Write-Host "  Download attempt $attempt failed: $_" -ForegroundColor Yellow
+                    Write-Host "  Retrying in $retryDelay seconds..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds $retryDelay
+                }
+                else {
+                    Write-Host "  Download failed after $maxRetries attempts: $_" -ForegroundColor Red
+                    throw "Failed to download data for $handle after $maxRetries attempts"
+                }
+            }
+        }
     }
     if ($format -ne "csv") {
         New-Item -ItemType Directory -Force -Path "$dataDir/$format" | Out-Null

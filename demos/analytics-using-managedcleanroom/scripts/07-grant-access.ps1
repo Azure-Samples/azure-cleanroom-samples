@@ -26,6 +26,9 @@
 
 .PARAMETER outDir
     Output directory for generated metadata (default: ./generated).
+
+.PARAMETER persona
+    Persona (northwind or woodgrove) for naming/logging.
 #>
 param(
     [Parameter(Mandatory)]
@@ -34,13 +37,22 @@ param(
     [Parameter(Mandatory)]
     [string]$collaborationId,
 
-    [string]$contractId = "analytics",
+    [string]$contractId = "Analytics",
 
     [Parameter(Mandatory)]
     [string]$userId,
 
-    [string]$outDir = "./generated"
+    [string]$outDir = "./generated",
+
+    [string]$persona,
+
+    # For CPK mode, the cleanroom workload needs Key Vault access to read the
+    # wrapped DEK secret and release the KEK. Pass -setupKeyVault for CPK flows.
+    [switch]$setupKeyVault = $false
 )
+
+# Configure Private CleanRoom cloud and verify local user auth
+. "$PSScriptRoot/common/setup-local-auth.ps1"
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
@@ -58,7 +70,7 @@ $subject = "$contractId-$userId"
 Write-Host "Granting access for subject: $subject" -ForegroundColor Cyan
 Write-Host "Issuer URL: $issuerUrl" -ForegroundColor Yellow
 
-# Call common setup-access.ps1 without Key Vault setup (SSE doesn't need KV for the cleanroom).
+# Call common setup-access.ps1. For CPK, pass -setupKeyVault to grant KV access.
 Write-Host "`n=== Setting up access ===" -ForegroundColor Cyan
 & "$PSScriptRoot/common/setup-access.ps1" `
     -resourceGroup $resourceGroup `
@@ -66,6 +78,6 @@ Write-Host "`n=== Setting up access ===" -ForegroundColor Cyan
     -subject $subject `
     -issuerUrl $issuerUrl `
     -outDir $outDir `
-    -setupKeyVault:$false
+    -setupKeyVault:$setupKeyVault
 
 Write-Host "`nAccess granted for subject '$subject'." -ForegroundColor Green

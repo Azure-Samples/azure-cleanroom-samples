@@ -42,6 +42,7 @@ This walkthrough demonstrates multi-party big data analytics using a **Managed C
   - [Audit events](#audit-events)
 
 - [Appendix: CLI commands per step](#appendix-cli-commands-per-step)
+- [Local Testing Notes](#local-testing-notes)
 
 ## Overview
 
@@ -637,7 +638,7 @@ Using the provided script:
 ./scripts/07-grant-access.ps1 `
     -resourceGroup $NORTHWIND_RESOURCE_GROUP `
     -collaborationId $COLLABORATION_ID `
-    -contractId "analytics" `
+    -contractId "Analytics" `
     -userId "<northwind-user-id>" `
     -outDir $OUT_DIR
 
@@ -645,7 +646,7 @@ Using the provided script:
 ./scripts/07-grant-access.ps1 `
     -resourceGroup $WOODGROVE_RESOURCE_GROUP `
     -collaborationId $COLLABORATION_ID `
-    -contractId "analytics" `
+    -contractId "Analytics" `
     -userId "<woodgrove-user-id>" `
     -outDir $OUT_DIR
 ```
@@ -659,7 +660,7 @@ This script:
 6. Creates a **federated credential** on the managed identity, trusting the OIDC issuer with the computed subject (`az identity federated-credential create --issuer --subject --audiences "api://AzureADTokenExchange"`)
 
 > [!NOTE]
-> The `userId` is the collaborator's object ID in the CCF governance. You can obtain it by running `az ad signed-in-user show --query id -o tsv`, or it may be returned during the invitation acceptance (Step 2). The `contractId` defaults to `"analytics"` unless a different contract was configured.
+> The `userId` is the collaborator's object ID in the CCF governance. You can obtain it by running `az ad signed-in-user show --query id -o tsv`, or it may be returned during the invitation acceptance (Step 2). The `contractId` defaults to `"Analytics"` (capital A) — **this is case-sensitive**. The Spark agent uses `"Analytics"` as the contract ID in the federated credential subject (`Analytics-{ownerId}`). Using lowercase `"analytics"` will cause silent token exchange failures at query execution time.
 
 > [!CAUTION]
 > **Partially confirmed — subject format and audience validated from source code, but retrieval is a gap.** Analysis of the Spark analytics agent (`src/workloads/analytics/cleanroom-spark-analytics-agent/Controllers/QueriesController.cs` on `user/ashank/frontendAuth` branch):
@@ -744,7 +745,7 @@ This script constructs the **DatasetSpecification JSON** natively in PowerShell 
 > **DatasetSpecification format verified against frontend source.** The JSON body matches `DatasetInputDetails` (`src/workloads/frontend/Models/CGS/DatasetInputDetails.cs`): `{ "data": { name, datasetSchema, datasetAccessPolicy, datasetAccessPoint } }`. The `AccessPoint` structure (store, identity, protection) matches the cleanroom `CleanRoomSpecification` model. The frontend performs **no field-level validation** — it passes the AccessPoint through to CGS verbatim (`DatasetDocumentPublisher.cs:73-84`). Publishing will succeed, but the cleanroom runtime may fail if any derived values are wrong.
 >
 > **Specific runtime risks (see `.NOTES` in script for details):**
-> - `tokenIssuer.url` is set to `https://cgs/oidc` (v5.0.0 symbolic reference) — old samples used the actual OIDC issuer URL
+> - ~~`tokenIssuer.url` is set to `https://cgs/oidc` (v5.0.0 symbolic reference) — old samples used the actual OIDC issuer URL~~ **FIXED**: `issuerUrl`/`tokenIssuer.url` must be the **public OIDC URL** (e.g., `https://cleanroomoidc.z22.web.core.windows.net/{collaborationId}`), NOT `"https://cgs/oidc"`. Using the internal CGS hostname causes AAD to reject with `AADSTS700211: No matching federated identity record found for presented assertion issuer`. The script now reads from `generated/{rg}/issuer-url.txt`.
 > - `encryptionSecrets` is omitted for SSE — if the runtime always expects this block, data mount will fail
 > - `store.id` uses the datastore name — if CGS expects the ARM resource ID, change to `storeId` from metadata
 >
@@ -971,5 +972,108 @@ Events include query execution start/completion, input/output row counts, datase
 | 10 | Vote on query | `managedcleanroom` | `az managedcleanroom frontend analytics query show`, `query vote accept --body` |
 | 11 | Run query | `managedcleanroom` | `az managedcleanroom frontend analytics query run`, `query runresult show` (polling) |
 | 12 | View results | `managedcleanroom` | `az managedcleanroom frontend analytics query runhistory list`, `auditevent list` |
+| 13 | Run status | _(REST)_ | `GET /collaborations/{id}/analytics/runs/{jobId}` via `frontend-helpers.ps1` — polls for COMPLETED/FAILED |
+| 14 | Run history | _(REST)_ | `GET /collaborations/{id}/analytics/queries/{docId}/runs` via `frontend-helpers.ps1` — standalone with 404 handling |
+| 15 | Audit events | _(REST)_ | `GET /collaborations/{id}/analytics/auditevents` via `frontend-helpers.ps1` — standalone with `value[]` wrapper parsing |
 
 > **No `az cleanroom` dependency.** All steps use standard Azure CLI or the publicly available `az managedcleanroom` extension. Step 8 constructs the DatasetSpecification JSON natively in PowerShell.
+
+---
+
+## Local Testing Notes
+
+This section documents practical learnings from running the E2E flow locally (single user, both personas, no VMs).
+
+### Python 3.13 CLI Bug — Use Direct REST Instead
+
+The `az managedcleanroom frontend` CLI extension fails on Python 3.13:
+```
+AttributeError: 'tuple' object has no attribute 'token'
+```
+
+`Profile.get_raw_token()` returns a tuple in Python 3.13, but `BearerTokenCredentialPolicy` expects an `AccessToken` object. The bug affects all `az managedcleanroom frontend analytics` commands (dataset publish, query publish, vote, run, etc.).
+
+**Workaround**: Scripts 08-12 use direct REST calls via `scripts/common/frontend-helpers.ps1` instead of the CLI. This helper library provides PowerShell wrappers for all frontend API endpoints. See `E2E-TEST-FINDINGS.md` for the full API reference.
+
+### MSAL IdToken for MSA Guest Accounts
+
+If the collaborator account is an MSA guest (e.g., `user@gmail.com` invited to an MSFT-tenant collaboration), ARM access tokens will not work for frontend authentication. The frontend service reads claims `preferred_username -> upn -> sub`, and MSA ARM tokens lack the first two, falling back to an opaque pairwise `sub` identifier that causes `InvalidUserIdentifier` errors.
+
+**Fix**: Use MSAL device-code flow to obtain an IdToken:
+
+```powershell
+Install-Module MSAL.PS -Scope CurrentUser -Force
+$token = Get-MsalToken -ClientId "8a3849c1-81c5-4d62-b83e-3bb2bb11251a" `
+    -TenantId "common" -Scopes "User.Read" -DeviceCode
+$token.IdToken | Out-File -FilePath "/tmp/msal-idtoken.txt" -NoNewline
+```
+
+The `frontend-helpers.ps1` `Get-FrontendToken` function will automatically pick up the cached IdToken from `/tmp/msal-idtoken.txt`. Priority chain:
+1. `$env:CLEANROOM_FRONTEND_TOKEN` (environment variable override)
+2. `/tmp/msal-idtoken.txt` (cached MSAL IdToken)
+3. `az account get-access-token` (ARM fallback — fails for MSA guests)
+
+### Local Auth Setup (`setup-local-auth.ps1`)
+
+Scripts 04-12 dot-source `scripts/common/setup-local-auth.ps1` which replaces VM managed identity boilerplate. It:
+- Verifies the user is logged in via `az login`
+- Ensures the active cloud is `AzureCloud` (scripts 04-12 do not need `PrivateCleanroomAzureCloud`)
+- Sets `$env:UsePrivateCleanRoomNamespace = "true"`
+- Optionally switches the active subscription
+
+No VMs or managed identities are required for the test runner — the user's own `az login` credentials handle all ARM operations.
+
+### OIDC Whitelisted Storage Account (MSFT-Hosted Collaborations)
+
+When a collaboration is hosted in the MSFT internal tenant (`72f988bf-...`), the OIDC issuer URL must point to a **whitelisted** storage account. Azure AD rejects federated identity credentials with arbitrary issuer URLs.
+
+A pre-provisioned whitelisted storage account is available:
+
+| Property | Value |
+|---|---|
+| SA Name | `cleanroomoidc` |
+| Resource Group | `azcleanroom-ctest-rg` |
+| Subscription | `AzureCleanRoom-NonProd` (`fccb68eb-8ccf-49a6-a69a-7ea3c2867e9c`) |
+| Static Website URL | `https://cleanroomoidc.z22.web.core.windows.net` |
+
+To upload OIDC documents to this SA, log in as an account with `Storage Blob Data Contributor` on the `fccb68eb-...` subscription, then upload:
+
+```powershell
+az storage blob upload --account-name cleanroomoidc --container-name '$web' `
+    --name "$collaborationId/.well-known/openid-configuration" `
+    --file ./openid-configuration.json --content-type "application/json" `
+    --overwrite --auth-mode login
+
+az storage blob upload --account-name cleanroomoidc --container-name '$web' `
+    --name "$collaborationId/openid/v1/jwks" `
+    --file ./jwks.json --content-type "application/json" `
+    --overwrite --auth-mode login
+```
+
+Verify public accessibility:
+```bash
+curl https://cleanroomoidc.z22.web.core.windows.net/$collaborationId/.well-known/openid-configuration
+curl https://cleanroomoidc.z22.web.core.windows.net/$collaborationId/openid/v1/jwks
+```
+
+> [!NOTE]
+> After calling `setIssuerUrl` from an MSA account, the issuer info shows `issuerUrl: null` at the top level. The per-tenant `tenantData.issuerUrl` is set correctly. The top-level field may only be settable by the collaboration owner.
+
+### frontend-helpers.ps1 Quick Reference
+
+Key functions for making frontend REST calls:
+
+| Function | Description |
+|---|---|
+| `New-FrontendContext -Endpoint $url -CollaborationId $id` | Creates context hashtable |
+| `Get-FrontendToken` | Resolves auth token via priority chain |
+| `Publish-FrontendDataset -Context $ctx -DocId $id -Body $obj` | Publish dataset |
+| `Set-FrontendConsent -Context $ctx -DocId $id -Action enable` | Enable execution consent |
+| `Publish-FrontendQuery -Context $ctx -DocId $id -Body $obj` | Publish query |
+| `Invoke-FrontendQueryVoteAccept -Context $ctx -DocId $id` | Vote accept |
+| `Invoke-FrontendQueryRun -Context $ctx -DocId $id` | Submit query run |
+| `Get-FrontendQueryRunResult -Context $ctx -JobId $id` | Poll run result |
+| `Get-FrontendQueryRunHistory -Context $ctx -DocId $id` | Get run history |
+| `Get-FrontendAuditEvents -Context $ctx` | Get audit events |
+
+All functions use `-SkipCertificateCheck` (dogfood self-signed cert) and append `?api-version=2026-03-01-preview` automatically.

@@ -5,13 +5,9 @@
 .DESCRIPTION
     Run by: Each collaborator (Northwind and Woodgrove).
 
-    This script constructs the DatasetSpecification JSON directly from metadata
-    saved by previous steps, then publishes via `az managedcleanroom frontend`.
-    No `az cleanroom` CLI is used.
-
-    The DatasetSpecification JSON structure was derived from the cleanroom extension
-    source code (CleanRoomSpecification model, AccessPoint, PrivacyProxySettings)
-    in cleanroom-5.0.0.
+    This script constructs the dataset specification JSON and publishes via direct
+    REST calls to the frontend service. Replaces `az managedcleanroom frontend`
+    CLI calls which are broken on Python 3.13.
 
     Northwind publishes their input dataset.
     Woodgrove publishes both their input dataset and output dataset.
@@ -21,30 +17,6 @@
     - 05-prepare-data-sse.ps1 must have been run (uploads data, saves metadata).
     - 06-setup-identity.ps1 must have been run (OIDC setup, saves identity metadata).
 
-.NOTES
-    NEEDS LIVE VALIDATION — The JSON body will be accepted by the frontend (it does
-    no field-level validation), but the cleanroom runtime may fail if any of these
-    derived values are wrong:
-
-    1. tokenIssuer.url = "https://cgs/oidc" — This is a symbolic CGS reference used
-       by cleanroom v5.0.0. The old sample scripts used the actual OIDC issuer URL
-       (the static website URL from Step 6). If the cleanroom runtime expects the
-       real URL, change this to $identityMeta.tokenIssuerUrl in New-DatasetBody.
-
-    2. encryptionSecrets omitted for SSE — SSE means Azure handles encryption
-       server-side, so logically no client-side secrets are needed. If the runtime
-       always expects an encryptionSecrets block, this will need adjustment.
-
-    3. store.id = datastore name (e.g., "northwind-input-csv") — Follows the v5.0.0
-       config_add_datastore() convention. If CGS expects the ARM resource ID of the
-       storage account here, use $Meta.storeId instead.
-
-    Source references used to derive the JSON structure:
-    - CleanRoomSpecification model: cleanroom_common/azure_cleanroom_core/models/model.py
-    - config_add_datastore: cleanroom_common/azure_cleanroom_core/utilities/datastore_helpers.py:43
-    - Frontend DatasetSpecification: src/workloads/frontend/Models/CGS/DatasetSpecification.cs
-    - Frontend AccessPoint: src/workloads/frontend/Models/CGS/AccessPoint.cs
-
 .PARAMETER collaborationId
     The collaboration ARM resource ID.
 
@@ -53,6 +25,9 @@
 
 .PARAMETER persona
     The collaborator persona (northwind or woodgrove).
+
+.PARAMETER frontendEndpoint
+    Frontend service URL.
 
 .PARAMETER outDir
     Output directory for generated metadata (default: ./generated).
@@ -68,90 +43,26 @@ param(
     [ValidateSet("northwind", "woodgrove", IgnoreCase = $false)]
     [string]$persona,
 
-    [string]$outDir = "./generated"
+    [Parameter(Mandatory)]
+    [string]$frontendEndpoint,
+
+    [string]$outDir = "./generated",
+
+    [string]$TokenFile,
+
+    [ValidateSet("rest", "cli")]
+    [string]$ApiMode = "rest"
 )
+
+# Configure Private CleanRoom cloud and verify local user auth
+. "$PSScriptRoot/common/setup-local-auth.ps1"
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
-# Runs an az command, returning $null instead of throwing if it fails.
-function Invoke-AzSafe {
-    param([string[]]$Arguments)
-    $PSNativeCommandUseErrorActionPreference = $false
-    $result = & az @Arguments 2>$null
-    if ($LASTEXITCODE -eq 0) { return $result }
-    return $null
-}
-
-# Builds the DatasetSpecification JSON body for the frontend dataset publish API.
-# Structure matches the CleanRoomSpecification AccessPoint model (cleanroom v5.0.0).
-function New-DatasetBody {
-    param(
-        [PSCustomObject]$Meta,         # Datastore metadata (name, storeType, storeUrl, containerName, schema)
-        [PSCustomObject]$Identity,     # Identity metadata (identityName, clientId, tenantId)
-        [string]$AccessMode,           # "read" or "write"
-        [string[]]$AllowedFields       # Fields allowed by the access policy
-    )
-
-    $isRead = ($AccessMode -eq "read")
-    $accessPointType = if ($isRead) { "Volume_ReadOnly" } else { "Volume_ReadWrite" }
-    $proxyType = if ($isRead) {
-        "SecureVolume__ReadOnly__Azure__BlobStorage"
-    } else {
-        "SecureVolume__ReadWrite__Azure__BlobStorage"
-    }
-
-    $body = [ordered]@{
-        data = [ordered]@{
-            name = $Meta.name
-            datasetSchema = [ordered]@{
-                format = $Meta.schema.format
-                fields = @($Meta.schema.fields | ForEach-Object {
-                    [ordered]@{ fieldName = $_.fieldName; fieldType = $_.fieldType }
-                })
-            }
-            datasetAccessPolicy = [ordered]@{
-                accessMode    = $AccessMode
-                allowedFields = @($AllowedFields)
-            }
-            datasetAccessPoint = [ordered]@{
-                name = $Meta.name
-                type = $accessPointType
-                path = ""
-                store = [ordered]@{
-                    name     = $Meta.containerName
-                    type     = $Meta.storeType
-                    id       = $Meta.name
-                    provider = [ordered]@{
-                        protocol      = $Meta.storeType
-                        url           = $Meta.storeUrl
-                        configuration = ""
-                    }
-                }
-                identity = [ordered]@{
-                    name     = $Identity.identityName
-                    clientId = $Identity.clientId
-                    tenantId = $Identity.tenantId
-                    tokenIssuer = [ordered]@{
-                        issuer = [ordered]@{
-                            protocol      = "Attested_OIDC"
-                            url           = "https://cgs/oidc"
-                            configuration = ""
-                        }
-                        issuerType = "AttestationBasedTokenIssuer"
-                    }
-                }
-                protection = [ordered]@{
-                    proxyType     = $proxyType
-                    proxyMode     = "Secure"
-                    configuration = ""
-                }
-            }
-        }
-    }
-
-    return $body | ConvertTo-Json -Depth 15
-}
+# Load common frontend helpers (supports REST and CLI modes)
+. "$PSScriptRoot/common/frontend-helpers.ps1"
+$feCtx = New-FrontendContext -frontendEndpoint $frontendEndpoint -ApiMode $ApiMode
 
 # -- Load generated resource names ----------------------------------------------
 $namesFile = Join-Path $outDir $resourceGroup "names.generated.ps1"
@@ -176,86 +87,124 @@ if (-not (Test-Path $identityMetadataFile)) {
 }
 $identityMeta = Get-Content $identityMetadataFile -Raw | ConvertFrom-Json
 
+# Load OIDC issuer URL from generated metadata
+$issuerUrlFile = Join-Path $outDir $resourceGroup "issuer-url.txt"
+if (-not (Test-Path $issuerUrlFile)) {
+    Write-Host "ERROR: '$issuerUrlFile' not found. Run 06-setup-identity.ps1 first." -ForegroundColor Red
+    exit 1
+}
+$oidcIssuerUrl = (Get-Content $issuerUrlFile -Raw).Trim()
+Write-Host "Using OIDC issuer URL: $oidcIssuerUrl" -ForegroundColor Cyan
+
 $inputMeta = $datastoreMeta.input
-$outputDir = Join-Path $outDir $resourceGroup
-$tempDir = Join-Path $outputDir "temp"
-if (-not (Test-Path $tempDir)) {
-    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+
+# -- Build dataset publish body -------------------------------------------------
+# Body structure verified from CLI source (_frontend_custom.py, lines 383-401):
+#   name, datasetSchema, datasetAccessPolicy, store, identity
+function New-DatasetPublishBody {
+    param(
+        [PSCustomObject]$Meta,
+        [PSCustomObject]$Identity,
+        [string]$AccessMode,
+        [string[]]$AllowedFields,
+        [string]$EncryptionMode = "SSE"
+    )
+
+    $body = [ordered]@{
+        name = $Meta.name
+        datasetSchema = [ordered]@{
+            format = $Meta.schema.format
+            fields = @($Meta.schema.fields | ForEach-Object {
+                [ordered]@{ fieldName = $_.fieldName; fieldType = $_.fieldType }
+            })
+        }
+        datasetAccessPolicy = [ordered]@{
+            accessMode = $AccessMode
+        }
+        store = [ordered]@{
+            storageAccountUrl  = $Meta.storeUrl
+            containerName      = $Meta.containerName
+            storageAccountType = $Meta.storeType
+            encryptionMode     = $EncryptionMode
+        }
+        identity = [ordered]@{
+            name      = $Identity.identityName
+            clientId  = $Identity.clientId
+            tenantId  = $Identity.tenantId
+            issuerUrl = $script:oidcIssuerUrl
+        }
+    }
+
+    if ($AllowedFields -and $AllowedFields.Count -gt 0) {
+        $body.datasetAccessPolicy.allowedFields = @($AllowedFields)
+    }
+
+    return $body
 }
 
 # -- Publish input dataset ------------------------------------------------------
 Write-Host "=== Publishing input dataset '$($inputMeta.name)' ===" -ForegroundColor Cyan
 
-$inputBodyJson = New-DatasetBody `
-    -Meta $inputMeta `
-    -Identity $identityMeta `
-    -AccessMode "read" `
-    -AllowedFields @("date", "author", "mentions")
-
-$inputBodyFile = Join-Path $tempDir "$persona-input-dataset-body.json"
-$inputBodyJson | Out-File -FilePath $inputBodyFile -Encoding utf8
-Write-Host "Dataset specification saved to: $inputBodyFile" -ForegroundColor Yellow
-
-# Check if already published (skip if so — idempotency).
-$existingInput = Invoke-AzSafe @("managedcleanroom", "frontend", "analytics", "dataset", "show", "--collaboration-id", $collaborationId, "--document-id", $inputMeta.name)
+$existingInput = Get-FrontendDataset -Context $feCtx -CollaborationId $collaborationId -DocumentId $inputMeta.name -TokenFile $TokenFile
 if ($existingInput) {
     Write-Host "Input dataset '$($inputMeta.name)' already published (skipped)." -ForegroundColor Yellow
 } else {
-    az managedcleanroom frontend analytics dataset publish `
-        --collaboration-id $collaborationId `
-        --document-id $inputMeta.name `
-        --body "@$inputBodyFile"
+    $inputBody = New-DatasetPublishBody `
+        -Meta $inputMeta `
+        -Identity $identityMeta `
+        -AccessMode "read" `
+        -AllowedFields @("date", "author", "mentions")
+
+    Publish-FrontendDataset -Context $feCtx `
+        -CollaborationId $collaborationId `
+        -DocumentId $inputMeta.name `
+        -Body $inputBody `
+        -TokenFile $TokenFile
     Write-Host "Input dataset published." -ForegroundColor Green
 }
 
-az managedcleanroom frontend analytics dataset show `
-    --collaboration-id $collaborationId `
-    --document-id $inputMeta.name
+# Show the dataset
+$datasetInfo = Get-FrontendDataset -Context $feCtx -CollaborationId $collaborationId -DocumentId $inputMeta.name -TokenFile $TokenFile
+if ($datasetInfo) {
+    $datasetInfo | ConvertTo-Json -Depth 10
+}
 
 # -- Publish output dataset (Woodgrove only) -----------------------------------
 if ($persona -eq "woodgrove" -and $datastoreMeta.output) {
     Write-Host "`n=== Publishing output dataset '$($datastoreMeta.output.name)' ===" -ForegroundColor Cyan
 
-    $outputBodyJson = New-DatasetBody `
-        -Meta $datastoreMeta.output `
-        -Identity $identityMeta `
-        -AccessMode "write" `
-        -AllowedFields @("author", "Number_Of_Mentions")
-
-    $outputBodyFile = Join-Path $tempDir "woodgrove-output-dataset-body.json"
-    $outputBodyJson | Out-File -FilePath $outputBodyFile -Encoding utf8
-
-    # Check if already published (skip if so).
-    $existingOutput = Invoke-AzSafe @("managedcleanroom", "frontend", "analytics", "dataset", "show", "--collaboration-id", $collaborationId, "--document-id", $datastoreMeta.output.name)
+    $existingOutput = Get-FrontendDataset -Context $feCtx -CollaborationId $collaborationId -DocumentId $datastoreMeta.output.name -TokenFile $TokenFile
     if ($existingOutput) {
         Write-Host "Output dataset '$($datastoreMeta.output.name)' already published (skipped)." -ForegroundColor Yellow
     } else {
-        az managedcleanroom frontend analytics dataset publish `
-            --collaboration-id $collaborationId `
-            --document-id $datastoreMeta.output.name `
-            --body "@$outputBodyFile"
+        $outputBody = New-DatasetPublishBody `
+            -Meta $datastoreMeta.output `
+            -Identity $identityMeta `
+            -AccessMode "write" `
+            -AllowedFields @("author", "Number_Of_Mentions")
+
+        Publish-FrontendDataset -Context $feCtx `
+            -CollaborationId $collaborationId `
+            -DocumentId $datastoreMeta.output.name `
+            -Body $outputBody `
+            -TokenFile $TokenFile
         Write-Host "Output dataset published." -ForegroundColor Green
     }
 
-    az managedcleanroom frontend analytics dataset show `
-        --collaboration-id $collaborationId `
-        --document-id $datastoreMeta.output.name
+    $outputInfo = Get-FrontendDataset -Context $feCtx -CollaborationId $collaborationId -DocumentId $datastoreMeta.output.name -TokenFile $TokenFile
+    if ($outputInfo) {
+        $outputInfo | ConvertTo-Json -Depth 10
+    }
 }
 
 Write-Host "`nDataset publishing complete for '$persona'." -ForegroundColor Green
 
 # -- Enable execution consent on published datasets -----------------------------
 Write-Host "`n=== Enabling execution consent on datasets ===" -ForegroundColor Cyan
-az managedcleanroom frontend consent set `
-    --collaboration-id $collaborationId `
-    --document-id $inputMeta.name `
-    --consent-action enable
+Set-FrontendConsent -Context $feCtx -CollaborationId $collaborationId -DocumentId $inputMeta.name -Action "enable" -TokenFile $TokenFile
 Write-Host "Execution consent enabled for input dataset '$($inputMeta.name)'." -ForegroundColor Green
 
 if ($persona -eq "woodgrove" -and $datastoreMeta.output) {
-    az managedcleanroom frontend consent set `
-        --collaboration-id $collaborationId `
-        --document-id $datastoreMeta.output.name `
-        --consent-action enable
+    Set-FrontendConsent -Context $feCtx -CollaborationId $collaborationId -DocumentId $datastoreMeta.output.name -Action "enable" -TokenFile $TokenFile
     Write-Host "Execution consent enabled for output dataset '$($datastoreMeta.output.name)'." -ForegroundColor Green
 }

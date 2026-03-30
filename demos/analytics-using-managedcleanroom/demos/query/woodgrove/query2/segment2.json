@@ -1,0 +1,4 @@
+{
+  "data": "CREATE OR REPLACE TEMP VIEW consumer_view AS SELECT * FROM consumer_data",
+  "executionSequence": 1
+}

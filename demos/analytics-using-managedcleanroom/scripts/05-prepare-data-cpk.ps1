@@ -1,20 +1,27 @@
 <#
 .SYNOPSIS
-    Uploads data with client-side encryption WITHOUT az cleanroom CLI (CPK mode).
+    Uploads data with CPK (Customer-Provided Key) encryption via Azure Storage SSE-CPK.
 
 .DESCRIPTION
-    Replaces: az cleanroom datastore add + az cleanroom datastore upload + az cleanroom secretstore add
-    Uses: PowerShell crypto + az keyvault + az storage blob upload
+    Replaces: az cleanroom datastore add + az cleanroom datastore upload
+    Uses: azcopy copy --cpk-by-value (Azure Storage server-side encryption with customer-provided keys)
 
-    For CPK (Client-Provided Keys), data must be encrypted BEFORE uploading:
-    1. Generate a random AES-256 DEK (Data Encryption Key)
-    2. Encrypt each file locally with the DEK
-    3. Upload encrypted files to Azure Blob Storage
-    4. Wrap the DEK with a KEK (Key Encryption Key) in Key Vault
-    5. Store the wrapped DEK as a Key Vault secret
+    IMPORTANT: CPK mode does NOT mean client-side encryption. Data is uploaded as plaintext
+    and Azure Storage encrypts it server-side using the customer-provided key (DEK). The
+    cleanroom's blobfuse layer releases the KEK via SKR, unwraps the DEK, and passes it
+    to Azure Storage via CPK headers to transparently decrypt at read time.
 
-    Also generates datastore metadata including encryption key references
-    for the dataset publish step.
+    This script performs Phase A of the CPK flow:
+    1. Generate a random 32-byte DEK (Data Encryption Key)
+    2. Create blob containers (input, and output for woodgrove)
+    3. Upload data files using azcopy --cpk-by-value (Azure Storage encrypts server-side)
+    4. Save DEK binary file and datastore metadata
+
+    Phase B (KEK creation + DEK wrapping) happens in 08-publish-dataset-cpk.ps1 AFTER
+    datasets are published, because the SKR release policy must be fetched from the
+    published dataset.
+
+    Requires: azcopy (v10+), python3 with cryptography package
 
 .PARAMETER resourceGroup
     Azure resource group containing the storage account and Key Vault.
@@ -27,6 +34,10 @@
 
 .PARAMETER outDir
     Output directory for generated metadata (default: ./generated).
+
+.PARAMETER datasetSuffix
+    Optional suffix for dataset names (e.g., "-cpk-v4"). Appended to the base
+    dataset name (e.g., "northwind-input-csv-cpk-v4").
 #>
 param(
     [Parameter(Mandatory)]
@@ -39,8 +50,13 @@ param(
     [Parameter(Mandatory)]
     [string]$dataDir,
 
-    [string]$outDir = "./generated"
+    [string]$outDir = "./generated",
+
+    [string]$datasetSuffix = ""
 )
+
+# Configure Private CleanRoom cloud and verify local user auth
+. "$PSScriptRoot/common/setup-local-auth.ps1"
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
@@ -71,6 +87,13 @@ if (-not (Test-Path $dataDir)) {
     exit 1
 }
 
+# Verify azcopy is available.
+$azcopyPath = Get-Command azcopy -ErrorAction SilentlyContinue
+if (-not $azcopyPath) {
+    Write-Host "ERROR: azcopy not found in PATH. Install from https://aka.ms/azcopy" -ForegroundColor Red
+    exit 1
+}
+
 # Resolve storage and Key Vault details.
 Write-Host "Resolving resources..." -ForegroundColor Cyan
 $storageJson = az storage account show `
@@ -89,6 +112,14 @@ $kvUrl = $kvJson.properties.vaultUri.TrimEnd('/')
 $inputContainer = "$persona-input"
 $outputContainer = "$persona-output"
 
+# Dataset naming: base name + optional suffix (e.g., "northwind-input-csv-cpk-v4")
+$inputDatasetName = "$persona-input-csv$datasetSuffix"
+$outputDatasetName = "woodgrove-output-csv$datasetSuffix"
+
+# Per-dataset KEK naming (used in metadata, key created later in step 08)
+$inputKekName = "$inputDatasetName-kek"
+$outputKekName = "$outputDatasetName-kek"
+
 # -- Step 1: Create containers --------------------------------------------------
 Write-Host "`n=== Step 1: Creating blob containers ===" -ForegroundColor Cyan
 Invoke-AzSafe @("storage", "container", "create", "--account-name", $STORAGE_ACCOUNT_NAME, "--name", $inputContainer, "--auth-mode", "login", "--output", "none")
@@ -99,112 +130,70 @@ if ($persona -eq "woodgrove") {
     Write-Host "Container '$outputContainer' ready." -ForegroundColor Green
 }
 
-# -- Step 2: Generate DEK (AES-256 key) ----------------------------------------
+# -- Step 2: Generate DEK (32-byte random key) ----------------------------------
 Write-Host "`n=== Step 2: Generating Data Encryption Key (DEK) ===" -ForegroundColor Cyan
-$aes = [System.Security.Cryptography.Aes]::Create()
-$aes.KeySize = 256
-$aes.GenerateKey()
-$dekBytes = $aes.Key
-$dekBase64 = [Convert]::ToBase64String($dekBytes)
-Write-Host "DEK generated (AES-256, $($dekBytes.Length) bytes)." -ForegroundColor Green
+$dekDir = Join-Path $outDir "datastores" "keys"
+New-Item -ItemType Directory -Path $dekDir -Force | Out-Null
 
-# -- Step 3: Create KEK in Key Vault -------------------------------------------
-Write-Host "`n=== Step 3: Creating Key Encryption Key (KEK) in Key Vault ===" -ForegroundColor Cyan
-$kekName = "$persona-kek"
-az keyvault key create `
-    --vault-name $KEYVAULT_NAME `
-    --name $kekName `
-    --kty RSA `
-    --size 2048 `
-    --ops encrypt decrypt wrapKey unwrapKey `
-    --output none
-Write-Host "KEK '$kekName' created in Key Vault." -ForegroundColor Green
+# Generate a 32-byte random DEK using Python (matches az cleanroom CLI implementation).
+$inputDekFile = Join-Path $dekDir "$inputDatasetName-dek.bin"
+python3 -c "import os; open('$inputDekFile', 'wb').write(os.urandom(32))"
+$inputDekBytes = [System.IO.File]::ReadAllBytes($inputDekFile)
+$inputDekBase64 = [Convert]::ToBase64String($inputDekBytes)
+$inputDekSha256 = [Convert]::ToBase64String(
+    [System.Security.Cryptography.SHA256]::HashData($inputDekBytes)
+)
+Write-Host "Input DEK generated (32 bytes): $inputDekFile" -ForegroundColor Green
 
-# -- Step 4: Wrap DEK with KEK ------------------------------------------------
-Write-Host "`n=== Step 4: Wrapping DEK with KEK ===" -ForegroundColor Cyan
-# Write DEK to a temp file for wrapping.
-$dekTempFile = Join-Path $outDir $resourceGroup "dek-temp.bin"
-New-Item -ItemType Directory -Path (Split-Path $dekTempFile) -Force | Out-Null
-[System.IO.File]::WriteAllBytes($dekTempFile, $dekBytes)
-
-$wrappedResult = az keyvault key encrypt `
-    --vault-name $KEYVAULT_NAME `
-    --name $kekName `
-    --algorithm RSA-OAEP-256 `
-    --value $dekBase64 `
-    --output json | ConvertFrom-Json
-$wrappedDekBase64 = $wrappedResult.result
-
-# Store wrapped DEK as a Key Vault secret.
-$wrappedDekSecretName = "wrapped-$persona-input-csv-dek-$kekName"
-az keyvault secret set `
-    --vault-name $KEYVAULT_NAME `
-    --name $wrappedDekSecretName `
-    --value $wrappedDekBase64 `
-    --output none
-Write-Host "Wrapped DEK stored as secret '$wrappedDekSecretName'." -ForegroundColor Green
-
-# Clean up temp DEK file.
-Remove-Item $dekTempFile -ErrorAction SilentlyContinue
-
-# -- Step 5: Encrypt and upload data files -------------------------------------
-Write-Host "`n=== Step 5: Encrypting and uploading data files ===" -ForegroundColor Cyan
-
-$encryptedDir = Join-Path $outDir $resourceGroup "encrypted-$persona"
-if (Test-Path $encryptedDir) {
-    Remove-Item $encryptedDir -Recurse -Force
+if ($persona -eq "woodgrove") {
+    $outputDekFile = Join-Path $dekDir "$outputDatasetName-dek.bin"
+    python3 -c "import os; open('$outputDekFile', 'wb').write(os.urandom(32))"
+    Write-Host "Output DEK generated (32 bytes): $outputDekFile" -ForegroundColor Green
 }
-New-Item -ItemType Directory -Path $encryptedDir -Force | Out-Null
 
-$dataFiles = Get-ChildItem -Path $dataDir -File -Recurse
-foreach ($file in $dataFiles) {
-    Write-Host "  Encrypting $($file.Name)..." -ForegroundColor Yellow
+# -- Step 3: Upload data with azcopy --cpk-by-value ----------------------------
+Write-Host "`n=== Step 3: Uploading data with CPK (azcopy --cpk-by-value) ===" -ForegroundColor Cyan
 
-    # Read file content.
-    $plainBytes = [System.IO.File]::ReadAllBytes($file.FullName)
+# Get tenant ID for azcopy auto-login.
+$tenantId = (az account show --query tenantId -o tsv)
+$containerUrl = "${storageBlobEndpoint}${inputContainer}/"
 
-    # Encrypt with AES-256-CBC.
-    $aesEnc = [System.Security.Cryptography.Aes]::Create()
-    $aesEnc.Key = $dekBytes
-    $aesEnc.Mode = [System.Security.Cryptography.CipherMode]::CBC
-    $aesEnc.Padding = [System.Security.Cryptography.PaddingMode]::PKCS7
-    $aesEnc.GenerateIV()
-    $iv = $aesEnc.IV
+Write-Host "  Uploading to: $containerUrl" -ForegroundColor Yellow
+Write-Host "  Using AZCLI auto-login (tenant: $tenantId)" -ForegroundColor Yellow
 
-    $encryptor = $aesEnc.CreateEncryptor()
-    $encryptedBytes = $encryptor.TransformFinalBlock($plainBytes, 0, $plainBytes.Length)
+# Clear existing blobs in the container first (in case of re-run).
+Write-Host "  Clearing existing blobs in '$inputContainer'..." -ForegroundColor Yellow
+Invoke-AzSafe @("storage", "blob", "delete-batch", "--account-name", $STORAGE_ACCOUNT_NAME, "--source", $inputContainer, "--auth-mode", "login")
 
-    # Prepend IV to encrypted data (IV needed for decryption).
-    $outputBytes = New-Object byte[] ($iv.Length + $encryptedBytes.Length)
-    [Array]::Copy($iv, 0, $outputBytes, 0, $iv.Length)
-    [Array]::Copy($encryptedBytes, 0, $outputBytes, $iv.Length, $encryptedBytes.Length)
+# Set environment variables for azcopy CPK mode.
+$env:CPK_ENCRYPTION_KEY = $inputDekBase64
+$env:CPK_ENCRYPTION_KEY_SHA256 = $inputDekSha256
+$env:AZCOPY_AUTO_LOGIN_TYPE = "AZCLI"
+$env:AZCOPY_TENANT_ID = $tenantId
 
-    # Preserve subdirectory structure (e.g., date-partitioned folders).
-    $relativePath = $file.FullName.Substring($dataDir.Length).TrimStart('\', '/')
-    $encryptedFilePath = Join-Path $encryptedDir $relativePath
-    New-Item -ItemType Directory -Path (Split-Path $encryptedFilePath) -Force | Out-Null
-    [System.IO.File]::WriteAllBytes($encryptedFilePath, $outputBytes)
-    $encryptor.Dispose()
-    $aesEnc.Dispose()
+try {
+    # Upload data files using azcopy with CPK. Azure Storage encrypts server-side.
+    $PSNativeCommandUseErrorActionPreference = $false
+    azcopy copy "$dataDir/*" $containerUrl --recursive --cpk-by-value 2>&1 | ForEach-Object {
+        Write-Host "  $_" -ForegroundColor DarkGray
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: azcopy upload failed with exit code $LASTEXITCODE" -ForegroundColor Red
+        exit 1
+    }
+    $PSNativeCommandUseErrorActionPreference = $true
+    Write-Host "Data uploaded with CPK encryption." -ForegroundColor Green
 }
-Write-Host "All files encrypted." -ForegroundColor Green
+finally {
+    # Clean up CPK environment variables.
+    Remove-Item env:CPK_ENCRYPTION_KEY -ErrorAction SilentlyContinue
+    Remove-Item env:CPK_ENCRYPTION_KEY_SHA256 -ErrorAction SilentlyContinue
+    Remove-Item env:AZCOPY_AUTO_LOGIN_TYPE -ErrorAction SilentlyContinue
+    Remove-Item env:AZCOPY_TENANT_ID -ErrorAction SilentlyContinue
+}
 
-# Upload encrypted files.
-Write-Host "  Uploading encrypted files..." -ForegroundColor Yellow
-az storage blob upload-batch `
-    --account-name $STORAGE_ACCOUNT_NAME `
-    --destination $inputContainer `
-    --source $encryptedDir `
-    --auth-mode login `
-    --overwrite `
-    --output none
-Write-Host "Encrypted data uploaded." -ForegroundColor Green
-
-# Clean up encrypted temp files.
-Remove-Item $encryptedDir -Recurse -Force
-
-# -- Step 6: Save datastore metadata ------------------------------------------
-Write-Host "`n=== Step 6: Saving datastore metadata ===" -ForegroundColor Cyan
+# -- Step 4: Save datastore metadata ------------------------------------------
+Write-Host "`n=== Step 4: Saving datastore metadata ===" -ForegroundColor Cyan
 $datastoreDir = Join-Path $outDir "datastores"
 if (-not (Test-Path $datastoreDir)) {
     New-Item -ItemType Directory -Path $datastoreDir -Force | Out-Null
@@ -220,9 +209,12 @@ $inputSchema = @{
     )
 }
 
+# Wrapped DEK secret names follow the convention: wrapped-{datastore}-dek-{kekName}
+$inputWrappedDekSecretName = "wrapped-$inputDatasetName-dek-$inputKekName"
+
 $datastoreMetadata = @{
     input = @{
-        name            = "$persona-input-csv"
+        name            = $inputDatasetName
         storeType       = "Azure_BlobStorage"
         storeId         = $storageAccountId
         storeUrl        = $storageBlobEndpoint
@@ -230,10 +222,14 @@ $datastoreMetadata = @{
         encryptionMode  = "CPK"
         schema          = $inputSchema
         encryption      = @{
-            dekSecretName = $wrappedDekSecretName
+            dekSecretName = $inputWrappedDekSecretName
             dekStoreUrl   = $kvUrl
-            kekName       = $kekName
+            kekName       = $inputKekName
             kekStoreUrl   = $kvUrl
+        }
+        # Local references for Phase B (KEK creation + DEK wrapping in step 08)
+        _local = @{
+            dekFile = $inputDekFile
         }
     }
 }
@@ -248,16 +244,10 @@ if ($persona -eq "woodgrove") {
         )
     }
 
-    # Output dataset needs its own DEK/KEK for write encryption.
-    $outputWrappedDekSecretName = "wrapped-woodgrove-output-csv-dek-$kekName"
-    az keyvault secret set `
-        --vault-name $KEYVAULT_NAME `
-        --name $outputWrappedDekSecretName `
-        --value $wrappedDekBase64 `
-        --output none
+    $outputWrappedDekSecretName = "wrapped-$outputDatasetName-dek-$outputKekName"
 
     $datastoreMetadata.output = @{
-        name            = "woodgrove-output-csv"
+        name            = $outputDatasetName
         storeType       = "Azure_BlobStorage"
         storeId         = $storageAccountId
         storeUrl        = $storageBlobEndpoint
@@ -267,8 +257,11 @@ if ($persona -eq "woodgrove") {
         encryption      = @{
             dekSecretName = $outputWrappedDekSecretName
             dekStoreUrl   = $kvUrl
-            kekName       = $kekName
+            kekName       = $outputKekName
             kekStoreUrl   = $kvUrl
+        }
+        _local = @{
+            dekFile = $outputDekFile
         }
     }
 }
@@ -277,5 +270,17 @@ $metadataFile = Join-Path $datastoreDir "$persona-datastore-metadata.json"
 $datastoreMetadata | ConvertTo-Json -Depth 10 | Out-File -FilePath $metadataFile -Encoding utf8
 Write-Host "Datastore metadata saved to: $metadataFile" -ForegroundColor Yellow
 
-$aes.Dispose()
-Write-Host "`nData preparation complete for '$persona' (no az cleanroom CLI used, CPK mode)." -ForegroundColor Green
+Write-Host "`n=== Summary ===" -ForegroundColor Cyan
+Write-Host "  Input dataset:  $inputDatasetName" -ForegroundColor White
+Write-Host "  Input DEK file: $inputDekFile" -ForegroundColor White
+Write-Host "  Input KEK name: $inputKekName (will be created in step 08)" -ForegroundColor White
+if ($persona -eq "woodgrove") {
+    Write-Host "  Output dataset:  $outputDatasetName" -ForegroundColor White
+    Write-Host "  Output DEK file: $outputDekFile" -ForegroundColor White
+    Write-Host "  Output KEK name: $outputKekName (will be created in step 08)" -ForegroundColor White
+}
+Write-Host "`nPhase A complete for '$persona'. Run 08-publish-dataset-cpk.ps1 next to:" -ForegroundColor Green
+Write-Host "  - Publish datasets to the collaboration" -ForegroundColor Green
+Write-Host "  - Fetch SKR release policy from published datasets" -ForegroundColor Green
+Write-Host "  - Create per-dataset KEKs with the SKR policy" -ForegroundColor Green
+Write-Host "  - Wrap DEKs with KEKs and store as Key Vault secrets" -ForegroundColor Green
