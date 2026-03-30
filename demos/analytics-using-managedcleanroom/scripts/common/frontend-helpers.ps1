@@ -466,9 +466,9 @@ function Publish-FrontendDataset {
         if ($bodyObj.kek) {
             $args += @("--kek-keyvault-url", $bodyObj.kek.keyVaultUrl)
             $args += @("--kek-secret-id", $bodyObj.kek.secretId)
-            if ($bodyObj.kek.maaUrl) {
-                $args += @("--kek-maa-url", $bodyObj.kek.maaUrl)
-            }
+            # --kek-maa-url is required by the CLI for CPK mode even if empty
+            $maaUrlValue = if ($bodyObj.kek.maaUrl) { $bodyObj.kek.maaUrl } else { "" }
+            $args += @("--kek-maa-url", $maaUrlValue)
         }
 
         try {

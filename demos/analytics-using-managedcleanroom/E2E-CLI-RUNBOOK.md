@@ -1,9 +1,12 @@
-# E2E CLI Runbook: Azure Managed CleanRoom Analytics (SSE)
+# E2E CLI Runbook: Azure Managed CleanRoom Analytics (SSE + CPK)
 
 A complete step-by-step guide to running an analytics collaboration end-to-end using
-`az managedcleanroom frontend` CLI commands. This runbook was validated against the
-`e2e-test-collab` collaboration on March 29, 2026. The query completed successfully
-with 13,872 rows read and 697 rows written.
+`az managedcleanroom frontend` CLI commands. Covers both **SSE** (Server-Side Encryption)
+and **CPK** (Customer-Provided Key) data encryption modes.
+
+**Validated runs**:
+- **SSE**: `e2e-test-collab`, March 29, 2026. Query succeeded: 13,872 rows read, 697 rows written. Single user (`notsaksham@gmail.com`).
+- **CPK**: `e2e-test-collab`, March 30, 2026. Query succeeded: job `cl-spark-25380698-88db-43d3-b9e9-47683a3a8fc8`, 13,872 rows read, 248 rows written. **Two real users** (`notsaksham@gmail.com` as Northwind, `anantshankar17@outlook.com` as Woodgrove). Full fresh run from Step 04 through Step 12, all scripts validated.
 
 > **Audience**: Developer running the full E2E flow from a single machine.
 > All frontend operations use the `az managedcleanroom` CLI extension.
@@ -24,6 +27,7 @@ with 13,872 rows read and 697 rows written.
 - [Phase 6: Publish & Approve Query](#phase-6-publish--approve-query)
 - [Phase 7: Execute Query](#phase-7-execute-query)
 - [Phase 8: Monitor & Validate](#phase-8-monitor--validate)
+- [CPK Encryption Mode](#cpk-encryption-mode)
 - [Appendix A: Federated Credential Subject Reference](#appendix-a-federated-credential-subject-reference)
 - [Appendix B: Common Errors & Troubleshooting](#appendix-b-common-errors--troubleshooting)
 - [Appendix C: CLI Command Reference](#appendix-c-cli-command-reference)
@@ -39,6 +43,8 @@ with 13,872 rows read and 697 rows written.
 | `managedcleanroom` extension | Installed via `az extension add --name managedcleanroom` (v1.0.0b5+ with bug fixes) |
 | PowerShell | 7.x+ (for running provisioning scripts) |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
+| azcopy | v10+ (required for CPK mode — `azcopy copy --cpk-by-value`) |
+| Python 3 + `cryptography` | Required for CPK mode — `pip install cryptography` |
 | Azure subscriptions | One subscription for collaboration ARM resource; one for storage/MI resources |
 | Microsoft accounts | One or more Microsoft accounts (MSA or AAD) — one per persona |
 | OIDC storage account | A **whitelisted** storage account with static website enabled (e.g., `cleanroomoidc` in the MSFT subscription) |
@@ -84,10 +90,15 @@ demos/analytics-using-managedcleanroom/
                                     └─────────────────────────────────────────┘
 ```
 
-**Data flow**: The Spark workload runs inside a confidential AKS cluster. It uses
+**Data flow (SSE)**: The Spark workload runs inside a confidential AKS cluster. It uses
 OIDC federated credentials to authenticate as the collaborator's managed identity,
 reads input data from each collaborator's storage, executes the SQL query, and writes
 results to the designated output container.
+
+**Data flow (CPK)**: Same as SSE, but with an additional key management layer. At runtime,
+the cleanroom releases each dataset's KEK via Secure Key Release (SKR), unwraps the DEK,
+and passes it to Azure Storage via CPK headers. Azure Storage transparently decrypts data
+on read and encrypts on write.
 
 ---
 
@@ -291,7 +302,7 @@ az account set --subscription "<your-personal-subscription-id>"
 
 ### 2.1 Prepare Resources (Script)
 
-Creates storage account, key vault, and managed identity for each persona.
+Creates storage account, key vault (Premium SKU for CPK), and managed identity for each persona.
 
 ```powershell
 # Northwind
@@ -453,6 +464,17 @@ $OID = "00000000-0000-0000-4e19-b6285189ceda"  # Replace with your JWT oid
 
 > If you have different collaborators per persona (different Microsoft accounts), use
 > each collaborator's JWT `oid` for their respective persona.
+
+> **CPK Note**: For CPK mode, also run with `-setupKeyVault` to grant the managed identity
+> `Key Vault Crypto User` and `Key Vault Secrets User` roles on the Key Vault:
+> ```powershell
+> ./scripts/07-grant-access.ps1 \
+>   -resourceGroup "cr-e2e-northwind-rg" \
+>   -collaborationId "$COLLAB_ID" \
+>   -contractId "Analytics" \
+>   -userId "$OID" \
+>   -setupKeyVault
+> ```
 
 **Wait time**: RBAC role assignments take **60-120 seconds** to propagate. The script
 waits 90 seconds and then retries verification up to 10 times.
@@ -649,6 +671,18 @@ az managedcleanroom frontend consent set \
 
 **Expected output**: 204 No Content.
 
+> **IMPORTANT: Consent ordering with multiple voters.** Consent can only be enabled on a
+> query that is in `Accepted` state. If the query is still `Proposed` (waiting for votes),
+> `consent set --consent-action enable` will fail with `UserDocumentNotAccepted`. In a
+> multi-party collaboration:
+> 1. The first voter's consent enable will **fail** because their vote alone doesn't move
+>    the query to `Accepted` state
+> 2. The second (final) voter's vote moves the query to `Accepted`
+> 3. The second voter can now enable consent successfully
+> 4. The **first voter must re-run** their consent enable after the query reaches `Accepted`
+>
+> **Workaround**: Enable consent for all parties **after** all votes are in.
+
 ### 6.4 Validation
 
 ```bash
@@ -768,6 +802,13 @@ az managedcleanroom frontend analytics query runhistory list \
 }
 ```
 
+> **QUIRK: `--document-id` may need the `contractId` value, not the custom query name.**
+> During CPK validation, `runhistory list --document-id Analytics-CPK-v4` returned
+> "No run history found", while audit events showed the run completed with `"id": "Analytics"`.
+> The backend may index runs by the internal `contractId` (`Analytics`) rather than the
+> user-chosen query document ID. If `runhistory list` returns no results for a completed
+> run, try using `--document-id Analytics` (the contract ID) instead.
+
 ### 8.3 View Audit Events
 
 ```bash
@@ -802,6 +843,289 @@ cat ./output.csv
 ```
 
 Output path pattern: `Analytics/{date}/{runId}/part-00000-{uuid}.csv`
+
+---
+
+## CPK Encryption Mode
+
+This section documents the CPK (Customer-Provided Key) encryption flow as an alternative
+to SSE. In CPK mode, each collaborator controls the encryption keys for their data. The
+cleanroom can only access data after releasing the keys via Secure Key Release (SKR) in
+a confidential compute environment that matches the collaboration's attestation policy.
+
+### CPK vs SSE: Key Differences
+
+| Aspect | SSE | CPK |
+|---|---|---|
+| Encryption | Azure-managed keys (transparent) | Customer-provided keys per dataset |
+| Key Vault | Not required | Required (Premium SKU with HSM) |
+| Upload tool | `az storage blob upload-batch` | `azcopy copy --cpk-by-value` |
+| Output download | `az storage blob download` | `azcopy copy --cpk-by-value` (need DEK) |
+| Key management | None | Per-dataset DEK + KEK with SKR policy |
+| Data control | Trust Azure Storage encryption | Collaborator retains key control |
+
+### CPK Concepts
+
+- **DEK (Data Encryption Key)**: 32-byte random key used by Azure Storage for server-side
+  encryption/decryption. Passed via CPK HTTP headers at upload/download time.
+- **KEK (Key Encryption Key)**: RSA-2048 key stored in Azure Key Vault (HSM-backed,
+  exportable). Has an SKR release policy tied to the collaboration's attestation hash.
+- **Wrapped DEK**: The DEK encrypted (wrapped) with the KEK's public key using RSA-OAEP-SHA256.
+  Stored as a Key Vault secret. The cleanroom unwraps it at runtime after releasing the KEK via SKR.
+- **SKR (Secure Key Release)**: Mechanism that releases the KEK private key only to code
+  running in a verified confidential compute environment matching the attestation policy.
+
+### CPK Architecture
+
+```
+Upload time (your machine):
+  plaintext CSV ──▶ azcopy --cpk-by-value ──▶ Azure Storage (encrypted at rest with DEK)
+                         ▲
+                    CPK_ENCRYPTION_KEY env var (base64 of DEK)
+
+Key setup:
+  DEK (32 bytes) ──▶ RSA-OAEP-SHA256 wrap with KEK pub ──▶ KV Secret (wrapped DEK)
+  KEK (RSA-2048) ──▶ az keyvault key import (with SKR policy) ──▶ KV Key (exportable, HSM)
+
+Runtime (cleanroom):
+  SKR release ──▶ KEK private key ──▶ unwrap DEK ──▶ CPK header to Azure Storage ──▶ plaintext
+```
+
+### CRITICAL: CPK is Server-Side Encryption, NOT Client-Side
+
+A common mistake is to manually encrypt files (e.g., AES-CBC) before uploading. This is
+**wrong** and results in double-encrypted data that the cleanroom cannot read.
+
+CPK mode means:
+1. You upload **plaintext** files using `azcopy copy --cpk-by-value`
+2. Azure Storage encrypts them **server-side** using the DEK you provide via HTTP headers
+3. At read time, the caller provides the same DEK via CPK headers and Azure Storage decrypts transparently
+
+The cleanroom's blobfuse layer handles the CPK headers automatically after releasing the KEK
+and unwrapping the DEK.
+
+### CPK Phase A: Prepare Data (Step 05)
+
+This phase generates the DEK and uploads data using azcopy with CPK encryption.
+
+```powershell
+# Northwind
+./scripts/05-prepare-data-cpk.ps1 \
+  -resourceGroup "cr-e2e-northwind-rg" \
+  -persona northwind \
+  -dataDir "demos/datasource/northwind/input/csv" \
+  -datasetSuffix "-cpk-v4"
+
+# Woodgrove
+./scripts/05-prepare-data-cpk.ps1 \
+  -resourceGroup "cr-e2e-woodgrove-rg" \
+  -persona woodgrove \
+  -dataDir "demos/datasource/woodgrove/input/csv" \
+  -datasetSuffix "-cpk-v4"
+```
+
+**What this does**:
+1. Generates a 32-byte random DEK, saved to `generated/datastores/keys/<dataset>-dek.bin`
+2. Creates blob containers (`<persona>-input`, `<persona>-output` for woodgrove)
+3. Uploads data files using `azcopy copy --cpk-by-value` with env vars:
+   - `CPK_ENCRYPTION_KEY` = base64(DEK)
+   - `CPK_ENCRYPTION_KEY_SHA256` = base64(SHA256(DEK))
+4. Saves datastore metadata to `generated/datastores/<persona>-datastore-metadata.json`
+
+**Per-dataset naming convention**:
+- Input dataset: `<persona>-input-csv<suffix>` (e.g., `northwind-input-csv-cpk-v4`)
+- Output dataset: `woodgrove-output-csv<suffix>` (e.g., `woodgrove-output-csv-cpk-v4`)
+- KEK: `<dataset-name>-kek` (e.g., `northwind-input-csv-cpk-v4-kek`)
+- Wrapped DEK secret: `wrapped-<dataset-name>-dek-<kek-name>`
+
+**Validation**:
+```bash
+# Check DEK files were generated
+ls -la generated/datastores/keys/
+
+# Check metadata
+cat generated/datastores/northwind-datastore-metadata.json | python3 -m json.tool
+
+# Verify blobs are in storage (they should be CPK-encrypted)
+az storage blob list \
+  --account-name "<sa-name>" \
+  --container-name "northwind-input" \
+  --auth-mode login -o table
+```
+
+> **NOTE**: You cannot download CPK-encrypted blobs with `az storage blob download` — you
+> must use `azcopy copy --cpk-by-value` with the correct DEK, or you'll get a 409 error.
+
+### CPK Phase B: Publish Datasets + Create Keys (Step 08)
+
+This phase publishes datasets, then creates per-dataset KEKs and wraps DEKs. This is
+the **publish-first flow**: the SKR release policy is fetched from the just-published
+dataset, ensuring the KEK is bound to the correct collaboration attestation policy.
+
+```powershell
+# Northwind (using northwind's token)
+./scripts/08-publish-dataset-cpk.ps1 \
+  -collaborationId "$COLLAB_ID" \
+  -resourceGroup "cr-e2e-northwind-rg" \
+  -persona northwind \
+  -frontendEndpoint "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net" \
+  -TokenFile "/tmp/msal-idtoken-notsaksham.txt" \
+  -ApiMode "cli"
+
+# Woodgrove (using woodgrove's token)
+./scripts/08-publish-dataset-cpk.ps1 \
+  -collaborationId "$COLLAB_ID" \
+  -resourceGroup "cr-e2e-woodgrove-rg" \
+  -persona woodgrove \
+  -frontendEndpoint "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net" \
+  -TokenFile "/tmp/msal-idtoken-anant.txt" \
+  -ApiMode "cli"
+```
+
+**What this does** (3 sub-phases):
+1. **B-1: Publish datasets** — Publishes dataset metadata with DEK/KEK references to the collaboration
+2. **B-2: Create KEKs + wrap DEKs** — For each dataset:
+   - Fetches SKR release policy from the just-published dataset (`skr-policy` endpoint)
+   - Generates RSA-2048 key locally using Python `cryptography` library
+   - Imports the key to Key Vault via `az keyvault key import` with `--exportable true --protection hsm --policy <skr-policy>`
+   - Wraps the DEK with the KEK's public key using RSA-OAEP-SHA256 (client-side, NOT `az keyvault key encrypt`)
+   - Stores the wrapped DEK as a Key Vault secret
+3. **B-3: Enable execution consent** — Enables consent on all published datasets
+
+**Why publish-first?** The SKR release policy contains the collaboration's `ccePolicyHash`
+(attestation hash). This is only available from a published dataset via the frontend's
+`skr-policy` endpoint. By publishing first, we don't need to hardcode or pre-fetch this hash.
+
+**KEK creation details** (matches `az cleanroom` CLI implementation):
+- Key is generated **locally** as RSA-2048 using Python `cryptography` lib
+- Imported to Key Vault via `az keyvault key import` (NOT `az keyvault key create`)
+- Ops: `encrypt wrapKey` (the cleanroom uses `unwrapKey` after SKR release)
+- `--exportable true --protection hsm --immutable false`
+- SKR release policy JSON attached via `--policy` parameter
+
+**DEK wrapping details** (matches `az cleanroom` CLI implementation):
+- Done **client-side** using Python `cryptography` lib
+- Algorithm: RSA-OAEP with SHA-256 (both MGF1 and hash)
+- NOT done via `az keyvault key encrypt` (server-side wrapping doesn't work for CPK flow)
+
+**Validation**:
+```bash
+# Check KEK was created with correct properties
+az keyvault key show --vault-name "<kv-name>" --name "<kek-name>" \
+  --query '{exportable:attributes.exportable,keyType:key.kty,ops:key.keyOps}' -o json
+
+# Check wrapped DEK secret exists
+az keyvault secret show --vault-name "<kv-name>" --name "wrapped-<dataset>-dek-<kek>" \
+  --query '{name:name,id:id}' -o json
+
+# Check dataset was published
+MANAGEDCLEANROOM_ACCESS_TOKEN=$(cat /tmp/msal-idtoken.txt) \
+AZURE_CLI_DISABLE_CONNECTION_VERIFICATION=1 \
+az managedcleanroom frontend analytics dataset show \
+  --collaboration-id "$COLLAB_ID" \
+  --document-id "<dataset-name>" -o json
+```
+
+### CPK Phase C: Query + Run (Steps 09-11)
+
+The query publish, vote, and run steps are **identical** to SSE. Just use the CPK dataset
+names in the query:
+
+```powershell
+# Publish query referencing CPK datasets
+./scripts/09-publish-query.ps1 \
+  -collaborationId "$COLLAB_ID" \
+  -queryName "Analytics-CPK-v4" \
+  -queryDir "demos/query/woodgrove/query1" \
+  -publisherInputDataset "northwind-input-csv-cpk-v4" \
+  -consumerInputDataset "woodgrove-input-csv-cpk-v4" \
+  -outputDataset "woodgrove-output-csv-cpk-v4" \
+  -frontendEndpoint "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net" \
+  -TokenFile "/tmp/msal-idtoken-anant.txt" \
+  -ApiMode "cli"
+
+# Vote (both collaborators)
+./scripts/10-vote-query.ps1 ...
+
+# Run
+./scripts/11-run-query.ps1 ...
+```
+
+### CPK Phase D: Download Output
+
+For CPK datasets, output is also CPK-encrypted. You need the output DEK to download:
+
+```bash
+# Using azcopy directly
+export CPK_ENCRYPTION_KEY=$(python3 -c "import base64; print(base64.b64encode(open('generated/datastores/keys/woodgrove-output-csv-cpk-v4-dek.bin','rb').read()).decode())")
+export CPK_ENCRYPTION_KEY_SHA256=$(python3 -c "import base64,hashlib; dek=open('generated/datastores/keys/woodgrove-output-csv-cpk-v4-dek.bin','rb').read(); print(base64.b64encode(hashlib.sha256(dek).digest()).decode())")
+export AZCOPY_AUTO_LOGIN_TYPE="AZCLI"
+export AZCOPY_TENANT_ID="<your-tenant-id>"
+
+azcopy copy \
+  "https://<woodgrove-sa>.blob.core.windows.net/woodgrove-output/*" \
+  ./output/ \
+  --recursive --cpk-by-value \
+  --include-pattern "*.csv;*.crc;*_SUCCESS*"
+```
+
+> **NOTE**: The `--include-pattern` filter is required for storage accounts with Hierarchical
+> Namespace (HNS) enabled. HNS creates directory marker blobs (zero-byte blobs with
+> `hdi_isfolder=true` metadata) that cause azcopy to fail when it tries to download them
+> as files into directories that already exist locally. The pattern filter skips these
+> directory blobs and downloads only actual data files.
+
+Or use the script with `-DownloadCpkOutput`:
+```powershell
+./scripts/12-view-results.ps1 \
+  -collaborationId "$COLLAB_ID" \
+  -queryName "Analytics-CPK-v4" \
+  -frontendEndpoint "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net" \
+  -TokenFile "/tmp/msal-idtoken-anant.txt" \
+  -ApiMode "cli" \
+  -DownloadCpkOutput \
+  -OutputDekFile "generated/datastores/keys/woodgrove-output-csv-cpk-v4-dek.bin" \
+  -OutputStorageAccount "<woodgrove-sa-name>"
+```
+
+### CPK Troubleshooting
+
+#### DATASET_LOAD_FAILED / java.io.IOException: Input/output error
+
+**Cause**: Data was manually encrypted (e.g., AES-CBC) before upload instead of using
+`azcopy --cpk-by-value`. The cleanroom's blobfuse layer can't read double-encrypted files.
+
+**Fix**: Re-upload data using `azcopy copy --cpk-by-value` with a fresh DEK, then update
+the wrapped DEK secret in Key Vault.
+
+#### 409 BlobUsesCustomerSpecifiedEncryption on blob download
+
+**Cause**: Trying to download CPK-encrypted blobs without providing the CPK headers.
+
+**Fix**: Use `azcopy copy --cpk-by-value` with the correct DEK env vars to download.
+
+#### KEK SKR release fails at runtime
+
+**Symptoms**: Spark driver fails with SKR-related errors in audit events.
+
+**Possible causes**:
+1. KEK not exportable (`--exportable true` missing)
+2. KEK not HSM-protected (`--protection hsm` missing)
+3. SKR release policy doesn't match the collaboration's attestation policy
+4. Wrong MAA URL in the dataset's `kek.maaUrl` field
+
+**Fix**: Verify KEK properties:
+```bash
+az keyvault key show --vault-name "<kv>" --name "<kek>" \
+  --query '{exportable:attributes.exportable,keyType:key.kty,releasePolicy:releasePolicy}' -o json
+```
+
+#### Wrong wrapped DEK value
+
+**Symptoms**: SKR succeeds but data read fails (blobfuse can release KEK and unwrap DEK,
+but the unwrapped DEK doesn't match what was used for upload).
+
+**Fix**: Re-generate DEK, re-upload data with azcopy, re-wrap with KEK, and update the KV secret.
 
 ---
 
@@ -1120,3 +1444,39 @@ documents.
 and `--user-identity` fail because these aren't valid parameters on the CLI command.
 
 **Workaround**: Use `az rest` for collaboration creation (as documented in Phase 1.1).
+
+### 4. `08-publish-dataset-cpk.ps1` double `ConvertFrom-Json` on `Invoke-AzCli` result
+
+**Bug**: `Invoke-AzCli` (in `frontend-helpers.ps1`) already parses the JSON response and
+returns a PSObject. Line 288 of `08-publish-dataset-cpk.ps1` was calling
+`$skrPolicyRaw | ConvertFrom-Json` on the already-parsed result, causing a parse error
+(you can't `ConvertFrom-Json` on a PSObject).
+
+**Impact**: SKR policy fetch failed during KEK creation, blocking the entire CPK publish flow.
+
+**Fix applied**: Removed the redundant `ConvertFrom-Json` call — the `Invoke-AzCli` result
+is used directly as a PSObject.
+
+### 5. `07-grant-access.ps1` missing `-setupKeyVault` switch for CPK mode
+
+**Bug**: The `07-grant-access.ps1` script previously hardcoded `-setupKeyVault:$false` when
+calling `setup-access.ps1`. For CPK mode, the cleanroom needs Key Vault access (Crypto
+Officer + Secrets User roles on the managed identity) to unwrap KEKs and read wrapped DEKs.
+
+**Impact**: CPK query execution failed because the managed identity lacked KV permissions.
+
+**Fix applied**: Added `-setupKeyVault` as a passthrough switch parameter to `07-grant-access.ps1`.
+When specified, the script passes `-setupKeyVault` to `setup-access.ps1`, which assigns
+`Key Vault Crypto User` and `Key Vault Secrets User` RBAC roles.
+
+### 6. `12-view-results.ps1` azcopy fails on HNS directory blobs
+
+**Bug**: Storage accounts with Hierarchical Namespace (HNS) enabled create directory marker
+blobs (zero-byte blobs with `hdi_isfolder=true`). When `azcopy copy "container/*" local
+--recursive` runs, it tries to download these directory marker blobs as files, but the
+local filesystem already has directories at those paths, causing a conflict error.
+
+**Impact**: CPK output download failed with azcopy errors on HNS-enabled storage accounts.
+
+**Fix applied**: Added `--include-pattern "*.csv;*.crc;*_SUCCESS*"` to the azcopy download
+command, filtering to actual data files and skipping directory marker blobs.

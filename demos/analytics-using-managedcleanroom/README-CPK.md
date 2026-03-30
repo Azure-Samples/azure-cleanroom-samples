@@ -1,6 +1,6 @@
 # Big Data Analytics — CPK (Customer-Provided Key) — Native CLI Variant <!-- omit from toc -->
 
-This walkthrough demonstrates multi-party big data analytics using a **Managed Clean Room** with **Customer-Provided Key (CPK)** encryption. You encrypt data with your own keys (DEK/KEK stored in Azure Key Vault) before uploading, providing the strongest data control.
+This walkthrough demonstrates multi-party big data analytics using a **Managed Clean Room** with **Customer-Provided Key (CPK)** encryption. You control the encryption keys (DEK/KEK stored in Azure Key Vault) for your data. Azure Storage encrypts data server-side using your CPK — you upload plaintext via `azcopy --cpk-by-value`, and the storage service handles encryption/decryption transparently using the key you provide in HTTP headers.
 
 > [!IMPORTANT]
 > **This variant has zero `az cleanroom` dependency.** Every step uses standard Azure CLI or the public `az managedcleanroom` extension. Step 8 (Publish datasets) constructs the DatasetSpecification JSON natively in PowerShell — including CPK encryption secret references (DEK/KEK). The JSON structure was derived from the cleanroom extension source code (`CleanRoomSpecification` model in cleanroom v5.0.0). See the [Architecture](#architecture) section for details.
@@ -105,7 +105,7 @@ Your Environment                              Azure Managed Service
 └──────────────────────────────┘              └──────────────────────────────┘
 ```
 
-- **Standard Azure CLI + PowerShell** handles data encryption (`AES-256-CBC`), upload (`az storage blob upload-batch`), Key Vault key management (`az keyvault key create`, `az keyvault secret set`), identity setup (`az identity show`), and OIDC configuration.
+- **Standard Azure CLI + PowerShell** handles data upload (`azcopy copy --cpk-by-value` with DEK), Key Vault key management (`az keyvault key import` for KEK, `az keyvault secret set` for wrapped DEK), identity setup (`az identity show`), and OIDC configuration. CPK uses **Server-Side Encryption with Customer-Provided Keys (SSE-CPK)** — data is uploaded as plaintext, and Azure Storage encrypts it server-side using the DEK provided via HTTP headers.
 - **PowerShell** constructs the DatasetSpecification and QuerySpecification JSON bodies natively. For CPK, the DatasetSpecification includes `EncryptionSecrets` blocks with DEK/KEK references pointing to Key Vault. The structure was derived from the cleanroom extension source code (`CleanRoomSpecification` → `AccessPoint` → `PrivacyProxySettings` → `EncryptionSecrets` model in cleanroom v5.0.0).
 - **`az managedcleanroom`** talks to Microsoft's managed service for collaboration lifecycle, publishing, voting, execution, and results.
 
@@ -149,22 +149,25 @@ Your Environment                              Azure Managed Service
          │               3. Generate demo data                  │
          │               4. Prepare Azure resources             │
          │                  (incl. Key Vault Premium)           │
-         │               5. Encrypt data (AES-256-CBC)          │
-         │                  + upload + store DEK/KEK            │
+          │               5. Upload data with CPK              │
+          │                  (azcopy --cpk-by-value)            │
+          │                  + store DEK locally                 │
          │               6. OIDC + identity setup               │
          │                     │                                │
          │                     ▼                                ▼
   ┌────────────────────┐  ┌────────────────────┐  ┌─────────────────────────┐
   │ Northwind's Azure  │  │ Woodgrove's Azure  │  │ Clean Room (TEE)        │
   │ ├─ Storage Account │  │ ├─ Storage Account │  │                         │
-  │ │  └─ encrypted CSV│  │ │  ├─ encrypted CSV│  │ 1. Hardware attestation │
+  │ │  └─ CPK-enc CSV  │  │ │  ├─ CPK-enc CSV  │  │ 1. Hardware attestation │
   │ ├─ Key Vault (HSM) │  │ │  └─ output       │  │ 2. OIDC token from CCF  │
   │ │  ├─ KEK (RSA key)│  │ ├─ Key Vault (HSM) │  │ 3. Azure AD validates   │
-  │ │  └─ DEK (secret) │  │ │  ├─ KEK (RSA key)│  │ 4. Unwrap KEK → DEK     │
-  │ ├─ Managed Identity│  │ │  └─ DEK (secret) │  │ 5. Decrypt data in mem  │
-  │ └─ OIDC Storage    │  │ ├─ Managed Identity│  │ 6. Run Spark SQL        │
-  └────────────────────┘  │ └─ OIDC Storage    │  │ 7. Write results        │
-                          └────────────────────┘  └─────────────────────────┘
+  │ │  └─ wrappedDEK   │  │ │  ├─ KEK (RSA key)│  │ 4. SKR release KEK      │
+  │ ├─ Managed Identity│  │ │  └─ wrappedDEK   │  │ 5. Unwrap DEK           │
+  │ └─ OIDC Storage    │  │ ├─ Managed Identity│  │ 6. CPK headers to       │
+  └────────────────────┘  │ └─ OIDC Storage    │  │    Storage (read/write) │
+                          └────────────────────┘  │ 7. Run Spark SQL        │
+                                                  │ 8. Write results (CPK)  │
+                                                  └─────────────────────────┘
                                                                ▲
   7. Grant access (RBAC: Storage + KV Crypto                   │
      + KV Secrets + federated credential)                      │
@@ -297,26 +300,36 @@ The clean room has no credentials of its own. Instead, each collaborator's **man
 
 | Aspect | SSE | CPK (this scenario) |
 |--------|-----|-----|
-| Who encrypts | Azure Storage (automatic) | You (client-side, before upload) |
-| Key Vault | Not needed for encryption | Required — stores KEK + wrapped DEK |
+| Who encrypts | Azure Storage (automatic) | Azure Storage (server-side, using your key via CPK headers) |
+| Key Vault | Not needed for encryption | Required — stores KEK (HSM-backed) + wrapped DEK (secret) |
 | Secret stores | Not needed | DEK store + KEK store (registered at Step 8) |
-| Data prep (Step 5) | Plain upload via `az storage blob upload-batch` | PowerShell AES-256-CBC encryption + upload |
-| Dataset publish (Step 8) | `--encryption-mode SSE` | `--encryption-mode CPK` + secret store params |
-| Grant access RBAC (Step 7) | Storage only | Storage + Key Vault (Crypto Officer + Secrets User) |
-| Clean room decryption | Reads data directly | Unwraps KEK → gets DEK → decrypts data in TEE memory |
+| Data prep (Step 5) | Plain upload via `az storage blob upload-batch` | `azcopy copy --cpk-by-value` (plaintext upload, server-side encryption) |
+| Dataset publish (Step 8) | `--encryption-mode SSE` | `--encryption-mode CPK` + secret store params; publish-first flow (publish → fetch SKR policy → create KEK → wrap DEK) |
+| Grant access RBAC (Step 7) | Storage only | Storage + Key Vault (Crypto User + Secrets User) |
+| Clean room decryption | Reads data directly | SKR releases KEK → unwraps DEK → passes DEK via CPK headers to Azure Storage → transparent read/write |
 
 ```
-CPK Data Flow:
-You ──encrypt with DEK──► Azure Blob Storage (double encrypted: your key + Azure SSE)
-       DEK wrapped by KEK in Key Vault
+CPK Data Flow (Server-Side Encryption with Customer-Provided Keys):
+
+Upload (your machine):
+  plaintext CSV ──► azcopy --cpk-by-value ──► Azure Blob Storage
+                         ▲                    (encrypted at rest with your DEK)
+                    CPK_ENCRYPTION_KEY env var
+                    (base64 of 32-byte DEK)
+
+Key setup (after publish):
+  DEK (32 bytes, local) ──► RSA-OAEP-SHA256 wrap with KEK pub key ──► KV Secret
+  KEK (RSA-2048, local) ──► az keyvault key import (HSM, exportable, SKR policy) ──► KV Key
 
 Clean Room (in TEE):
   1. Presents OIDC token (from hardware attestation)
-  2. Azure AD validates → grants managed identity
-  3. Reads wrapped DEK from Key Vault
-  4. Unwraps DEK using KEK
-  5. Decrypts data in encrypted memory
-  6. Processes query (data never written to disk unencrypted)
+  2. Azure AD validates → grants managed identity token
+  3. SKR releases KEK private key (attestation verified)
+  4. Reads wrapped DEK from Key Vault secret
+  5. Unwraps DEK using KEK private key (RSA-OAEP-SHA256)
+  6. Passes DEK via CPK headers to Azure Storage (transparent decrypt on read)
+  7. Processes Spark SQL query (data in plaintext in TEE memory)
+  8. Writes results via CPK headers (transparent encrypt on write)
 ```
 
 ---
@@ -557,7 +570,7 @@ Using the provided script:
 This creates:
 - A **resource group** (if not existing)
 - A **storage account** for data (Azure Blob Storage)
-- A **Key Vault (Premium SKU)** for DEK/KEK storage — required for client-side encryption key management
+- A **Key Vault (Premium SKU)** for KEK/DEK storage — required for CPK key management (HSM-backed keys with Secure Key Release)
 - A **managed identity** (User-Assigned) for clean room access
 - **RBAC assignments** for the logged-in user (Storage Blob Data Contributor, Key Vault Crypto Officer, Key Vault Secrets Officer)
 
@@ -567,10 +580,18 @@ The script runs 6+ Azure CLI commands (`az group create`, `az storage account cr
 
 ## Step 5: Prepare data with encryption (each collaborator)
 
-> [!NOTE]
-> In a real customer scenario, customers likely already have encrypted data in Azure Storage with keys in Key Vault. This step demonstrates the encryption pipeline for the demo.
+> [!IMPORTANT]
+> **CPK is Server-Side Encryption, NOT Client-Side.** A common mistake is to manually encrypt
+> files (e.g., AES-CBC) before uploading. This is **wrong** and results in double-encrypted
+> data that the cleanroom cannot read. CPK mode means you upload **plaintext** files using
+> `azcopy copy --cpk-by-value`, and Azure Storage encrypts them **server-side** using the
+> DEK you provide via HTTP headers. At read time, the caller provides the same DEK via CPK
+> headers and Azure Storage decrypts transparently.
 
-Each collaborator encrypts their data with AES-256 and uploads the encrypted files.
+> [!NOTE]
+> In a real customer scenario, customers likely already have encrypted data in Azure Storage with keys in Key Vault. This step demonstrates the upload pipeline for the demo.
+
+Each collaborator generates a DEK and uploads their data using azcopy with CPK encryption.
 
 ```powershell
 # Run by Northwind
@@ -588,16 +609,20 @@ Each collaborator encrypts their data with AES-256 and uploads the encrypted fil
     -outDir $OUT_DIR
 ```
 
-This script uses **only standard Azure CLI + PowerShell** (no `az cleanroom`):
+This script uses **only standard Azure CLI + azcopy** (no `az cleanroom`):
 1. Resolves the storage account URL and Key Vault URL (`az storage account show`, `az keyvault show`)
 2. Creates blob containers for input data (and output for Woodgrove) (`az storage container create`)
-3. Generates a random **AES-256 DEK** (Data Encryption Key) using `[System.Security.Cryptography.Aes]::Create()`
-4. Creates an **RSA-2048 KEK** (Key Encryption Key) in Key Vault (`az keyvault key create --kty RSA --size 2048`)
-5. **Wraps the DEK** with the KEK (`az keyvault key encrypt --algorithm RSA-OAEP-256`) — the DEK is now protected by the KEK
-6. Stores the **wrapped DEK** as a Key Vault secret (`az keyvault secret set`)
-7. **Encrypts each CSV file** with AES-256-CBC (IV prepended to ciphertext) using PowerShell
-8. Uploads encrypted files via `az storage blob upload-batch`
-9. Saves datastore metadata (schema, storage URL, encryption config including DEK/KEK references) to a JSON file for Step 8
+3. Generates a random **32-byte DEK** (Data Encryption Key) — saved to `generated/datastores/keys/<dataset>-dek.bin`
+4. Uploads **plaintext** data files using `azcopy copy --cpk-by-value` with env vars:
+   - `CPK_ENCRYPTION_KEY` = base64(DEK)
+   - `CPK_ENCRYPTION_KEY_SHA256` = base64(SHA256(DEK))
+   - Azure Storage encrypts the data server-side using the DEK
+5. Saves datastore metadata (schema, storage URL, container name, dataset suffix) to a JSON file for Step 8
+
+> [!NOTE]
+> **KEK creation and DEK wrapping happen in Step 8 (publish-first flow)**, not here.
+> Step 5 only generates the DEK and uploads data. The KEK is created after publishing
+> because the SKR release policy is fetched from the just-published dataset.
 
 ---
 
@@ -681,6 +706,7 @@ Using the provided script:
     -collaborationId $COLLABORATION_ID `
     -contractId "Analytics" `
     -userId "<northwind-user-id>" `
+    -setupKeyVault `
     -outDir $OUT_DIR
 
 # Run by Woodgrove
@@ -689,14 +715,7 @@ Using the provided script:
     -collaborationId $COLLABORATION_ID `
     -contractId "Analytics" `
     -userId "<woodgrove-user-id>" `
-    -outDir $OUT_DIR
-
-# Run by Woodgrove
-./scripts/07-grant-access.ps1 `
-    -resourceGroup $WOODGROVE_RESOURCE_GROUP `
-    -collaborationId $COLLABORATION_ID `
-    -contractId "analytics" `
-    -userId "<woodgrove-user-id>" `
+    -setupKeyVault `
     -outDir $OUT_DIR
 ```
 
@@ -707,12 +726,18 @@ This script:
 4. Resolves the storage account resource ID (`az storage account show`)
 5. Assigns **Storage Blob Data Owner** on the storage account (`az role assignment create`)
 6. Resolves the Key Vault resource ID (`az keyvault show`)
-7. Assigns **Key Vault Crypto Officer** on the Key Vault (`az role assignment create`) — for KEK unwrap operations
-8. Assigns **Key Vault Secrets User** on the Key Vault (`az role assignment create`) — for DEK retrieval
+7. Assigns **Key Vault Crypto User** on the Key Vault (`az role assignment create`) — for KEK unwrap operations via SKR
+8. Assigns **Key Vault Secrets User** on the Key Vault (`az role assignment create`) — for wrapped DEK retrieval
 9. Creates a **federated credential** on the managed identity (`az identity federated-credential create --issuer --subject --audiences "api://AzureADTokenExchange"`)
 
 > [!NOTE]
-> The `userId` is the collaborator's object ID in the CCF governance. You can obtain it by running `az ad signed-in-user show --query id -o tsv`, or it may be returned during the invitation acceptance (Step 2). The `contractId` defaults to `"Analytics"` (capital A) — **this is case-sensitive**. The Spark agent uses `"Analytics"` as the contract ID in the federated credential subject (`Analytics-{ownerId}`). Using lowercase `"analytics"` will cause silent token exchange failures at query execution time.
+> The `userId` is the collaborator's object ID in the CCF governance. For MSA (personal Microsoft) accounts, this is the `oid` claim from the MSAL IdToken (JWT), **NOT** the Graph API object ID from `az ad signed-in-user show`. Extract it from the token:
+> ```bash
+> cat /tmp/msal-idtoken.txt | cut -d. -f2 | python3 -c "import sys,base64,json; b=sys.stdin.read(); print(json.loads(base64.urlsafe_b64decode(b+'=='))['oid'])"
+> ```
+> The `contractId` defaults to `"Analytics"` (capital A) — **this is case-sensitive**. The Spark agent uses `"Analytics"` as the contract ID in the federated credential subject (`Analytics-{ownerId}`). Using lowercase `"analytics"` will cause silent token exchange failures at query execution time.
+>
+> **Important**: For CPK mode, always pass the `-setupKeyVault` switch so the managed identity gets `Key Vault Crypto User` and `Key Vault Secrets User` RBAC roles. Without these, the cleanroom cannot release the KEK or read the wrapped DEK.
 
 > [!CAUTION]
 > **Partially confirmed — subject format and audience validated from source code, but retrieval is a gap.** Analysis of the Spark analytics agent (`src/workloads/analytics/cleanroom-spark-analytics-agent/Controllers/QueriesController.cs` on `user/ashank/frontendAuth` branch):
@@ -790,12 +815,26 @@ Each collaborator publishes their dataset metadata to the collaboration.
     -outDir $OUT_DIR
 ```
 
-This script constructs the **DatasetSpecification JSON** natively in PowerShell (no `az cleanroom` dependency):
-1. Reads datastore metadata from Step 5 (`generated/datastores/{persona}-datastore-metadata.json` — storage URL, container, schema, encryption config including DEK/KEK references) and identity metadata from Step 6 (`generated/{resourceGroup}/identity-metadata.json` — client ID, tenant ID, OIDC issuer URL)
+This script constructs the **DatasetSpecification JSON** natively in PowerShell (no `az cleanroom` dependency) and uses a **publish-first flow**:
+
+**Phase 1 — Publish datasets:**
+1. Reads datastore metadata from Step 5 (`generated/datastores/{persona}-datastore-metadata.json` — storage URL, container, schema) and identity metadata from Step 6 (`generated/{resourceGroup}/identity-metadata.json` — client ID, tenant ID, OIDC issuer URL)
 2. Builds the DatasetSpecification JSON — a nested structure containing schema, access policy, storage access point (`AccessPoint`), identity references, and protection settings (`PrivacyProxySettings`) **with CPK `EncryptionSecrets`** (DEK/KEK store references pointing to Key Vault). The structure was derived from the cleanroom extension source code (cleanroom v5.0.0 `CleanRoomSpecification` model)
 3. Publishes via `az managedcleanroom frontend analytics dataset publish --body @file`
-4. **Enables execution consent** on each published dataset via `az managedcleanroom frontend consent set --consent-action enable` — required for the clean room to access the data at query run time
-5. Verifies the dataset state
+
+**Phase 2 — Create KEKs + wrap DEKs (per dataset):**
+4. Fetches the **SKR release policy** from the just-published dataset via the frontend's `skr-policy` endpoint — this contains the collaboration's `ccePolicyHash` (attestation hash)
+5. Generates an **RSA-2048 KEK** locally using Python `cryptography` library
+6. Imports the KEK to Key Vault via `az keyvault key import` with `--exportable true --protection hsm --policy <skr-policy.json>` — NOT `az keyvault key create`
+7. **Wraps the DEK** with the KEK's public key using **RSA-OAEP-SHA256** (client-side, Python `cryptography` lib) — NOT `az keyvault key encrypt` (server-side wrapping doesn't work for CPK flow)
+8. Stores the **wrapped DEK** as a Key Vault secret (`az keyvault secret set`)
+
+**Phase 3 — Enable consent:**
+9. **Enables execution consent** on each published dataset via `az managedcleanroom frontend consent set --consent-action enable` — required for the clean room to access the data at query run time
+10. Verifies the dataset state
+
+> [!NOTE]
+> **Why publish-first?** The SKR release policy contains the collaboration's attestation hash (`ccePolicyHash`). This is only available from a published dataset via the frontend's `skr-policy` endpoint. By publishing first (before creating the KEK), we don't need to hardcode or pre-fetch this hash.
 
 > [!NOTE]
 > **DatasetSpecification format verified against frontend source.** The JSON body matches `DatasetInputDetails` (`src/workloads/frontend/Models/CGS/DatasetInputDetails.cs`): `{ "data": { name, datasetSchema, datasetAccessPolicy, datasetAccessPoint } }`. The `AccessPoint.protection.encryptionSecrets` structure (DEK/KEK with `backingResource` pointing to Key Vault) matches the cleanroom `EncryptionSecrets` model. The frontend performs **no field-level validation** — it passes the AccessPoint through to CGS verbatim (`DatasetDocumentPublisher.cs:73-84`). Publishing will succeed, but the cleanroom runtime may fail if any derived values are wrong.
@@ -1021,10 +1060,10 @@ Events include query execution start/completion, input/output row counts, datase
 | 2 | Accept invitation | `managedcleanroom` | `az managedcleanroom frontend configure`, `login`, `invitation list`, `invitation accept` |
 | 3 | Generate demo data | _(none)_ | PowerShell only — downloads CSV files from GitHub |
 | 4 | Prepare resources | _(standard az)_ | `az group create`, `az storage account create`, `az keyvault create --sku Premium`, `az identity create`, `az role assignment create` (×3) |
-| 5 | Prepare data (CPK) | _(standard az)_ | `az storage account show`, `az keyvault show`, `az storage container create`, `az keyvault key create`, `az keyvault key encrypt`, `az keyvault secret set`, `az storage blob upload-batch` |
+| 5 | Prepare data (CPK) | _(standard az)_ | `az storage account show`, `az keyvault show`, `az storage container create`, `azcopy copy --cpk-by-value` (upload plaintext with DEK via CPK headers) |
 | 6 | Identity & OIDC | `managedcleanroom` + _(standard az)_ + _(REST)_ | `az storage account create`, `az storage blob service-properties update`, `az role assignment create`, `az managedcleanroom frontend oidc issuerinfo show`, `GET /collaborations/{id}/oidc/keys` _(direct REST — no CLI)_, `az storage blob upload` (×2), `POST /collaborations/{id}/oidc/setIssuerUrl` _(direct REST — no CLI)_, `az identity show` |
-| 7 | Grant access (CPK) | _(standard az)_ | `az identity show`, `az storage account show`, `az keyvault show`, `az role assignment create` (×3: Storage + KV Crypto + KV Secrets), `az identity federated-credential create` |
-| **8** | **Publish datasets** | `managedcleanroom` | PowerShell `New-DatasetBody` (builds DatasetSpecification JSON natively with CPK `EncryptionSecrets`), `az managedcleanroom frontend analytics dataset publish --body @file`, `az managedcleanroom frontend analytics dataset show`, `az managedcleanroom frontend consent set --consent-action enable` (per dataset) |
+| 7 | Grant access (CPK) | _(standard az)_ | `az identity show`, `az storage account show`, `az keyvault show`, `az role assignment create` (×3: Storage + KV Crypto User + KV Secrets User), `az identity federated-credential create`. **Note**: Use `-setupKeyVault` switch for CPK mode |
+| **8** | **Publish datasets** | `managedcleanroom` | PowerShell `New-DatasetBody` (builds DatasetSpecification JSON natively with CPK `EncryptionSecrets`), `az managedcleanroom frontend analytics dataset publish --body @file`, fetch SKR policy, Python `create-kek.py` (RSA-2048 local gen + `az keyvault key import --exportable --protection hsm --policy`), Python `generate-wrapped-dek.py` (RSA-OAEP-SHA256 client-side wrap), `az keyvault secret set` (wrapped DEK), `az managedcleanroom frontend consent set --consent-action enable` (per dataset) |
 | 9 | Publish query | `managedcleanroom` | PowerShell JSON assembly, `az managedcleanroom frontend analytics query publish --body @file`, `az managedcleanroom frontend consent set --consent-action enable` |
 | 10 | Vote on query | `managedcleanroom` | `az managedcleanroom frontend analytics query show`, `query vote accept --body` |
 | 11 | Run query | `managedcleanroom` | `az managedcleanroom frontend analytics query run`, `query runresult show` (polling) |
