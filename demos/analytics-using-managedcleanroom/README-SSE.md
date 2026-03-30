@@ -637,5 +637,3 @@ the query (Step 8).
 | 9 | Vote on query | Direct CLI | `az managedcleanroom frontend analytics query vote accept` |
 | 10 | Run query | Direct CLI | `az managedcleanroom frontend analytics query run`, `query runresult show` (polling) |
 | 11 | View results | Direct CLI | `az storage blob list`, `az storage blob download-batch`, `az managedcleanroom frontend analytics query runhistory list`, `auditevent list` |
-
-> **No `az cleanroom` dependency.** All steps use standard Azure CLI or the `az managedcleanroom` extension.

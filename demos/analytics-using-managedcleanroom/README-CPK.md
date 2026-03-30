@@ -725,5 +725,3 @@ Events include query execution start/completion, input/output row counts, datase
 | 9 | Vote on query | **Direct CLI** | `az managedcleanroom frontend analytics query vote accept` (×2), `query show` |
 | 10 | Run query | **Direct CLI** | `az managedcleanroom frontend analytics query run`, `query runresult show` (polling) |
 | 11 | View results | **Direct CLI** | `az keyvault secret show` (wrapped DEK), RSA unwrap (local KEK PEM), `az storage blob list`, `Invoke-RestMethod` (CPK download), `az managedcleanroom frontend analytics query runhistory list`, `auditevent list` |
-
-> **No `az cleanroom` dependency.** All steps use standard Azure CLI or the `az managedcleanroom` extension.
