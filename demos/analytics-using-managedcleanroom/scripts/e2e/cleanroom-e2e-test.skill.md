@@ -57,7 +57,7 @@ Scripts accept a `-TokenFile` parameter to select which persona's token to use f
 ### ARM
 
 - **Endpoint**: `https://eastus2euap.management.azure.com/`
-- **API version**: `2025-10-31-preview`
+- **API version**: `2026-03-31-preview`
 - **Subscription**: `fccb68eb-8ccf-49a6-a69a-7ea3c2867e9c` (AzureCleanRoom-NonProd)
 - ARM operations require: `az account set --subscription fccb68eb-8ccf-49a6-a69a-7ea3c2867e9c`
 

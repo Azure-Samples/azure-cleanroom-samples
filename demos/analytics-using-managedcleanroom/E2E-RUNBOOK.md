@@ -120,7 +120,7 @@ $EncryptionMode = "SSE"    # "SSE" or "CPK"
 # --- Endpoints ---
 $frontend = "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net"
 $armEndpoint = "https://eastus2euap.management.azure.com"
-$armApiVersion = "2025-10-31-preview"
+$armApiVersion = "2026-03-31-preview"
 
 # --- Subscriptions ---
 $msftSubscription = "<msft-subscription-id>"        # Hosts the collaboration ARM resource
@@ -135,8 +135,11 @@ $collabRg = "<collaboration-resource-group>"         # In the MSFT subscription
 $woodgroveRg = "cr-e2e-woodgrove-rg"
 $northwindRg = "cr-e2e-northwind-rg"    # Multi-collaborator only
 
-# --- OIDC (whitelisted storage account) ---
+# --- OIDC storage account ---
+# MSFT tenant only: use the pre-provisioned whitelisted SA
 $oidcStorageAccount = "cleanroomoidc"
+# All other tenants: leave empty — the script creates a new SA automatically
+# $oidcStorageAccount = ""
 ```
 
 ### 1.3 Generate MSAL Tokens
@@ -419,10 +422,11 @@ az account set --subscription $personalSubscription
 #### Terminal T2 (Woodgrove)
 
 ```powershell
+$oidcParam = if ($oidcStorageAccount) { @("-OidcStorageAccount", $oidcStorageAccount) } else { @() }
+
 ./scripts/06-setup-identity.ps1 -resourceGroup $woodgroveRg -persona woodgrove `
     -collaborationId $collabId -frontendEndpoint $frontend `
-    -OidcStorageAccount $oidcStorageAccount `
-    -ApiMode $ApiMode
+    -ApiMode $ApiMode @oidcParam
 ```
 
 #### Terminal T3 (Northwind) — _multi-collaborator only_
@@ -430,18 +434,23 @@ az account set --subscription $personalSubscription
 ```powershell
 ./scripts/06-setup-identity.ps1 -resourceGroup $northwindRg -persona northwind `
     -collaborationId $collabId -frontendEndpoint $frontend `
-    -OidcStorageAccount $oidcStorageAccount `
-    -ApiMode $ApiMode
+    -ApiMode $ApiMode @oidcParam
 ```
 
-> **Cross-Tenant Issue**: If `cleanroomoidc` is in a different tenant, `az storage blob upload`
-> fails with "Issuer validation failed". Open a separate terminal, `az login --tenant <msft-tenant-id>`,
+> **MSFT tenant**: Uses the pre-provisioned whitelisted SA (`cleanroomoidc`). If this SA
+> is in a different tenant than your `az login` session, the upload will fail with
+> "Issuer validation failed". Open a separate terminal, `az login --tenant <msft-tenant-id>`,
 > and run the OIDC upload from there.
+>
+> **All other tenants**: Omit `-OidcStorageAccount` (leave `$oidcStorageAccount` empty).
+> The script automatically creates a new storage account with static website enabled in
+> the collaborator's resource group and uploads the OIDC documents there.
 
 **Verify**:
 ```powershell
 Get-Content "generated/$woodgroveRg/issuer-url.txt"
-# Should show: https://cleanroomoidc.z22.web.core.windows.net/<collab-uuid>
+# MSFT tenant: https://cleanroomoidc.z22.web.core.windows.net/<collab-uuid>
+# Other tenants: https://<auto-created-sa>.z22.web.core.windows.net/<collab-uuid>
 ```
 
 ### 5.2 Grant Access & Create Federated Credentials
