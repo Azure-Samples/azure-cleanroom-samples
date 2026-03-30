@@ -58,7 +58,7 @@ and **CPK** (Customer-Provided Key) data encryption modes.
 | Personal tenant ID | `f880c6ca-fa2f-45ed-a89b-197f2e696868` | Azure portal |
 | Collaborator email(s) | `notsaksham@gmail.com` | Microsoft account |
 | OIDC SA name | `cleanroomoidc` | Pre-provisioned, whitelisted |
-| Data source directories | `demos/datasource/northwind/`, `demos/datasource/woodgrove/` | This repo |
+| Data source directories | `./generated/datasource/northwind/`, `./generated/datasource/woodgrove/` | Downloaded at runtime by `05-prepare-data-*.ps1` (from `Azure-Samples/Synapse` GitHub repo) |
 | Query segment files | `demos/query/woodgrove/query1/segment{1,2,3}.txt` | This repo |
 
 ### Working Directory
@@ -908,19 +908,24 @@ and unwrapping the DEK.
 
 This phase generates the DEK and uploads data using azcopy with CPK encryption.
 
+> **NOTE**: The datasource directories are **not checked into the repo**. The data is
+> downloaded at runtime by `05-prepare-data-cpk.ps1` (which calls `common/get-input-data.ps1`
+> to fetch Twitter CSV data from the `Azure-Samples/Synapse` GitHub repo). The `-dataDir`
+> path will be created automatically.
+
 ```powershell
 # Northwind
 ./scripts/05-prepare-data-cpk.ps1 \
   -resourceGroup "cr-e2e-northwind-rg" \
   -persona northwind \
-  -dataDir "demos/datasource/northwind/input/csv" \
+  -dataDir "./generated/datasource/northwind/input/csv" \
   -datasetSuffix "-cpk-v4"
 
 # Woodgrove
 ./scripts/05-prepare-data-cpk.ps1 \
   -resourceGroup "cr-e2e-woodgrove-rg" \
   -persona woodgrove \
-  -dataDir "demos/datasource/woodgrove/input/csv" \
+  -dataDir "./generated/datasource/woodgrove/input/csv" \
   -datasetSuffix "-cpk-v4"
 ```
 
@@ -1386,7 +1391,7 @@ AZURE_CLI_DISABLE_CONNECTION_VERIFICATION=1 \
 
 ## Appendix D: Known Bugs & Workarounds
 
-### 1. `Invoke-AzCli` in `frontend-helpers.ps1` throws on stderr warnings
+### 1. ~~`Invoke-AzCli` in `frontend-helpers.ps1` throws on stderr warnings~~ (FIXED)
 
 **Bug**: When PowerShell scripts set `$PSNativeCommandUseErrorActionPreference = $true`
 (which most numbered scripts do at line ~47), any output to stderr from `az` commands
@@ -1403,34 +1408,9 @@ query vote) appear to fail because:
 2. PowerShell throws `NativeCommandExitException`
 3. The script exits even though the operation succeeded on the server
 
-**Current `Invoke-AzCli` code** (`frontend-helpers.ps1` line 326-353):
-```powershell
-function Invoke-AzCli {
-    param([string[]]$Arguments, [string]$Description = "")
-    # ... runs: $result = & az @Arguments 2>&1
-    # This captures stderr into $result, but the NativeCommandExitException
-    # is thrown BEFORE the function can check $LASTEXITCODE
-}
-```
-
-**Fix needed**: Add `$PSNativeCommandUseErrorActionPreference = $false` at the start
-of `Invoke-AzCli` (similar to what `Invoke-AzCliSafe` already does at line 316-317):
-```powershell
-function Invoke-AzCli {
-    param([string[]]$Arguments, [string]$Description = "")
-    $savedPref = $PSNativeCommandUseErrorActionPreference
-    $PSNativeCommandUseErrorActionPreference = $false
-    try {
-        # ... existing logic ...
-    } finally {
-        $PSNativeCommandUseErrorActionPreference = $savedPref
-    }
-}
-```
-
-**Workaround**: Run frontend commands directly via `az managedcleanroom frontend ...`
-from the command line instead of via the PowerShell scripts. This is what this runbook
-documents.
+**Fix applied**: `Invoke-AzCli` now saves and restores `$PSNativeCommandUseErrorActionPreference`
+in a `try/finally` block (matching `Invoke-AzCliSafe`). It also filters `ErrorRecord`
+objects from the `2>&1` capture, passing only string output to the JSON parser.
 
 ### 2. ARM response `collaborationId` field is null
 

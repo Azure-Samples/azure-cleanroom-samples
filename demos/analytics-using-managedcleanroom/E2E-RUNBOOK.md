@@ -128,14 +128,24 @@ az rest --method POST `
 
 ### 1.4 Get Collaboration Frontend ID
 
+> **NOTE**: The ARM response `properties.collaborationId` field is `null` (known bug).
+> You must retrieve the frontend UUID via the frontend API instead.
+
 ```powershell
 $collabShow = az rest --method GET `
     --url "$armEndpoint/subscriptions/$msftSubscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName`?api-version=$armApiVersion" `
     --resource "https://management.azure.com/" | ConvertFrom-Json
 
-# Extract frontend collaboration UUID and endpoint
-$collabId = $collabShow.properties.collaborationId   # UUID like "a0d5a85d-..."
 $frontendEndpoint = $collabShow.properties.workloads[0].endpoint
+```
+
+Get the frontend UUID (required for all `--collaboration-id` parameters):
+```powershell
+# Generate an MSAL token first (see Phase 0.2), then:
+$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content "/tmp/msal-idtoken-notsaksham.txt" -Raw
+$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
+$collabs = az managedcleanroom frontend collaboration list -o json | ConvertFrom-Json
+$collabId = ($collabs | Where-Object { $_.name -eq $collabName }).id
 ```
 
 ### 1.5 Accept Invitations (Both Personas)
@@ -175,14 +185,19 @@ az account set --subscription "dd6ae7e0-4013-486b-9aef-c51cf8eb840a"
 
 ### 2.2 Upload Data (Both Personas)
 
+> **NOTE**: The datasource directories are **not checked into the repo**. The
+> `05-prepare-data-sse.ps1` script calls `common/get-input-data.ps1` which downloads
+> Twitter CSV data from the `Azure-Samples/Synapse` GitHub repo at runtime. Create the
+> `-dataDir` directories before running, or let the script create them automatically.
+
 ```powershell
 # Northwind
 ./scripts/05-prepare-data-sse.ps1 -resourceGroup $northwindRg -persona northwind `
-    -dataDir "../demos/datasource/northwind"
+    -dataDir "./generated/datasource/northwind"
 
 # Woodgrove
 ./scripts/05-prepare-data-sse.ps1 -resourceGroup $woodgroveRg -persona woodgrove `
-    -dataDir "../demos/datasource/woodgrove"
+    -dataDir "./generated/datasource/woodgrove"
 ```
 
 **Verify**: `scripts/generated/datastores/{persona}-datastore-metadata.json` exists.
@@ -207,21 +222,33 @@ az account set --subscription "dd6ae7e0-4013-486b-9aef-c51cf8eb840a"
 
 ### 2.4 Grant Access (Both Personas)
 
-```powershell
-# Northwind
-./scripts/07-grant-access.ps1 -resourceGroup $northwindRg `
-    -collaborationId $collabId -contractId "Analytics" -userId northwind
+> **CRITICAL**: `-userId` must be the **JWT `oid` claim** from each persona's MSAL IdToken,
+> NOT the persona name. Using persona names (e.g., `northwind`) creates a federated credential
+> with subject `Analytics-northwind` which silently fails at runtime during token exchange.
+>
+> Extract the `oid` from the token:
+> ```powershell
+> $tokenB64 = (Get-Content "/tmp/msal-idtoken-collaboratorA.txt" -Raw).Split('.')[1]
+> $padded = $tokenB64 + ('=' * (4 - $tokenB64.Length % 4) % 4)
+> $claims = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($padded)) | ConvertFrom-Json
+> $northwindOid = $claims.oid   # e.g., "00000000-0000-0000-4e19-b6285189ceda"
+> ```
 
-# Woodgrove
+```powershell
+# Northwind (use JWT oid from collaboratorA's token)
+./scripts/07-grant-access.ps1 -resourceGroup $northwindRg `
+    -collaborationId $collabId -contractId "Analytics" -userId $northwindOid
+
+# Woodgrove (use JWT oid from notsaksham's token)
 ./scripts/07-grant-access.ps1 -resourceGroup $woodgroveRg `
-    -collaborationId $collabId -contractId "Analytics" -userId woodgrove
+    -collaborationId $collabId -contractId "Analytics" -userId $woodgroveOid
 ```
 
 > **CRITICAL**: `contractId` must be `"Analytics"` (capital A). The Spark agent uses `Analytics-{oid}` as the federated credential subject. Lowercase `"analytics"` causes silent token exchange failures.
 
 **Verify**: `az identity federated-credential list --resource-group {rg} --identity-name {mi-name}` shows credentials with:
 - `issuer`: matches `issuer-url.txt`
-- `subject`: `Analytics-{oid}`
+- `subject`: `Analytics-{jwt-oid}` (e.g., `Analytics-00000000-0000-0000-4e19-b6285189ceda`)
 - `audiences`: `["api://AzureADTokenExchange"]`
 
 ---
