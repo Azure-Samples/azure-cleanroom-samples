@@ -376,6 +376,7 @@ $oidcParam = if ($oidcStorageAccount) { @("-OidcStorageAccount", $oidcStorageAcc
 
 ./scripts/06-setup-identity.ps1 -resourceGroup $personaRg -persona $persona `
     -collaborationId $collabId -frontendEndpoint $frontend `
+    -TokenFile $personaTokenFile `
     -ApiMode $ApiMode @oidcParam
 ```
 
@@ -398,11 +399,11 @@ Get-Content "generated/$personaRg/issuer-url.txt"
 > See [Appendix A](#appendix-a-federated-credential-subject-reference).
 
 ```powershell
-$setupKV = if ($EncryptionMode -eq "CPK") { "-setupKeyVault" } else { "" }
+$setupKVParam = if ($EncryptionMode -eq "CPK") { @{"-setupKeyVault" = $true} } else { @{} }
 
 ./scripts/07-grant-access.ps1 -resourceGroup $personaRg `
     -collaborationId $collabId -contractId "Analytics" `
-    -userId $personaOid $setupKV
+    -userId $personaOid @setupKVParam
 ```
 
 > **CRITICAL**: `contractId` must be `"Analytics"` (capital A). Lowercase causes silent
