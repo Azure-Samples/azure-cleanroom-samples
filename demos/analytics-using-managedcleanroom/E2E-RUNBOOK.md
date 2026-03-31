@@ -722,11 +722,15 @@ $jobId = "cl-spark-<uuid>"
 ```powershell
 . "generated/$personaRg/names.generated.ps1"
 
-# Find the output CSV blob
+# Find the output CSV blob for the latest run (uses $jobId from Step 10)
+# Strip the "cl-spark-" prefix to get the run UUID used in the blob path
+$runUuid = $jobId -replace '^cl-spark-', ''
 $blobs = az storage blob list --account-name $STORAGE_ACCOUNT_NAME `
     --container-name woodgrove-output `
     --prefix "Analytics/" --auth-mode login -o json | ConvertFrom-Json
-$csvBlob = ($blobs | Where-Object { $_.name -match '\.csv$' -and $_.name -notmatch '\.crc$' }).name
+$csvBlob = ($blobs | Where-Object {
+    $_.name -match '\.csv$' -and $_.name -notmatch '\.crc$' -and $_.name -match $runUuid
+}).name
 Write-Host "Output blob: $csvBlob"
 
 # Download it
@@ -738,6 +742,14 @@ az storage blob download --account-name $STORAGE_ACCOUNT_NAME `
 
 Get-Content $outputFile
 ```
+
+> **NOTE**: Multiple runs produce separate output blobs under `Analytics/<date>/<run-uuid>/`.
+> The filter uses `$jobId` to select the blob from the current run. If `$jobId` is not set,
+> pick the latest blob manually:
+> ```powershell
+> $csvBlob = ($blobs | Where-Object { $_.name -match '\.csv$' -and $_.name -notmatch '\.crc$' } |
+>     Sort-Object -Property @{E={$_.properties.lastModified}} -Descending | Select-Object -First 1).name
+> ```
 
 ### 12.3 Download Output (CPK)
 

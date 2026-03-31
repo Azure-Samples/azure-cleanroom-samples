@@ -125,6 +125,8 @@ if ($DownloadCpkOutput) {
         Write-Host "ERROR: Output DEK file '$OutputDekFile' not found." -ForegroundColor Red
         exit 1
     }
+    # Resolve to absolute path so .NET methods (ReadAllBytes) work correctly.
+    $OutputDekFile = (Resolve-Path $OutputDekFile).Path
 
     $OutputLocalDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputLocalDir)
     New-Item -ItemType Directory -Path $OutputLocalDir -Force | Out-Null
@@ -137,7 +139,17 @@ if ($DownloadCpkOutput) {
     )
     $tenantId = (az account show --query tenantId -o tsv)
 
-    $containerUrl = "https://${OutputStorageAccount}.blob.core.windows.net/${OutputContainer}/"
+    # Scope download to the latest run's output subfolder to avoid downloading
+    # blobs from other runs (e.g., SSE blobs that aren't CPK-encrypted).
+    $runPrefix = ""
+    if ($runHistory -and $runHistory.latestRun -and $runHistory.latestRun.runId) {
+        $runUuid = $runHistory.latestRun.runId -replace '^cl-spark-', ''
+        $runDate = ([datetime]$runHistory.latestRun.startTime).ToString("yyyy-MM-dd")
+        $runPrefix = "Analytics/$runDate/$runUuid/"
+        Write-Host "  Scoping download to run: $runPrefix" -ForegroundColor Yellow
+    }
+
+    $containerUrl = "https://${OutputStorageAccount}.blob.core.windows.net/${OutputContainer}/${runPrefix}"
 
     Write-Host "  Source: $containerUrl" -ForegroundColor Yellow
     Write-Host "  Destination: $OutputLocalDir" -ForegroundColor Yellow
