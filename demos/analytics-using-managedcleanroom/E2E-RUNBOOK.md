@@ -112,12 +112,12 @@ Each collaborator needs these RBAC roles on their **personal subscription**:
 | `Key Vault Crypto User` | Key vault (on MI, CPK only) | Cleanroom unwraps KEK via SKR | Script `07-grant-access.ps1` |
 | `Key Vault Secrets User` | Key vault (on MI, CPK only) | Cleanroom reads wrapped DEK | Script `07-grant-access.ps1` |
 
-The **Owner (T1)** needs `Contributor` on the MSFT subscription's `$collabRg`.
+The **Owner (T1)** needs `Contributor` on `$collabRg` in their subscription.
 
 ```powershell
 # Verify your access (run in each collaborator terminal)
 az role assignment list --assignee $(az ad signed-in-user show --query id -o tsv) `
-    --scope "/subscriptions/$personalSubscription" `
+    --scope "/subscriptions/$subscription" `
     --query "[].roleDefinitionName" -o tsv
 # Should include: Contributor AND User Access Administrator (or Owner which includes both)
 ```
@@ -125,57 +125,65 @@ az role assignment list --assignee $(az ad signed-in-user show --query id -o tsv
 > **Minimum viable permissions**: Scope roles to just the resource group instead of subscription:
 > ```powershell
 > az group create --name $personaRg --location westus
-> az role assignment create --role "Contributor" --assignee "<your-oid>" --scope "/subscriptions/$personalSubscription/resourceGroups/$personaRg"
-> az role assignment create --role "User Access Administrator" --assignee "<your-oid>" --scope "/subscriptions/$personalSubscription/resourceGroups/$personaRg"
+> az role assignment create --role "Contributor" --assignee "<your-oid>" --scope "/subscriptions/$subscription/resourceGroups/$personaRg"
+> az role assignment create --role "User Access Administrator" --assignee "<your-oid>" --scope "/subscriptions/$subscription/resourceGroups/$personaRg"
 > ```
 
-### 1.3 Global Variables (set in ALL terminals)
+### 1.3 Terminal T1 (Owner) — Variables
 
 ```powershell
-# --- Mode flags ---
-$ApiMode = "cli"
-$EncryptionMode = "SSE"
+# --- Azure login (must be done first) ---
+# az login
+# az account set --subscription "<owner-subscription-name-or-id>"
+$account = az account show -o json | ConvertFrom-Json
+$subscription = $account.id
+$tenantId = $account.tenantId
+Write-Host "Subscription: $subscription, Tenant: $tenantId"
 
-# --- Endpoints ---
-$frontend = "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net"
+# --- ARM endpoints ---
 $armEndpoint = "https://eastus2euap.management.azure.com"
 $armApiVersion = "2026-03-31-preview"
-
-# --- Subscriptions ---
-$msftSubscription = "<msft-subscription-id>"
-$personalSubscription = "<personal-subscription-id>"
-$personalTenantId = "<personal-tenant-id>"
 
 # --- Collaboration ---
 $collabName = "<collaboration-name>"
 $collabRg = "<collaboration-resource-group>"
 
+# --- Frontend (needed only in Step 02.3 to retrieve $collabId) ---
+$frontend = "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net"
+```
+
+### 1.4 Each Collaborator Terminal — Variables
+
+Run in **each collaborator terminal** (T2, and T3 for multi-collaborator).
+Only the persona-specific values differ — the rest is identical.
+
+```powershell
+# --- Azure login (must be done first) ---
+# az login
+# az account set --subscription "<your-subscription-name-or-id>"
+$account = az account show -o json | ConvertFrom-Json
+$subscription = $account.id
+$tenantId = $account.tenantId
+Write-Host "Subscription: $subscription, Tenant: $tenantId"
+
+# --- Mode flags ---
+$ApiMode = "cli"           # "cli" or "rest"
+$EncryptionMode = "SSE"    # "SSE" or "CPK"
+
+# --- Persona (set to YOUR persona) ---
+$persona = "woodgrove"                # T2: "woodgrove"  |  T3: "northwind"
+$personaRg = "cr-e2e-woodgrove-rg"    # T2: "cr-e2e-woodgrove-rg"  |  T3: "cr-e2e-northwind-rg"
+$personaEmail = "<your-email>"
+
+# --- Frontend ---
+$frontend = "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net"
+$collabId = "<uuid-from-step-02>"     # Set after Owner completes Step 02.3
+
 # --- OIDC storage account ---
-# MSFT tenant only: use the pre-provisioned whitelisted SA
+# MSFT tenant: use pre-provisioned whitelisted SA
 $oidcStorageAccount = "cleanroomoidc"
-# All other tenants: leave empty — script creates a new SA automatically
+# Other tenants: leave empty — script creates one automatically
 # $oidcStorageAccount = ""
-```
-
-### 1.4 Per-Persona Variables (set in EACH collaborator terminal)
-
-Each collaborator sets these to **their own values**. All subsequent commands use these
-generic names — the commands are identical across terminals.
-
-#### Terminal T2 (Woodgrove)
-
-```powershell
-$persona = "woodgrove"
-$personaRg = "cr-e2e-woodgrove-rg"
-$personaEmail = "<woodgrove-email>"
-```
-
-#### Terminal T3 (Northwind) — _multi-collaborator only_
-
-```powershell
-$persona = "northwind"
-$personaRg = "cr-e2e-northwind-rg"
-$personaEmail = "<northwind-email>"
 ```
 
 ### 1.5 Generate MSAL Token (each collaborator terminal)
@@ -222,14 +230,13 @@ MSAL tokens last ~24 hours. If a token expires mid-flow, regenerate it (repeat 1
 
 > **Terminal: T1 (Owner)**
 
-### 2.1 Login & Create
+### 2.1 Create
+
+> Login was already done in Step 1.3.
 
 ```powershell
-az login --tenant "<msft-tenant-id>"
-az account set --subscription $msftSubscription
-
 az rest --method PUT `
-    --url "$armEndpoint/subscriptions/$msftSubscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName?api-version=$armApiVersion" `
+    --url "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName?api-version=$armApiVersion" `
     --resource "https://management.azure.com/" `
     --body "{
         `"location`": `"westus`",
@@ -250,7 +257,7 @@ az rest --method PUT `
 
 ```powershell
 az rest --method POST `
-    --url "$armEndpoint/subscriptions/$msftSubscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName/enableWorkload?api-version=$armApiVersion" `
+    --url "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName/enableWorkload?api-version=$armApiVersion" `
     --resource "https://management.azure.com/" `
     --body '{"workloadType": "analytics"}'
 ```
@@ -265,7 +272,7 @@ az rest --method POST `
 
 ```powershell
 $collabShow = az rest --method GET `
-    --url "$armEndpoint/subscriptions/$msftSubscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName?api-version=$armApiVersion" `
+    --url "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName?api-version=$armApiVersion" `
     --resource "https://management.azure.com/" | ConvertFrom-Json
 
 $frontendEndpoint = $collabShow.properties.workloads[0].endpoint
@@ -278,8 +285,9 @@ $collabId = ($collabs | Where-Object { $_.name -eq $collabName }).id
 Write-Host "Collaboration UUID: $collabId"
 ```
 
-> **Share `$collabId` with all terminals.** Every `--collaboration-id` parameter takes this
-> frontend UUID, NOT the ARM resource ID (slashes get URL-encoded → 404).
+> **Share `$collabId` with collaborator terminals.** Each collaborator sets
+> `$collabId = "<uuid>"` in their terminal (already included in their variable block
+> at Step 1.4 as a placeholder).
 
 ---
 
@@ -291,7 +299,7 @@ Repeat for each collaborator email:
 
 ```powershell
 az rest --method POST `
-    --url "$armEndpoint/subscriptions/$msftSubscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName/addCollaborator?api-version=$armApiVersion" `
+    --url "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName/addCollaborator?api-version=$armApiVersion" `
     --resource "https://management.azure.com/" `
     --body "{`"email`": `"<collaborator-email>`"}"
 ```
@@ -323,14 +331,9 @@ Should show `"status": "Finalized"` once all invitations are accepted.
 >
 > In multi-collaborator mode, terminals run in parallel (independent resource groups).
 
-### 4.1 Login
+### 4.1 Prepare Resources
 
-```powershell
-az login --tenant $personalTenantId
-az account set --subscription $personalSubscription
-```
-
-### 4.2 Prepare Resources
+> Login was already done in Step 1.3/1.4.
 
 ```powershell
 ./scripts/04-prepare-resources.ps1 -resourceGroup $personaRg -persona $persona
@@ -338,7 +341,7 @@ az account set --subscription $personalSubscription
 
 **Verify**: `generated/$personaRg/names.generated.ps1` and `resources.generated.json` exist.
 
-### 4.3 Upload Data
+### 4.2 Upload Data
 
 > Data is **downloaded at runtime** from the `Azure-Samples/Synapse` GitHub repo (Twitter CSV).
 
