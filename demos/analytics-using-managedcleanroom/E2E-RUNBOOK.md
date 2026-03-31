@@ -110,7 +110,76 @@ demos/analytics-using-managedcleanroom/
 | azcopy | v10+ (CPK mode only) |
 | Python 3 + `cryptography` | CPK mode only — `pip install cryptography` |
 
-### 1.2 Shared Variables (set in ALL terminals)
+### 1.2 Azure Subscription Permissions
+
+Each persona needs specific RBAC roles on their subscription. The scripts assign
+resource-scoped roles automatically, but the **logged-in user** must have sufficient
+subscription-level permissions to create resources and assign roles in the first place.
+
+#### Owner (T1) — MSFT subscription
+
+The Owner creates the collaboration ARM resource. Required permissions:
+
+| Permission | Why |
+|---|---|
+| `Contributor` on `$collabRg` | Create/manage the `Private.CleanRoom/Collaborations` resource |
+| `Microsoft.Authorization/roleAssignments/write` | Not required directly — ARM handles role setup internally |
+
+```powershell
+# Verify your access (run in T1)
+az login --tenant "<msft-tenant-id>"
+az account set --subscription $msftSubscription
+az role assignment list --assignee $(az ad signed-in-user show --query id -o tsv) `
+    --scope "/subscriptions/$msftSubscription/resourceGroups/$collabRg" `
+    --query "[].roleDefinitionName" -o tsv
+# Should include: Contributor or Owner
+```
+
+#### Woodgrove (T2) — Personal subscription
+
+Woodgrove provisions storage, key vault, managed identity, and assigns RBAC roles on them.
+
+| Role | Scope | Why | Assigned by |
+|---|---|---|---|
+| `Contributor` | Subscription or `$woodgroveRg` | Create resource groups, storage accounts, key vaults, managed identities | Pre-existing (you) |
+| `User Access Administrator` | Subscription or `$woodgroveRg` | Assign RBAC roles on resources (storage, KV) to managed identity | Pre-existing (you) |
+| `Storage Blob Data Contributor` | Storage account | Upload data, manage containers | Script `04-prepare-resources.ps1` |
+| `Key Vault Crypto Officer` | Key vault | Import KEKs (CPK mode) | Script `04-prepare-resources.ps1` |
+| `Key Vault Secrets Officer` | Key vault | Store wrapped DEKs (CPK mode) | Script `04-prepare-resources.ps1` |
+| `Storage Blob Data Owner` | Storage account (on MI) | Cleanroom accesses storage at runtime via MI | Script `07-grant-access.ps1` |
+| `Key Vault Crypto User` | Key vault (on MI, CPK only) | Cleanroom unwraps KEK via SKR at runtime | Script `07-grant-access.ps1` |
+| `Key Vault Secrets User` | Key vault (on MI, CPK only) | Cleanroom reads wrapped DEK at runtime | Script `07-grant-access.ps1` |
+
+```powershell
+# Verify your access (run in T2)
+az login --tenant $personalTenantId
+az account set --subscription $personalSubscription
+
+# Check subscription-level roles
+az role assignment list --assignee $(az ad signed-in-user show --query id -o tsv) `
+    --scope "/subscriptions/$personalSubscription" `
+    --query "[].roleDefinitionName" -o tsv
+# Should include: Contributor AND User Access Administrator (or Owner which includes both)
+
+# If missing, request these roles (requires a subscription admin):
+# az role assignment create --role "Contributor" --assignee "<your-object-id>" --scope "/subscriptions/$personalSubscription"
+# az role assignment create --role "User Access Administrator" --assignee "<your-object-id>" --scope "/subscriptions/$personalSubscription"
+```
+
+#### Northwind (T3) — Personal subscription _(multi-collaborator only)_
+
+Same roles as Woodgrove above, scoped to `$northwindRg` and Northwind's resources.
+
+> **Minimum viable permissions**: If you cannot get subscription-level `Owner` or
+> `Contributor` + `User Access Administrator`, you can scope them to just the resource
+> group. Create the RG first, then assign roles on it:
+> ```powershell
+> az group create --name $woodgroveRg --location westus
+> az role assignment create --role "Contributor" --assignee "<your-oid>" --scope "/subscriptions/$personalSubscription/resourceGroups/$woodgroveRg"
+> az role assignment create --role "User Access Administrator" --assignee "<your-oid>" --scope "/subscriptions/$personalSubscription/resourceGroups/$woodgroveRg"
+> ```
+
+### 1.3 Shared Variables (set in ALL terminals)
 
 ```powershell
 # --- Mode flags ---
@@ -142,7 +211,7 @@ $oidcStorageAccount = "cleanroomoidc"
 # $oidcStorageAccount = ""
 ```
 
-### 1.3 Generate MSAL Tokens
+### 1.4 Generate MSAL Tokens
 
 #### Terminal T2 (Woodgrove)
 
@@ -194,16 +263,16 @@ $woodgroveOid = "<oid-from-above>"
 > For MSA (personal Microsoft accounts), the OID typically starts with `00000000-0000-0000-`.
 > This is **different** from `az ad signed-in-user show --query id` — always use the JWT `oid`.
 
-### 1.4 Configure CLI Extension (CLI mode only)
+### 1.5 Configure CLI Extension (CLI mode only)
 
 ```powershell
 az managedcleanroom frontend configure `
     --endpoint $frontend
 ```
 
-### 1.5 Token Lifetime
+### 1.6 Token Lifetime
 
-MSAL tokens last ~24 hours. If a token expires mid-flow, regenerate it (repeat 1.3).
+MSAL tokens last ~24 hours. If a token expires mid-flow, regenerate it (repeat 1.4).
 
 ---
 
@@ -455,7 +524,7 @@ Get-Content "generated/$woodgroveRg/issuer-url.txt"
 
 ### 5.2 Grant Access & Create Federated Credentials
 
-> **CRITICAL**: `-userId` must be the **JWT `oid`** from Step 01.3 — NOT a persona name.
+> **CRITICAL**: `-userId` must be the **JWT `oid`** from Step 01.4 — NOT a persona name.
 > See [Appendix A](#appendix-a-federated-credential-subject-reference) for details.
 
 #### Terminal T2 (Woodgrove)
@@ -899,7 +968,7 @@ For MSA (personal Microsoft) accounts, the JWT `oid` and Graph API object ID are
 
 | Source | Command | Use? |
 |---|---|---|
-| JWT `oid` (correct) | PowerShell decode from Step 01.3 | **YES** |
+| JWT `oid` (correct) | PowerShell decode from Step 01.4 | **YES** |
 | Graph API (wrong) | `az ad signed-in-user show --query id` | **NO** |
 | Dataset `proposerId` | `dataset show` response | **YES** (to verify) |
 
@@ -991,7 +1060,7 @@ Propagation takes **1-5 minutes**.
 
 **Cause**: Using ARM access token from an MSA guest account (lacks `preferred_username`).
 
-**Fix**: Use MSAL IdTokens (Step 01.3).
+**Fix**: Use MSAL IdTokens (Step 01.4).
 
 ---
 
