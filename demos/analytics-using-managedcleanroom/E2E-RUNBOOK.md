@@ -716,16 +716,21 @@ $jobId = "cl-spark-<uuid>"
 ```powershell
 . "generated/$personaRg/names.generated.ps1"
 
-az storage blob list --account-name $STORAGE_ACCOUNT_NAME `
+# Find the output CSV blob
+$blobs = az storage blob list --account-name $STORAGE_ACCOUNT_NAME `
     --container-name woodgrove-output `
-    --prefix "Analytics/" --auth-mode login -o table
+    --prefix "Analytics/" --auth-mode login -o json | ConvertFrom-Json
+$csvBlob = ($blobs | Where-Object { $_.name -match '\.csv$' -and $_.name -notmatch '\.crc$' }).name
+Write-Host "Output blob: $csvBlob"
 
+# Download it
+$outputFile = Join-Path "." "output.csv"
 az storage blob download --account-name $STORAGE_ACCOUNT_NAME `
     --container-name woodgrove-output `
-    --name "Analytics/<date>/<runId>/part-00000-<uuid>.csv" `
-    --file ./output.csv --auth-mode login
+    --name $csvBlob `
+    --file $outputFile --auth-mode login
 
-Get-Content ./output.csv
+Get-Content $outputFile
 ```
 
 ### 12.3 Download Output (CPK)
