@@ -178,8 +178,12 @@ if ($ApiMode -eq "cli") {
 
     # Fetch OIDC issuer info
     try {
-        $oidcIssuerInfoJson = az managedcleanroom frontend oidc issuerinfo show `
+        $PSNativeCommandUseErrorActionPreference = $false
+        $oidcIssuerInfoRaw = az managedcleanroom frontend oidc issuerinfo show `
             --collaboration-id $collaborationId 2>&1
+        $PSNativeCommandUseErrorActionPreference = $true
+        # Filter out WARNING lines from stderr captured by 2>&1
+        $oidcIssuerInfoJson = $oidcIssuerInfoRaw | Where-Object { $_ -is [string] }
         if ($LASTEXITCODE -eq 0 -and $oidcIssuerInfoJson) {
             $oidcIssuerInfo = $oidcIssuerInfoJson | ConvertFrom-Json
             Write-Host "OIDC issuer info:" -ForegroundColor Yellow

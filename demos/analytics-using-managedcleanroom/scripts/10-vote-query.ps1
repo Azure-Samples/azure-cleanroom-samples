@@ -93,9 +93,3 @@ if ($queryInfo) {
 }
 
 Write-Host "`nVote complete for query '$queryName'." -ForegroundColor Green
-
-# Step 3: Enable execution consent on the query.
-# Consent requires the query to be in Accepted state (which the vote above achieves).
-Write-Host "`n=== Enabling execution consent on query ===" -ForegroundColor Cyan
-Set-FrontendConsent -Context $feCtx -CollaborationId $collaborationId -DocumentId $queryName -Action "enable" -TokenFile $TokenFile
-Write-Host "Execution consent enabled for query '$queryName'." -ForegroundColor Green

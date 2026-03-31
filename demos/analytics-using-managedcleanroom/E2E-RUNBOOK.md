@@ -348,7 +348,7 @@ az managedcleanroom frontend invitation accept `
 ```powershell
 az managedcleanroom frontend show --collaboration-id $collabId -o json
 ```
-Should show `"status": "Finalized"` once all invitations are accepted.
+Should show `"status": "Active"` once all invitations are accepted.
 
 ---
 
@@ -369,9 +369,24 @@ Should show `"status": "Finalized"` once all invitations are accepted.
 
 **Verify**: `generated/$personaRg/names.generated.ps1` and `resources.generated.json` exist.
 
-### 4.2 Upload Data
+### 4.2 Download Sample Data
 
-> Data is **downloaded at runtime** from the `Azure-Samples/Synapse` GitHub repo (Twitter CSV).
+Downloads Twitter CSV data from the `Azure-Samples/Synapse` GitHub repo into the local data directory.
+
+```powershell
+. "./scripts/common/get-input-data.ps1"
+$dataDir = "./generated/datasource/$persona"
+
+if ($persona -eq "woodgrove") {
+    Get-ConsumerData -dataDir $dataDir -format csv -schemaFields "date:date,time:string,author:string,mentions:string"
+} else {
+    Get-PublisherData -dataDir $dataDir -format csv -schemaFields "date:date,time:string,author:string,mentions:string"
+}
+```
+
+**Verify**: `generated/datasource/$persona/csv/` contains `.csv` files.
+
+### 4.3 Upload Data
 
 #### SSE Mode
 
@@ -403,12 +418,17 @@ Should show `"status": "Finalized"` once all invitations are accepted.
 ### 5.1 Setup OIDC Issuer
 
 ```powershell
-$oidcParam = if ($oidcStorageAccount) { @("-OidcStorageAccount", $oidcStorageAccount) } else { @() }
+$identityParams = @{
+    resourceGroup    = $personaRg
+    persona          = $persona
+    collaborationId  = $collabId
+    frontendEndpoint = $frontend
+    TokenFile        = $personaTokenFile
+    ApiMode          = $ApiMode
+}
+if ($oidcStorageAccount) { $identityParams["OidcStorageAccount"] = $oidcStorageAccount }
 
-./scripts/06-setup-identity.ps1 -resourceGroup $personaRg -persona $persona `
-    -collaborationId $collabId -frontendEndpoint $frontend `
-    -TokenFile $personaTokenFile `
-    -ApiMode $ApiMode @oidcParam
+./scripts/06-setup-identity.ps1 @identityParams
 ```
 
 > **MSFT tenant**: Uses the pre-provisioned whitelisted SA (`cleanroomoidc`). If this SA
@@ -541,7 +561,7 @@ az managedcleanroom frontend analytics dataset show `
 ```powershell
 ./scripts/09-publish-query.ps1 -collaborationId $collabId `
     -queryName "query1" `
-    -queryDir "../demos/query/woodgrove/query1" `
+    -queryDir "./demos/query/woodgrove/query1" `
     -publisherInputDataset "woodgrove-input-csv" `
     -consumerInputDataset "woodgrove-input-csv" `
     -outputDataset "woodgrove-output-csv" `
@@ -555,7 +575,7 @@ az managedcleanroom frontend analytics dataset show `
 ```powershell
 ./scripts/09-publish-query.ps1 -collaborationId $collabId `
     -queryName "query2" `
-    -queryDir "../demos/query/woodgrove/query1" `
+    -queryDir "./demos/query/woodgrove/query1" `
     -publisherInputDataset "northwind-input-csv" `
     -consumerInputDataset "woodgrove-input-csv" `
     -outputDataset "woodgrove-output-csv" `
