@@ -140,6 +140,9 @@ $subscription = $account.id
 $tenantId = $account.tenantId
 Write-Host "Subscription: $subscription, Tenant: $tenantId"
 
+# --- Location ---
+$location = "westus"
+
 # --- ARM endpoints ---
 $armEndpoint = "https://eastus2euap.management.azure.com"
 $armApiVersion = "2026-03-31-preview"
@@ -166,6 +169,9 @@ $subscription = $account.id
 $tenantId = $account.tenantId
 Write-Host "Subscription: $subscription, Tenant: $tenantId"
 
+# --- Location ---
+$location = "westus"
+
 # --- Mode flags ---
 $ApiMode = "cli"           # "cli" or "rest"
 $EncryptionMode = "SSE"    # "SSE" or "CPK"
@@ -174,6 +180,9 @@ $EncryptionMode = "SSE"    # "SSE" or "CPK"
 $persona = "woodgrove"                # T2: "woodgrove"  |  T3: "northwind"
 $personaRg = "cr-e2e-woodgrove-rg"    # T2: "cr-e2e-woodgrove-rg"  |  T3: "cr-e2e-northwind-rg"
 $personaEmail = "<your-email>"
+
+# --- Create resource group (if it doesn't exist) ---
+az group create --name $personaRg --location $location -o none 2>$null
 
 # --- Frontend ---
 $frontend = "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net"
@@ -230,16 +239,20 @@ MSAL tokens last ~24 hours. If a token expires mid-flow, regenerate it (repeat 1
 
 > **Terminal: T1 (Owner)**
 
-### 2.1 Create
+### 2.1 Create Resource Group
 
-> Login was already done in Step 1.3.
+```powershell
+az group create --name $collabRg --location $location -o none
+```
+
+### 2.2 Create Collaboration
 
 ```powershell
 az rest --method PUT `
     --url "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName?api-version=$armApiVersion" `
     --resource "https://management.azure.com/" `
     --body "{
-        `"location`": `"westus`",
+        `"location`": `"$location`",
         `"properties`": {
             `"consortiumType`": `"ConfidentialAKS`",
             `"userIdentity`": {
@@ -253,7 +266,7 @@ az rest --method PUT `
 
 **Expected**: 201 Created or 200 OK. May return 202 — poll the `Location` header (2-5 min).
 
-### 2.2 Enable Analytics Workload
+### 2.3 Enable Analytics Workload
 
 ```powershell
 az rest --method POST `
@@ -266,7 +279,7 @@ az rest --method POST `
 
 **Expected**: 202 Accepted. Poll until complete (**5-15 minutes**).
 
-### 2.3 Get Frontend UUID
+### 2.4 Get Frontend UUID
 
 > The ARM `properties.collaborationId` field is `null` (known bug).
 
@@ -333,10 +346,10 @@ Should show `"status": "Finalized"` once all invitations are accepted.
 
 ### 4.1 Prepare Resources
 
-> Login was already done in Step 1.3/1.4.
+> Login and resource group creation were already done in Step 1.4.
 
 ```powershell
-./scripts/04-prepare-resources.ps1 -resourceGroup $personaRg -persona $persona
+./scripts/04-prepare-resources.ps1 -resourceGroup $personaRg -persona $persona -location $location
 ```
 
 **Verify**: `generated/$personaRg/names.generated.ps1` and `resources.generated.json` exist.
