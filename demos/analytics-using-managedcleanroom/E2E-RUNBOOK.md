@@ -114,17 +114,16 @@ Each collaborator needs these RBAC roles on their **personal subscription**:
 
 The **Owner (T1)** needs `Contributor` on `$collabRg` in their subscription.
 
-```powershell
-# Verify your access (run in each collaborator terminal)
-az role assignment list --assignee $(az ad signed-in-user show --query id -o tsv) `
-    --scope "/subscriptions/$subscription" `
-    --query "[].roleDefinitionName" -o tsv
-# Should include: Contributor AND User Access Administrator (or Owner which includes both)
-```
+> **Verify** (run after setting variables in Step 1.3/1.4):
+> ```powershell
+> az role assignment list --assignee $(az ad signed-in-user show --query id -o tsv) `
+>     --scope "/subscriptions/$subscription" `
+>     --query "[].roleDefinitionName" -o tsv
+> # Should include: Contributor AND User Access Administrator (or Owner which includes both)
+> ```
 
 > **Minimum viable permissions**: Scope roles to just the resource group instead of subscription:
 > ```powershell
-> az group create --name $personaRg --location westus
 > az role assignment create --role "Contributor" --assignee "<your-oid>" --scope "/subscriptions/$subscription/resourceGroups/$personaRg"
 > az role assignment create --role "User Access Administrator" --assignee "<your-oid>" --scope "/subscriptions/$subscription/resourceGroups/$personaRg"
 > ```
@@ -223,7 +222,7 @@ Write-Host "JWT oid: $personaOid"
 > For MSA (personal Microsoft accounts), the OID typically starts with `00000000-0000-0000-`.
 > This is **different** from `az ad signed-in-user show --query id` — always use the JWT `oid`.
 
-### 1.7 Configure CLI Extension (CLI mode only)
+### 1.7 Configure CLI Extension (each collaborator terminal, CLI mode only)
 
 ```powershell
 az managedcleanroom frontend configure --endpoint $frontend
@@ -231,7 +230,7 @@ az managedcleanroom frontend configure --endpoint $frontend
 
 ### 1.8 Token Lifetime
 
-MSAL tokens last ~24 hours. If a token expires mid-flow, regenerate it (repeat 1.5).
+MSAL tokens last ~24 hours. If a token expires mid-flow, regenerate it (repeat 1.5 and 1.6).
 
 ---
 
@@ -256,8 +255,8 @@ az rest --method PUT `
         `"properties`": {
             `"consortiumType`": `"ConfidentialAKS`",
             `"userIdentity`": {
-                `"tenantId`": `"<owner-tenant-id>`",
-                `"objectId`": `"<owner-object-id>`",
+                `"tenantId`": `"$tenantId`",
+                `"objectId`": `"$(az ad signed-in-user show --query id -o tsv)`",
                 `"accountType`": `"MicrosoftAccount`"
             }
         }
@@ -282,6 +281,8 @@ az rest --method POST `
 ### 2.4 Get Frontend UUID
 
 > The ARM `properties.collaborationId` field is `null` (known bug).
+> The Owner needs the `managedcleanroom` CLI extension and a collaborator's MSAL token
+> to retrieve the frontend UUID.
 
 ```powershell
 $collabShow = az rest --method GET `
@@ -290,7 +291,10 @@ $collabShow = az rest --method GET `
 
 $frontendEndpoint = $collabShow.properties.workloads[0].endpoint
 
-# Get frontend UUID (use any collaborator's MSAL token)
+# Configure CLI extension (needed for frontend commands)
+az managedcleanroom frontend configure --endpoint $frontend
+
+# Use any collaborator's MSAL token (collaborator must have completed Step 1.5 first)
 $env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content "/tmp/msal-idtoken-woodgrove.txt" -Raw
 $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 $collabs = az managedcleanroom frontend collaboration list -o json | ConvertFrom-Json
@@ -696,6 +700,8 @@ Get-Content ./output.csv
 ### 12.3 Download Output (CPK)
 
 ```powershell
+. "generated/$personaRg/names.generated.ps1"
+
 ./scripts/12-view-results.ps1 -collaborationId $collabId `
     -queryName "query1" `
     -frontendEndpoint $frontend `
