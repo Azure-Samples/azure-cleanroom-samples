@@ -1,7 +1,0 @@
-{
-  "clientId": "1f478201-c627-45b9-860c-f6e7593ac577",
-  "tenantId": "72f988bf-86f1-41af-91ab-2d7cd011db47",
-  "backingIdentity": "cleanroom_cgs_oidc",
-  "tokenIssuerUrl": "https://cleanroomoidc.z22.web.core.windows.net/c69ddba0-cbf1-4f68-83f4-96b95f08f287",
-  "identityName": "woodgrove-identity"
-}
