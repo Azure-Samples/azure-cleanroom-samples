@@ -10,13 +10,13 @@ Supports **SSE** and **CPK** encryption modes, with **CLI** or **REST API** oper
 - [Configuration](#configuration)
 - [Step 01: Prerequisites & Authentication](#step-01-prerequisites--authentication) `[ALL]`
 - [Step 02: Create Collaboration](#step-02-create-collaboration) `[OWNER]`
-- [Step 03: Add Collaborators & Accept Invitations](#step-03-add-collaborators--accept-invitations) `[OWNER → WOODGROVE]`
-- [Step 04: Resource Provisioning](#step-04-resource-provisioning) `[WOODGROVE]`
-- [Step 05: OIDC Identity & Federated Credentials](#step-05-oidc-identity--federated-credentials) `[WOODGROVE]`
-- [Step 06: Publish Datasets](#step-06-publish-datasets) `[WOODGROVE]`
-- [Step 07: CPK Key Management](#step-07-cpk-key-management) `[WOODGROVE]` _(CPK only)_
+- [Step 03: Add Collaborators & Accept Invitations](#step-03-add-collaborators--accept-invitations) `[OWNER → EACH COLLABORATOR]`
+- [Step 04: Resource Provisioning](#step-04-resource-provisioning) `[EACH COLLABORATOR]`
+- [Step 05: OIDC Identity & Federated Credentials](#step-05-oidc-identity--federated-credentials) `[EACH COLLABORATOR]`
+- [Step 06: Publish Datasets](#step-06-publish-datasets) `[EACH COLLABORATOR]`
+- [Step 07: CPK Key Management](#step-07-cpk-key-management) `[EACH COLLABORATOR]` _(CPK only)_
 - [Step 08: Publish Query](#step-08-publish-query) `[WOODGROVE]`
-- [Step 09: Approve Query](#step-09-approve-query) `[WOODGROVE]`
+- [Step 09: Approve Query](#step-09-approve-query) `[EACH COLLABORATOR]`
 - [Step 10: Execute Query](#step-10-execute-query) `[WOODGROVE]`
 - [Step 11: Monitor Query](#step-11-monitor-query) `[ANY]`
 - [Step 12: Results & Audit](#step-12-results--audit) `[WOODGROVE]`
@@ -36,15 +36,8 @@ Supports **SSE** and **CPK** encryption modes, with **CLI** or **REST API** oper
 Set once at the start. All scripts respect these flags via parameters.
 
 ```powershell
-# Operation mode: how frontend commands are executed
-#   "cli"  → az managedcleanroom frontend CLI commands
-#   "rest" → Direct REST API calls via Invoke-RestMethod in PowerShell scripts
-$ApiMode = "cli"
-
-# Encryption mode: how data is protected at rest
-#   "SSE" → Server-Side Encryption (Azure-managed keys, simpler)
-#   "CPK" → Customer-Provided Key (you control the encryption keys)
-$EncryptionMode = "SSE"
+$ApiMode = "cli"           # "cli" (az managedcleanroom frontend) or "rest" (Invoke-RestMethod)
+$EncryptionMode = "SSE"    # "SSE" (Azure-managed keys) or "CPK" (customer-provided keys)
 ```
 
 | Mode | Frontend operations | ARM operations | When to use |
@@ -61,30 +54,26 @@ $EncryptionMode = "SSE"
 | Mode | Terminals | Accounts | What happens |
 |---|---|---|---|
 | **Single-collaborator** | T1 (Owner) + T2 (Woodgrove) | 1 collaborator email | Woodgrove provisions resources, publishes input + output datasets, proposes query, votes, runs, downloads results. |
-| **Multi-collaborator** | T1 (Owner) + T2 (Woodgrove) + T3 (Northwind) | 2 collaborator emails | Woodgrove and Northwind each provision own resources and publish own input datasets. Woodgrove also publishes the output dataset. A second query joins both datasets; both collaborators vote. |
+| **Multi-collaborator** | T1 (Owner) + T2 (Woodgrove) + T3 (Northwind) | 2 collaborator emails | Each collaborator provisions own resources and publishes own input datasets. Woodgrove also publishes the output dataset and proposes queries. Both vote on queries that use their data. |
 
 **Single-collaborator** is the simpler path — only the Owner and Woodgrove are needed.
-Woodgrove's query reads only its own input data and writes to its own output.
 
 **Multi-collaborator** adds Northwind as a second data contributor. A second query can
-join data from both collaborators. Both must vote to approve queries that use their data.
-Woodgrove still owns the output dataset and downloads results.
+join data from both collaborators. Both must vote to approve it.
 
 ### Terminal Setup
 
-| Terminal | Persona | Role | Azure Login | Required? |
-|---|---|---|---|---|
-| **T1 — Owner** | Collaboration admin | Creates collab, adds collaborators | MSFT subscription | **Yes** |
-| **T2 — Woodgrove** | Primary collaborator | Provisions resources, publishes input + output datasets, proposes & runs query | Personal subscription | **Yes** |
-| **T3 — Northwind** | Additional collaborator | Provisions own resources, publishes own input dataset, votes | Personal subscription | **Optional** |
+| Terminal | Persona | Role | Required? |
+|---|---|---|---|
+| **T1 — Owner** | Collaboration admin | Creates collab, adds collaborators | **Yes** |
+| **T2 — Woodgrove** | Primary collaborator | Provisions resources, publishes datasets (input + output), proposes & runs query | **Yes** |
+| **T3 — Northwind** | Additional collaborator | Provisions own resources, publishes own input dataset, votes | **Optional** |
 
-> **Single-collaborator mode**: Only T1 and T2 are needed. One email, one token, one
-> collaborator terminal. No Northwind commands run at all. Steps marked
+> **Single-collaborator mode**: Only T1 and T2 are needed. Steps marked
 > `_multi-collaborator only_` are skipped entirely.
 >
-> **Multi-collaborator mode**: Northwind (T3) joins with their own Microsoft account.
-> Steps 04-06 for Northwind run in T3 in parallel with Woodgrove's T2. Both vote on queries
-> that reference both collaborators' datasets.
+> **Multi-collaborator mode**: Northwind (T3) runs the same commands as Steps 04-06
+> in parallel with Woodgrove. Both vote on queries that reference both datasets.
 
 ### Working Directory
 
@@ -96,8 +85,6 @@ demos/analytics-using-managedcleanroom/
 ---
 
 ## Step 01: Prerequisites & Authentication `[ALL]`
-
-> Install tools, generate MSAL tokens, and configure shared variables in each terminal.
 
 ### 1.1 Requirements
 
@@ -112,79 +99,42 @@ demos/analytics-using-managedcleanroom/
 
 ### 1.2 Azure Subscription Permissions
 
-Each persona needs specific RBAC roles on their subscription. The scripts assign
-resource-scoped roles automatically, but the **logged-in user** must have sufficient
-subscription-level permissions to create resources and assign roles in the first place.
-
-#### Owner (T1) — MSFT subscription
-
-The Owner creates the collaboration ARM resource. Required permissions:
-
-| Permission | Why |
-|---|---|
-| `Contributor` on `$collabRg` | Create/manage the `Private.CleanRoom/Collaborations` resource |
-| `Microsoft.Authorization/roleAssignments/write` | Not required directly — ARM handles role setup internally |
-
-```powershell
-# Verify your access (run in T1)
-az login --tenant "<msft-tenant-id>"
-az account set --subscription $msftSubscription
-az role assignment list --assignee $(az ad signed-in-user show --query id -o tsv) `
-    --scope "/subscriptions/$msftSubscription/resourceGroups/$collabRg" `
-    --query "[].roleDefinitionName" -o tsv
-# Should include: Contributor or Owner
-```
-
-#### Woodgrove (T2) — Personal subscription
-
-Woodgrove provisions storage, key vault, managed identity, and assigns RBAC roles on them.
+Each collaborator needs these RBAC roles on their **personal subscription**:
 
 | Role | Scope | Why | Assigned by |
 |---|---|---|---|
-| `Contributor` | Subscription or `$woodgroveRg` | Create resource groups, storage accounts, key vaults, managed identities | Pre-existing (you) |
-| `User Access Administrator` | Subscription or `$woodgroveRg` | Assign RBAC roles on resources (storage, KV) to managed identity | Pre-existing (you) |
+| `Contributor` | Subscription or RG | Create resource groups, storage accounts, key vaults, managed identities | Pre-existing (you) |
+| `User Access Administrator` | Subscription or RG | Assign RBAC roles on resources to managed identity | Pre-existing (you) |
 | `Storage Blob Data Contributor` | Storage account | Upload data, manage containers | Script `04-prepare-resources.ps1` |
 | `Key Vault Crypto Officer` | Key vault | Import KEKs (CPK mode) | Script `04-prepare-resources.ps1` |
 | `Key Vault Secrets Officer` | Key vault | Store wrapped DEKs (CPK mode) | Script `04-prepare-resources.ps1` |
-| `Storage Blob Data Owner` | Storage account (on MI) | Cleanroom accesses storage at runtime via MI | Script `07-grant-access.ps1` |
-| `Key Vault Crypto User` | Key vault (on MI, CPK only) | Cleanroom unwraps KEK via SKR at runtime | Script `07-grant-access.ps1` |
-| `Key Vault Secrets User` | Key vault (on MI, CPK only) | Cleanroom reads wrapped DEK at runtime | Script `07-grant-access.ps1` |
+| `Storage Blob Data Owner` | Storage account (on MI) | Cleanroom accesses storage at runtime | Script `07-grant-access.ps1` |
+| `Key Vault Crypto User` | Key vault (on MI, CPK only) | Cleanroom unwraps KEK via SKR | Script `07-grant-access.ps1` |
+| `Key Vault Secrets User` | Key vault (on MI, CPK only) | Cleanroom reads wrapped DEK | Script `07-grant-access.ps1` |
+
+The **Owner (T1)** needs `Contributor` on the MSFT subscription's `$collabRg`.
 
 ```powershell
-# Verify your access (run in T2)
-az login --tenant $personalTenantId
-az account set --subscription $personalSubscription
-
-# Check subscription-level roles
+# Verify your access (run in each collaborator terminal)
 az role assignment list --assignee $(az ad signed-in-user show --query id -o tsv) `
     --scope "/subscriptions/$personalSubscription" `
     --query "[].roleDefinitionName" -o tsv
 # Should include: Contributor AND User Access Administrator (or Owner which includes both)
-
-# If missing, request these roles (requires a subscription admin):
-# az role assignment create --role "Contributor" --assignee "<your-object-id>" --scope "/subscriptions/$personalSubscription"
-# az role assignment create --role "User Access Administrator" --assignee "<your-object-id>" --scope "/subscriptions/$personalSubscription"
 ```
 
-#### Northwind (T3) — Personal subscription _(multi-collaborator only)_
-
-Same roles as Woodgrove above, scoped to `$northwindRg` and Northwind's resources.
-
-> **Minimum viable permissions**: If you cannot get subscription-level `Owner` or
-> `Contributor` + `User Access Administrator`, you can scope them to just the resource
-> group. Create the RG first, then assign roles on it:
+> **Minimum viable permissions**: Scope roles to just the resource group instead of subscription:
 > ```powershell
-> az group create --name $woodgroveRg --location westus
-> az role assignment create --role "Contributor" --assignee "<your-oid>" --scope "/subscriptions/$personalSubscription/resourceGroups/$woodgroveRg"
-> az role assignment create --role "User Access Administrator" --assignee "<your-oid>" --scope "/subscriptions/$personalSubscription/resourceGroups/$woodgroveRg"
+> az group create --name $personaRg --location westus
+> az role assignment create --role "Contributor" --assignee "<your-oid>" --scope "/subscriptions/$personalSubscription/resourceGroups/$personaRg"
+> az role assignment create --role "User Access Administrator" --assignee "<your-oid>" --scope "/subscriptions/$personalSubscription/resourceGroups/$personaRg"
 > ```
 
-### 1.3 Shared Variables (set in ALL terminals)
+### 1.3 Global Variables (set in ALL terminals)
 
 ```powershell
 # --- Mode flags ---
-$ApiMode = "cli"           # "cli" or "rest"
-$EncryptionMode = "SSE"    # "SSE" or "CPK"
+$ApiMode = "cli"
+$EncryptionMode = "SSE"
 
 # --- Endpoints ---
 $frontend = "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net"
@@ -192,96 +142,85 @@ $armEndpoint = "https://eastus2euap.management.azure.com"
 $armApiVersion = "2026-03-31-preview"
 
 # --- Subscriptions ---
-$msftSubscription = "<msft-subscription-id>"        # Hosts the collaboration ARM resource
-$personalSubscription = "<personal-subscription-id>" # Hosts storage, KV, MI resources
+$msftSubscription = "<msft-subscription-id>"
+$personalSubscription = "<personal-subscription-id>"
 $personalTenantId = "<personal-tenant-id>"
 
 # --- Collaboration ---
 $collabName = "<collaboration-name>"
-$collabRg = "<collaboration-resource-group>"         # In the MSFT subscription
-
-# --- Resource groups (in personal subscription) ---
-$woodgroveRg = "cr-e2e-woodgrove-rg"
-$northwindRg = "cr-e2e-northwind-rg"    # Multi-collaborator only
+$collabRg = "<collaboration-resource-group>"
 
 # --- OIDC storage account ---
 # MSFT tenant only: use the pre-provisioned whitelisted SA
 $oidcStorageAccount = "cleanroomoidc"
-# All other tenants: leave empty — the script creates a new SA automatically
+# All other tenants: leave empty — script creates a new SA automatically
 # $oidcStorageAccount = ""
 ```
 
-### 1.4 Generate MSAL Tokens
+### 1.4 Per-Persona Variables (set in EACH collaborator terminal)
+
+Each collaborator sets these to **their own values**. All subsequent commands use these
+generic names — the commands are identical across terminals.
 
 #### Terminal T2 (Woodgrove)
 
 ```powershell
-$token = Get-MsalToken -ClientId "8a3849c1-81c5-4d62-b83e-3bb2bb11251a" `
-    -TenantId "common" -Scopes "User.Read" -DeviceCode
-$token.IdToken | Out-File -FilePath "/tmp/msal-idtoken-woodgrove.txt" -NoNewline
-$woodgroveTokenFile = "/tmp/msal-idtoken-woodgrove.txt"
+$persona = "woodgrove"
+$personaRg = "cr-e2e-woodgrove-rg"
+$personaEmail = "<woodgrove-email>"
 ```
-
-Sign in with your Microsoft account when prompted.
 
 #### Terminal T3 (Northwind) — _multi-collaborator only_
 
 ```powershell
-$token = Get-MsalToken -ClientId "8a3849c1-81c5-4d62-b83e-3bb2bb11251a" `
-    -TenantId "common" -Scopes "User.Read" -DeviceCode
-$token.IdToken | Out-File -FilePath "/tmp/msal-idtoken-northwind.txt" -NoNewline
-$northwindTokenFile = "/tmp/msal-idtoken-northwind.txt"
+$persona = "northwind"
+$personaRg = "cr-e2e-northwind-rg"
+$personaEmail = "<northwind-email>"
 ```
 
-Sign in with the **Northwind** Microsoft account when prompted.
-
-#### Extract JWT `oid`
-
-> **CRITICAL**: You need the `oid` claim from each collaborator's JWT. This is used for
-> federated credentials in Step 05. See [Appendix A](#appendix-a-federated-credential-subject-reference)
-> for why this matters.
+### 1.5 Generate MSAL Token (each collaborator terminal)
 
 ```powershell
-# Run in T2 (and T3 for multi-collaborator)
-$tokenFile = $woodgroveTokenFile    # or $northwindTokenFile in T3
-$tokenB64 = (Get-Content $tokenFile -Raw).Split('.')[1]
+$token = Get-MsalToken -ClientId "8a3849c1-81c5-4d62-b83e-3bb2bb11251a" `
+    -TenantId "common" -Scopes "User.Read" -DeviceCode
+$token.IdToken | Out-File -FilePath "/tmp/msal-idtoken-$persona.txt" -NoNewline
+$personaTokenFile = "/tmp/msal-idtoken-$persona.txt"
+```
+
+Sign in with **your** Microsoft account when prompted.
+
+### 1.6 Extract JWT `oid` (each collaborator terminal)
+
+> **CRITICAL**: You need the `oid` claim from your JWT. This is used for federated
+> credentials in Step 05. See [Appendix A](#appendix-a-federated-credential-subject-reference).
+
+```powershell
+$tokenB64 = (Get-Content $personaTokenFile -Raw).Split('.')[1]
 $padLen = (4 - $tokenB64.Length % 4) % 4
 $padded = $tokenB64 + ('=' * $padLen)
 $claims = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($padded)) | ConvertFrom-Json
-$myOid = $claims.oid
-Write-Host "JWT oid: $myOid"
-```
-
-```powershell
-# T2 (Woodgrove)
-$woodgroveOid = "<oid-from-above>"
-
-# T3 (Northwind) — multi-collaborator only
-# $northwindOid = "<oid-from-northwind-token>"
+$personaOid = $claims.oid
+Write-Host "JWT oid: $personaOid"
 ```
 
 > For MSA (personal Microsoft accounts), the OID typically starts with `00000000-0000-0000-`.
 > This is **different** from `az ad signed-in-user show --query id` — always use the JWT `oid`.
 
-### 1.5 Configure CLI Extension (CLI mode only)
+### 1.7 Configure CLI Extension (CLI mode only)
 
 ```powershell
-az managedcleanroom frontend configure `
-    --endpoint $frontend
+az managedcleanroom frontend configure --endpoint $frontend
 ```
 
-### 1.6 Token Lifetime
+### 1.8 Token Lifetime
 
-MSAL tokens last ~24 hours. If a token expires mid-flow, regenerate it (repeat 1.4).
+MSAL tokens last ~24 hours. If a token expires mid-flow, regenerate it (repeat 1.5).
 
 ---
 
 ## Step 02: Create Collaboration `[OWNER]`
 
 > **Terminal: T1 (Owner)**
->
-> Creates the collaboration ARM resource and enables the analytics workload.
-> Requires access to the MSFT subscription.
 
 ### 2.1 Login & Create
 
@@ -289,7 +228,6 @@ MSAL tokens last ~24 hours. If a token expires mid-flow, regenerate it (repeat 1
 az login --tenant "<msft-tenant-id>"
 az account set --subscription $msftSubscription
 
-# Create collaboration
 az rest --method PUT `
     --url "$armEndpoint/subscriptions/$msftSubscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName?api-version=$armApiVersion" `
     --resource "https://management.azure.com/" `
@@ -306,8 +244,7 @@ az rest --method PUT `
     }"
 ```
 
-**Expected**: 201 Created or 200 OK with `provisioningState: "Succeeded"`.
-May return 202 Accepted — poll the `Location` header (2-5 minutes).
+**Expected**: 201 Created or 200 OK. May return 202 — poll the `Location` header (2-5 min).
 
 ### 2.2 Enable Analytics Workload
 
@@ -325,17 +262,15 @@ az rest --method POST `
 ### 2.3 Get Frontend UUID
 
 > The ARM `properties.collaborationId` field is `null` (known bug).
-> Retrieve the frontend UUID via the frontend API.
 
 ```powershell
-# Get the frontend endpoint
 $collabShow = az rest --method GET `
     --url "$armEndpoint/subscriptions/$msftSubscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName?api-version=$armApiVersion" `
     --resource "https://management.azure.com/" | ConvertFrom-Json
 
 $frontendEndpoint = $collabShow.properties.workloads[0].endpoint
 
-# Get the frontend UUID (need an MSAL token)
+# Get frontend UUID (use any collaborator's MSAL token)
 $env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content "/tmp/msal-idtoken-woodgrove.txt" -Raw
 $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 $collabs = az managedcleanroom frontend collaboration list -o json | ConvertFrom-Json
@@ -348,64 +283,45 @@ Write-Host "Collaboration UUID: $collabId"
 
 ---
 
-## Step 03: Add Collaborators & Accept Invitations `[OWNER → WOODGROVE]`
+## Step 03: Add Collaborators & Accept Invitations `[OWNER → EACH COLLABORATOR]`
 
 ### 3.1 Add Collaborators — Terminal T1 (Owner)
 
-```powershell
-# Add Woodgrove (required)
-az rest --method POST `
-    --url "$armEndpoint/subscriptions/$msftSubscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName/addCollaborator?api-version=$armApiVersion" `
-    --resource "https://management.azure.com/" `
-    --body '{"email": "<woodgrove-email>"}'
-```
+Repeat for each collaborator email:
 
-**Multi-collaborator only** — add Northwind as a second collaborator:
 ```powershell
 az rest --method POST `
     --url "$armEndpoint/subscriptions/$msftSubscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName/addCollaborator?api-version=$armApiVersion" `
     --resource "https://management.azure.com/" `
-    --body '{"email": "<northwind-email>"}'
+    --body "{`"email`": `"<collaborator-email>`"}"
 ```
 
 **Expected**: 202 Accepted for each.
 
-### 3.2 Accept Invitation — Terminal T2 (Woodgrove)
+### 3.2 Accept Invitation — Each Collaborator Terminal
 
 ```powershell
-$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $woodgroveTokenFile -Raw
+$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
 $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 
 az managedcleanroom frontend invitation accept `
     --collaboration-id $collabId
 ```
 
-### 3.3 Accept Invitation — Terminal T3 (Northwind) — _multi-collaborator only_
-
+**Verify** (any terminal):
 ```powershell
-$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $northwindTokenFile -Raw
-$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
-
-az managedcleanroom frontend invitation accept `
-    --collaboration-id $collabId
-```
-
-**Verify** (either terminal):
-```powershell
-az managedcleanroom frontend show `
-    --collaboration-id $collabId -o json
+az managedcleanroom frontend show --collaboration-id $collabId -o json
 ```
 Should show `"status": "Finalized"` once all invitations are accepted.
 
 ---
 
-## Step 04: Resource Provisioning `[WOODGROVE]`
+## Step 04: Resource Provisioning `[EACH COLLABORATOR]`
 
-> **Terminal: T2 (Woodgrove)**
+> Run these commands in **each collaborator terminal**. The commands are identical —
+> only the `$persona*` variables differ.
 >
-> Creates storage accounts, key vaults, managed identities, and uploads data.
->
-> **Multi-collaborator**: Northwind also runs these commands in T3 with their own resource group.
+> In multi-collaborator mode, terminals run in parallel (independent resource groups).
 
 ### 4.1 Login
 
@@ -416,56 +332,28 @@ az account set --subscription $personalSubscription
 
 ### 4.2 Prepare Resources
 
-#### Terminal T2 (Woodgrove)
-
 ```powershell
-./scripts/04-prepare-resources.ps1 -resourceGroup $woodgroveRg -persona woodgrove
+./scripts/04-prepare-resources.ps1 -resourceGroup $personaRg -persona $persona
 ```
 
-#### Terminal T3 (Northwind) — _multi-collaborator only_
-
-```powershell
-./scripts/04-prepare-resources.ps1 -resourceGroup $northwindRg -persona northwind
-```
-
-**Verify**: `generated/<rg>/names.generated.ps1` and `resources.generated.json` exist.
+**Verify**: `generated/$personaRg/names.generated.ps1` and `resources.generated.json` exist.
 
 ### 4.3 Upload Data
 
 > Data is **downloaded at runtime** from the `Azure-Samples/Synapse` GitHub repo (Twitter CSV).
-> The `-dataDir` is created automatically.
 
 #### SSE Mode
 
-##### Terminal T2 (Woodgrove)
-
 ```powershell
-./scripts/05-prepare-data-sse.ps1 -resourceGroup $woodgroveRg -persona woodgrove `
-    -dataDir "./generated/datasource/woodgrove"
-```
-
-##### Terminal T3 (Northwind) — _multi-collaborator only_
-
-```powershell
-./scripts/05-prepare-data-sse.ps1 -resourceGroup $northwindRg -persona northwind `
-    -dataDir "./generated/datasource/northwind"
+./scripts/05-prepare-data-sse.ps1 -resourceGroup $personaRg -persona $persona `
+    -dataDir "./generated/datasource/$persona"
 ```
 
 #### CPK Mode
 
-##### Terminal T2 (Woodgrove)
-
 ```powershell
-./scripts/05-prepare-data-cpk.ps1 -resourceGroup $woodgroveRg -persona woodgrove `
-    -dataDir "./generated/datasource/woodgrove/input/csv" `
-    -datasetSuffix "-cpk"
-```
-
-##### Terminal T3 (Northwind) — _multi-collaborator only_
-
-```powershell
-./scripts/05-prepare-data-cpk.ps1 -resourceGroup $northwindRg -persona northwind `
-    -dataDir "./generated/datasource/northwind/input/csv" `
+./scripts/05-prepare-data-cpk.ps1 -resourceGroup $personaRg -persona $persona `
+    -dataDir "./generated/datasource/$persona/input/csv" `
     -datasetSuffix "-cpk"
 ```
 
@@ -473,35 +361,20 @@ az account set --subscription $personalSubscription
 > and saves DEK files to `generated/datastores/keys/`.
 > See [Appendix C: CPK Deep Dive](#appendix-c-cpk-deep-dive) for details.
 
-**Verify**: `generated/datastores/<persona>-datastore-metadata.json` exists.
+**Verify**: `generated/datastores/$persona-datastore-metadata.json` exists.
 
 ---
 
-## Step 05: OIDC Identity & Federated Credentials `[WOODGROVE]`
+## Step 05: OIDC Identity & Federated Credentials `[EACH COLLABORATOR]`
 
-> **Terminal: T2 (Woodgrove)**
->
-> Sets up OIDC issuer documents and creates federated credentials so the Spark workload
-> can authenticate as each collaborator's managed identity at runtime.
->
-> **Multi-collaborator**: Northwind also runs these commands in T3.
+> Run these commands in **each collaborator terminal**.
 
 ### 5.1 Setup OIDC Issuer
-
-#### Terminal T2 (Woodgrove)
 
 ```powershell
 $oidcParam = if ($oidcStorageAccount) { @("-OidcStorageAccount", $oidcStorageAccount) } else { @() }
 
-./scripts/06-setup-identity.ps1 -resourceGroup $woodgroveRg -persona woodgrove `
-    -collaborationId $collabId -frontendEndpoint $frontend `
-    -ApiMode $ApiMode @oidcParam
-```
-
-#### Terminal T3 (Northwind) — _multi-collaborator only_
-
-```powershell
-./scripts/06-setup-identity.ps1 -resourceGroup $northwindRg -persona northwind `
+./scripts/06-setup-identity.ps1 -resourceGroup $personaRg -persona $persona `
     -collaborationId $collabId -frontendEndpoint $frontend `
     -ApiMode $ApiMode @oidcParam
 ```
@@ -511,117 +384,70 @@ $oidcParam = if ($oidcStorageAccount) { @("-OidcStorageAccount", $oidcStorageAcc
 > "Issuer validation failed". Open a separate terminal, `az login --tenant <msft-tenant-id>`,
 > and run the OIDC upload from there.
 >
-> **All other tenants**: Omit `-OidcStorageAccount` (leave `$oidcStorageAccount` empty).
-> The script automatically creates a new storage account with static website enabled in
-> the collaborator's resource group and uploads the OIDC documents there.
+> **All other tenants**: Omit `-OidcStorageAccount`. The script automatically creates a new
+> storage account with static website enabled in the collaborator's resource group.
 
 **Verify**:
 ```powershell
-Get-Content "generated/$woodgroveRg/issuer-url.txt"
-# MSFT tenant: https://cleanroomoidc.z22.web.core.windows.net/<collab-uuid>
-# Other tenants: https://<auto-created-sa>.z22.web.core.windows.net/<collab-uuid>
+Get-Content "generated/$personaRg/issuer-url.txt"
 ```
 
 ### 5.2 Grant Access & Create Federated Credentials
 
-> **CRITICAL**: `-userId` must be the **JWT `oid`** from Step 01.4 — NOT a persona name.
-> See [Appendix A](#appendix-a-federated-credential-subject-reference) for details.
-
-#### Terminal T2 (Woodgrove)
+> **CRITICAL**: `-userId` must be the **JWT `oid`** from Step 01.6 — NOT a persona name.
+> See [Appendix A](#appendix-a-federated-credential-subject-reference).
 
 ```powershell
 $setupKV = if ($EncryptionMode -eq "CPK") { "-setupKeyVault" } else { "" }
 
-./scripts/07-grant-access.ps1 -resourceGroup $woodgroveRg `
+./scripts/07-grant-access.ps1 -resourceGroup $personaRg `
     -collaborationId $collabId -contractId "Analytics" `
-    -userId $woodgroveOid $setupKV
+    -userId $personaOid $setupKV
 ```
 
-#### Terminal T3 (Northwind) — _multi-collaborator only_
-
-```powershell
-$setupKV = if ($EncryptionMode -eq "CPK") { "-setupKeyVault" } else { "" }
-
-./scripts/07-grant-access.ps1 -resourceGroup $northwindRg `
-    -collaborationId $collabId -contractId "Analytics" `
-    -userId $northwindOid $setupKV
-```
-
-> **CRITICAL**: `contractId` must be `"Analytics"` (capital A). The federated credential
-> subject is `Analytics-{oid}`. Lowercase causes silent token exchange failures at runtime.
+> **CRITICAL**: `contractId` must be `"Analytics"` (capital A). Lowercase causes silent
+> token exchange failures at runtime.
 >
-> **CPK**: Pass `-setupKeyVault` to grant the managed identity `Key Vault Crypto User` and
+> **CPK**: `-setupKeyVault` grants the managed identity `Key Vault Crypto User` and
 > `Key Vault Secrets User` roles needed for KEK release and DEK unwrapping.
 
 **Wait**: RBAC propagation takes 60-120 seconds. The script waits and retries.
 
 **Verify**:
 ```powershell
-. "generated/$woodgroveRg/names.generated.ps1"
+. "generated/$personaRg/names.generated.ps1"
 az identity federated-credential list `
     --identity-name $MANAGED_IDENTITY_NAME `
-    --resource-group $woodgroveRg -o table
-
+    --resource-group $personaRg -o table
 # Subject should be: Analytics-<jwt-oid>
-# NOT: Analytics-woodgrove or Analytics-<graph-api-oid>
 ```
 
 ---
 
-## Step 06: Publish Datasets `[WOODGROVE]`
+## Step 06: Publish Datasets `[EACH COLLABORATOR]`
 
-> **Terminal: T2 (Woodgrove)**
+> Run in **each collaborator terminal**.
 >
-> Woodgrove publishes:
-> - 1 input dataset (read) — `woodgrove-input-csv`
-> - 1 output dataset (write) — `woodgrove-output-csv`
->
-> **Multi-collaborator**: Northwind also publishes their input dataset in T3.
+> - Woodgrove publishes: 1 input dataset (read) + 1 output dataset (write)
+> - Northwind publishes: 1 input dataset (read) only
 
 ### SSE Mode
 
-#### Terminal T2 (Woodgrove)
-
 ```powershell
 ./scripts/08-publish-dataset-sse.ps1 -collaborationId $collabId `
-    -resourceGroup $woodgroveRg -persona woodgrove `
+    -resourceGroup $personaRg -persona $persona `
     -frontendEndpoint $frontend `
-    -TokenFile $woodgroveTokenFile `
-    -ApiMode $ApiMode
-```
-
-#### Terminal T3 (Northwind) — _multi-collaborator only_
-
-```powershell
-./scripts/08-publish-dataset-sse.ps1 -collaborationId $collabId `
-    -resourceGroup $northwindRg -persona northwind `
-    -frontendEndpoint $frontend `
-    -TokenFile $northwindTokenFile `
+    -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
 ```
 
 ### CPK Mode
 
-> CPK publish is a longer step: publishes dataset metadata, then creates per-dataset KEKs,
-> wraps DEKs, stores secrets, and enables consent. See [Appendix C](#appendix-c-cpk-deep-dive).
-
-#### Terminal T2 (Woodgrove)
-
 ```powershell
 ./scripts/08-publish-dataset-cpk.ps1 -collaborationId $collabId `
-    -resourceGroup $woodgroveRg -persona woodgrove `
+    -resourceGroup $personaRg -persona $persona `
     -frontendEndpoint $frontend `
-    -TokenFile $woodgroveTokenFile `
-    -ApiMode $ApiMode
-```
-
-#### Terminal T3 (Northwind) — _multi-collaborator only_
-
-```powershell
-./scripts/08-publish-dataset-cpk.ps1 -collaborationId $collabId `
-    -resourceGroup $northwindRg -persona northwind `
-    -frontendEndpoint $frontend `
-    -TokenFile $northwindTokenFile `
+    -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
 ```
 
@@ -633,57 +459,42 @@ az identity federated-credential list `
 
 **Verify**:
 ```powershell
-$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $woodgroveTokenFile -Raw
+$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
 $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 az managedcleanroom frontend analytics dataset show `
     --collaboration-id $collabId `
-    --document-id "woodgrove-input-csv" -o json
+    --document-id "$persona-input-csv" -o json
 ```
 Should show `"state": "Accepted"`.
 
 ---
 
-## Step 07: CPK Key Management `[WOODGROVE]` _(CPK only)_
+## Step 07: CPK Key Management `[EACH COLLABORATOR]` _(CPK only)_
 
 > **Skip this step for SSE mode.**
 >
-> For CPK, verify that the key management performed in Step 06 completed correctly.
-> The `08-publish-dataset-cpk.ps1` script handles KEK creation, DEK wrapping, and
-> consent automatically. This step is for **validation**.
-
-### 7.1 Verify KEK Properties
+> Verify that the key management performed in Step 06 completed correctly.
 
 ```powershell
-. "generated/$woodgroveRg/names.generated.ps1"
+. "generated/$personaRg/names.generated.ps1"
 
+# Check KEK
 az keyvault key show --vault-name $KEYVAULT_NAME --name "<dataset-name>-kek" `
     --query '{exportable:attributes.exportable, keyType:key.kty, ops:key.keyOps}' -o json
-```
+# Expected: exportable: true, keyType: "RSA-HSM", ops: ["encrypt", "wrapKey"]
 
-**Expected**: `exportable: true`, `keyType: "RSA-HSM"`, `ops: ["encrypt", "wrapKey"]`.
-
-### 7.2 Verify Wrapped DEK Secret
-
-```powershell
+# Check wrapped DEK secret
 az keyvault secret show --vault-name $KEYVAULT_NAME `
     --name "wrapped-<dataset-name>-dek-<kek-name>" `
     --query '{name:name, id:id}' -o json
-```
 
-**Expected**: Secret exists with a base64-encoded value.
-
-### 7.3 Verify Dataset SKR Policy
-
-```powershell
-$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $woodgroveTokenFile -Raw
+# Check published dataset has kek/dek references
+$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
 $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 az managedcleanroom frontend analytics dataset show `
-    --collaboration-id $collabId `
-    --document-id "<dataset-name>" -o json
+    --collaboration-id $collabId --document-id "<dataset-name>" -o json
+# Should include kek.kid, kek.maaUrl, dek.secretId
 ```
-
-Check that the response includes `kek.kid` (Key Vault key URL), `kek.maaUrl` (MAA endpoint),
-and `dek.secretId` (Key Vault secret URL).
 
 > If any verification fails, see [Appendix C: CPK Troubleshooting](#cpk-troubleshooting).
 
@@ -691,13 +502,9 @@ and `dek.secretId` (Key Vault secret URL).
 
 ## Step 08: Publish Query `[WOODGROVE]`
 
-> **Terminal: T2 (Woodgrove)**
->
-> Woodgrove proposes the SQL query.
+> **Terminal: T2 (Woodgrove)** — Woodgrove proposes the SQL query.
 
 ### Single-collaborator query (Woodgrove data only)
-
-The query reads only Woodgrove's input dataset and writes to Woodgrove's output:
 
 ```powershell
 ./scripts/09-publish-query.ps1 -collaborationId $collabId `
@@ -707,13 +514,11 @@ The query reads only Woodgrove's input dataset and writes to Woodgrove's output:
     -consumerInputDataset "woodgrove-input-csv" `
     -outputDataset "woodgrove-output-csv" `
     -frontendEndpoint $frontend `
-    -TokenFile $woodgroveTokenFile `
+    -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
 ```
 
 ### Multi-collaborator query (both datasets) — _multi-collaborator only_
-
-A second query joins Northwind's and Woodgrove's input datasets:
 
 ```powershell
 ./scripts/09-publish-query.ps1 -collaborationId $collabId `
@@ -723,7 +528,7 @@ A second query joins Northwind's and Woodgrove's input datasets:
     -consumerInputDataset "woodgrove-input-csv" `
     -outputDataset "woodgrove-output-csv" `
     -frontendEndpoint $frontend `
-    -TokenFile $woodgroveTokenFile `
+    -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
 ```
 
@@ -734,66 +539,35 @@ The query has 3 segments (in `demos/query/woodgrove/query1/`):
 - **Segment 2** (seq=1): `CREATE OR REPLACE TEMP VIEW consumer_view AS SELECT * FROM consumer_data`
 - **Segment 3** (seq=2): `SELECT author, COUNT(*) ... FROM (... UNION ALL ...) WHERE mentions LIKE '%MikeDoesBigData%' GROUP BY author`
 
-Same-sequence segments run in parallel; higher sequences wait for lower ones.
-
 **Expected**: 204 No Content.
-
-**Verify**:
-```powershell
-$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $woodgroveTokenFile -Raw
-$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
-az managedcleanroom frontend analytics query show `
-    --collaboration-id $collabId --document-id "query1" -o json
-```
-Should show `"state": "Proposed"`.
 
 ---
 
-## Step 09: Approve Query `[WOODGROVE]`
+## Step 09: Approve Query `[EACH COLLABORATOR]`
 
-> **Terminal: T2 (Woodgrove)**
+> **Single-collaborator**: Only Woodgrove votes (one vote → `Accepted`).
 >
-> **Single-collaborator**: Only Woodgrove votes (one vote moves the query to `Accepted`).
->
-> **Multi-collaborator**: Both collaborators must vote on queries that reference their datasets.
-
-### 9.1 Vote — Terminal T2 (Woodgrove)
+> **Multi-collaborator**: Both collaborators must vote on queries that reference their data.
 
 ```powershell
 ./scripts/10-vote-query.ps1 -collaborationId $collabId -queryName "query1" `
     -frontendEndpoint $frontend `
-    -TokenFile $woodgroveTokenFile `
+    -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
 ```
 
-### 9.2 Vote — Terminal T3 (Northwind) — _multi-collaborator only_
-
-> Required for `query2` (which references Northwind's dataset). Not needed for `query1`
-> (Woodgrove-only data).
-
+For `query2` _(multi-collaborator only)_ — **each** collaborator runs:
 ```powershell
 ./scripts/10-vote-query.ps1 -collaborationId $collabId -queryName "query2" `
     -frontendEndpoint $frontend `
-    -TokenFile $northwindTokenFile `
+    -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
 ```
 
-Woodgrove must also vote on `query2`:
-```powershell
-./scripts/10-vote-query.ps1 -collaborationId $collabId -queryName "query2" `
-    -frontendEndpoint $frontend `
-    -TokenFile $woodgroveTokenFile `
-    -ApiMode $ApiMode
-```
-
-**Expected**: 204 No Content for each vote.
-
-> **Consent ordering** (multi-collaborator only): Consent can only be enabled on an
-> `Accepted` query. The query stays `Proposed` until all votes are in. The `10-vote-query.ps1`
-> script enables consent automatically after voting. If the first voter's consent fails
-> (query still `Proposed`), they must re-enable after the last voter's vote.
->
-> **Workaround**: Run the consent enable for **all** collaborators **after** all votes are in.
+> **Consent ordering** (multi-collaborator): Consent can only be enabled on an `Accepted`
+> query. The query stays `Proposed` until all votes are in. The script enables consent
+> automatically after voting. If the first voter's consent fails (query still `Proposed`),
+> re-run after the last voter votes.
 
 **Verify**: Query shows `"state": "Accepted"` with `proposalId` populated.
 
@@ -802,36 +576,27 @@ Woodgrove must also vote on `query2`:
 ## Step 10: Execute Query `[WOODGROVE]`
 
 > **Terminal: T2 (Woodgrove)**
->
-> Submits the Spark SQL query for execution in the confidential AKS cluster.
 
 ```powershell
 ./scripts/11-run-query.ps1 -collaborationId $collabId -queryName "query1" `
     -frontendEndpoint $frontend `
-    -TokenFile $woodgroveTokenFile `
+    -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
 ```
 
-**Expected**: HTTP 200 with `"status": "success"` and a job ID:
-```json
-{"status": "success", "id": "cl-spark-<uuid>"}
-```
+**Expected**: `{"status": "success", "id": "cl-spark-<uuid>"}`
 
-Save the job ID:
 ```powershell
 $jobId = "cl-spark-<uuid>"
 ```
 
-> `"status": "success"` means the run was **accepted for scheduling**, not completed.
-> The Spark job takes **10-20 minutes**.
+> `"status": "success"` means **accepted for scheduling**, not completed. Takes **10-20 min**.
 
 ---
 
 ## Step 11: Monitor Query `[ANY]`
 
-> **Terminal: T2 (Woodgrove)** or any collaborator terminal.
->
-> Poll the run status until completion.
+> Run from any collaborator terminal.
 
 ### 11.1 Real-Time Status
 
@@ -839,12 +604,10 @@ $jobId = "cl-spark-<uuid>"
 ./scripts/13-run-status.ps1 -collaborationId $collabId `
     -jobId $jobId `
     -frontendEndpoint $frontend `
-    -TokenFile $woodgroveTokenFile `
+    -TokenFile $personaTokenFile `
     -ApiMode $ApiMode `
     -poll -pollIntervalSeconds 30
 ```
-
-**State transitions** (typical timeline):
 
 | Time | State | Key Events |
 |---|---|---|
@@ -854,15 +617,14 @@ $jobId = "cl-spark-<uuid>"
 | +10-15 min | `RUNNING` | `QUERY_SEGMENT_EXECUTION_*` |
 | +15-20 min | `COMPLETED` | `QUERY_EXECUTION_COMPLETED`, `SparkDriverCompleted` |
 
-> **`PENDING_RERUN`** is normal — the Spark operator may restart during initial setup.
-> It will transition back to `SUBMITTED` → `RUNNING` automatically.
+> **`PENDING_RERUN`** is normal — transitions to `SUBMITTED` → `RUNNING` automatically.
 
-### 11.2 Audit Events (Real-Time)
+### 11.2 Audit Events
 
 ```powershell
 ./scripts/15-audit-events.ps1 -collaborationId $collabId `
     -frontendEndpoint $frontend `
-    -TokenFile $woodgroveTokenFile `
+    -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
 ```
 
@@ -878,7 +640,7 @@ $jobId = "cl-spark-<uuid>"
 ./scripts/14-run-history.ps1 -collaborationId $collabId `
     -queryName "query1" `
     -frontendEndpoint $frontend `
-    -TokenFile $woodgroveTokenFile `
+    -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
 ```
 
@@ -890,25 +652,23 @@ $jobId = "cl-spark-<uuid>"
     "isSuccessful": true,
     "stats": { "rowsRead": 13872, "rowsWritten": 697 },
     "durationSeconds": 1039
-  },
-  "summary": { "totalRuns": 1, "successfulRuns": 1 }
+  }
 }
 ```
 
-> Returns 404 if no runs have reached terminal state — this is normal during execution.
->
-> **Quirk**: `--document-id` may need the `contractId` value (`Analytics`) instead of
-> the custom query name. If `runhistory list` returns empty for a completed run, try
-> `--document-id Analytics`.
+> Returns 404 if no terminal runs yet. **Quirk**: try `--document-id Analytics` if
+> `runhistory list` returns empty for a completed run.
 
 ### 12.2 Download Output (SSE)
 
 ```powershell
-az storage blob list --account-name "<woodgrove-sa>" `
+. "generated/$personaRg/names.generated.ps1"
+
+az storage blob list --account-name $STORAGE_ACCOUNT_NAME `
     --container-name woodgrove-output `
     --prefix "Analytics/" --auth-mode login -o table
 
-az storage blob download --account-name "<woodgrove-sa>" `
+az storage blob download --account-name $STORAGE_ACCOUNT_NAME `
     --container-name woodgrove-output `
     --name "Analytics/<date>/<runId>/part-00000-<uuid>.csv" `
     --file ./output.csv --auth-mode login
@@ -916,21 +676,17 @@ az storage blob download --account-name "<woodgrove-sa>" `
 Get-Content ./output.csv
 ```
 
-Output path pattern: `Analytics/{date}/{runId}/part-00000-{uuid}.csv`
-
 ### 12.3 Download Output (CPK)
-
-CPK output is encrypted — use `azcopy` with the output DEK:
 
 ```powershell
 ./scripts/12-view-results.ps1 -collaborationId $collabId `
     -queryName "query1" `
     -frontendEndpoint $frontend `
-    -TokenFile $woodgroveTokenFile `
+    -TokenFile $personaTokenFile `
     -ApiMode $ApiMode `
     -DownloadCpkOutput `
     -OutputDekFile "generated/datastores/keys/woodgrove-output-csv-cpk-dek.bin" `
-    -OutputStorageAccount "<woodgrove-sa-name>"
+    -OutputStorageAccount $STORAGE_ACCOUNT_NAME
 ```
 
 > The `--include-pattern "*.csv;*.crc;*_SUCCESS*"` filter is required for HNS-enabled
@@ -968,39 +724,37 @@ For MSA (personal Microsoft) accounts, the JWT `oid` and Graph API object ID are
 
 | Source | Command | Use? |
 |---|---|---|
-| JWT `oid` (correct) | PowerShell decode from Step 01.4 | **YES** |
+| JWT `oid` (correct) | PowerShell decode from Step 01.6 | **YES** |
 | Graph API (wrong) | `az ad signed-in-user show --query id` | **NO** |
 | Dataset `proposerId` | `dataset show` response | **YES** (to verify) |
 
 ### Verification
 
-After publishing a dataset, confirm the stored owner matches your JWT `oid`:
-
 ```powershell
-$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $woodgroveTokenFile -Raw
+$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
 $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 az managedcleanroom frontend analytics dataset show `
     --collaboration-id $collabId `
-    --document-id "woodgrove-input-csv" -o json
-# Check the proposerId field — should match $woodgroveOid
+    --document-id "$persona-input-csv" -o json
+# Check proposerId — should match $personaOid
 ```
-
-The federated credential subject should be `Analytics-<that-proposerId>`.
 
 ### Fixing Wrong Subjects
 
 ```powershell
+. "generated/$personaRg/names.generated.ps1"
+
 # Delete wrong credential
 az identity federated-credential delete `
-    --name "Analytics-woodgrove-federation" `
-    --identity-name "<mi-name>" --resource-group $woodgroveRg --yes
+    --name "Analytics-$persona-federation" `
+    --identity-name $MANAGED_IDENTITY_NAME --resource-group $personaRg --yes
 
 # Create correct credential
 az identity federated-credential create `
-    --name "Analytics-$woodgroveOid-federation" `
-    --identity-name "<mi-name>" --resource-group $woodgroveRg `
-    --issuer "$(Get-Content generated/$woodgroveRg/issuer-url.txt)" `
-    --subject "Analytics-$woodgroveOid" `
+    --name "Analytics-$personaOid-federation" `
+    --identity-name $MANAGED_IDENTITY_NAME --resource-group $personaRg `
+    --issuer "$(Get-Content generated/$personaRg/issuer-url.txt)" `
+    --subject "Analytics-$personaOid" `
     --audiences "api://AzureADTokenExchange"
 ```
 
@@ -1060,7 +814,7 @@ Propagation takes **1-5 minutes**.
 
 **Cause**: Using ARM access token from an MSA guest account (lacks `preferred_username`).
 
-**Fix**: Use MSAL IdTokens (Step 01.4).
+**Fix**: Use MSAL IdTokens (Step 01.5).
 
 ---
 
@@ -1167,7 +921,7 @@ SKR succeeds but data read fails. Re-generate DEK, re-upload, re-wrap, update KV
 
 All `az managedcleanroom frontend` commands require:
 ```powershell
-$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content "/tmp/msal-idtoken.txt" -Raw
+$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
 $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 ```
 
