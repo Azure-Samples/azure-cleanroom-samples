@@ -149,9 +149,6 @@ $armApiVersion = "2026-03-31-preview"
 # --- Collaboration ---
 $collabName = "<collaboration-name>"
 $collabRg = "<collaboration-resource-group>"
-
-# --- Frontend (needed only in Step 02.3 to retrieve $collabId) ---
-$frontend = "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net"
 ```
 
 ### 1.4 Each Collaborator Terminal — Variables
@@ -185,7 +182,6 @@ az group create --name $personaRg --location $location -o none 2>$null
 
 # --- Frontend ---
 $frontend = "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net"
-$collabId = "<uuid-from-step-02>"     # Set after Owner completes Step 02.3
 
 # --- OIDC storage account ---
 # MSFT tenant: use pre-provisioned whitelisted SA
@@ -278,33 +274,8 @@ az rest --method POST `
 
 **Expected**: 202 Accepted. Poll until complete (**5-15 minutes**).
 
-### 2.4 Get Frontend UUID
-
-> The ARM `properties.collaborationId` field is `null` (known bug).
-> The Owner needs the `managedcleanroom` CLI extension and a collaborator's MSAL token
-> to retrieve the frontend UUID.
-
-```powershell
-$collabShow = az rest --method GET `
-    --url "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName?api-version=$armApiVersion" `
-    --resource "https://management.azure.com/" | ConvertFrom-Json
-
-$frontendEndpoint = $collabShow.properties.workloads[0].endpoint
-
-# Configure CLI extension (needed for frontend commands)
-az managedcleanroom frontend configure --endpoint $frontend
-
-# Use any collaborator's MSAL token (collaborator must have completed Step 1.5 first)
-$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content "/tmp/msal-idtoken-woodgrove.txt" -Raw
-$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
-$collabs = az managedcleanroom frontend collaboration list -o json | ConvertFrom-Json
-$collabId = ($collabs | Where-Object { $_.name -eq $collabName }).id
-Write-Host "Collaboration UUID: $collabId"
-```
-
-> **Share `$collabId` with collaborator terminals.** Each collaborator sets
-> `$collabId = "<uuid>"` in their terminal (already included in their variable block
-> at Step 1.4 as a placeholder).
+> After this step, the Owner is done with setup. Remaining ARM operations (add collaborators)
+> are in Step 03. The Owner does NOT need the `managedcleanroom` CLI extension or frontend access.
 
 ---
 
@@ -323,17 +294,31 @@ az rest --method POST `
 
 **Expected**: 202 Accepted for each.
 
-### 3.2 Accept Invitation — Each Collaborator Terminal
+### 3.2 Get Collaboration UUID — Each Collaborator Terminal
+
+> The ARM `properties.collaborationId` field is `null` (known bug). Each collaborator
+> discovers the frontend UUID themselves via the frontend API.
 
 ```powershell
 $env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
 $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 
+$collabs = az managedcleanroom frontend collaboration list -o json | ConvertFrom-Json
+$collabId = ($collabs | Where-Object { $_.name -match "<collaboration-name>" }).id
+Write-Host "Collaboration UUID: $collabId"
+```
+
+> Replace `<collaboration-name>` with a substring that matches your collaboration. The
+> collaborator can see the collaboration because they were added in Step 3.1.
+
+### 3.3 Accept Invitation — Each Collaborator Terminal
+
+```powershell
 az managedcleanroom frontend invitation accept `
     --collaboration-id $collabId
 ```
 
-**Verify** (any terminal):
+**Verify** (any collaborator terminal):
 ```powershell
 az managedcleanroom frontend show --collaboration-id $collabId -o json
 ```
@@ -1006,7 +991,7 @@ in a `try/finally` block and filters `ErrorRecord` objects from the `2>&1` captu
 ### 2. ARM `collaborationId` field is null
 
 `az rest GET .../Collaborations/<name>` returns `properties.collaborationId: null`.
-**Workaround**: Use `az managedcleanroom frontend collaboration list` (Step 02.3).
+**Workaround**: Use `az managedcleanroom frontend collaboration list` (Step 03.2).
 
 ### 3. `--consortium-type` and `--user-identity` not valid CLI parameters
 
