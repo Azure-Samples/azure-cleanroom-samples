@@ -93,9 +93,10 @@ demos/analytics-using-managedcleanroom/
 | Azure CLI | 2.75.0+ |
 | `managedcleanroom` extension | `az extension add --name managedcleanroom` (v1.0.0b5+) |
 | PowerShell | 7.x+ |
+| Python 3 | 3.10+ — `python --version` (Windows) or `python3 --version` (Linux/macOS) |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
-| azcopy | v10+ (CPK mode only) |
-| Python 3 + `cryptography` | CPK mode only — `pip install cryptography` |
+| azcopy | v10+ (CPK mode only) — Windows: `winget install Microsoft.AzCopy` / Linux: `curl -sL https://aka.ms/downloadazcopy-v10-linux \| tar xz --strip-components=1 -C /usr/local/bin` |
+| `cryptography` package | CPK mode only — `pip install cryptography` |
 
 ### 1.2 Azure Subscription Permissions
 
@@ -171,6 +172,10 @@ $location = "westus"
 # --- Mode flags ---
 $ApiMode = "cli"           # "cli" or "rest"
 $EncryptionMode = "SSE"    # "SSE" or "CPK"
+
+# --- Derived names (auto-adjust for encryption mode) ---
+$suffix = if ($EncryptionMode -eq "CPK") { "-cpk" } else { "" }
+$queryName = "query1$suffix"
 
 # --- Persona (set to YOUR persona) ---
 $persona = "woodgrove"                # T2: "woodgrove"  |  T3: "northwind"
@@ -399,7 +404,7 @@ if ($persona -eq "woodgrove") {
 
 ```powershell
 ./scripts/05-prepare-data-cpk.ps1 -resourceGroup $personaRg -persona $persona `
-    -dataDir "./generated/datasource/$persona/input/csv" `
+    -dataDir "./generated/datasource/$persona/csv" `
     -datasetSuffix "-cpk"
 ```
 
@@ -450,17 +455,15 @@ Get-Content "generated/$personaRg/issuer-url.txt"
 > See [Appendix A](#appendix-a-federated-credential-subject-reference).
 
 ```powershell
-$setupKVParam = if ($EncryptionMode -eq "CPK") { @{"-setupKeyVault" = $true} } else { @{} }
-
 ./scripts/07-grant-access.ps1 -resourceGroup $personaRg `
     -collaborationId $collabId -contractId "Analytics" `
-    -userId $personaOid @setupKVParam
+    -userId $personaOid -EncryptionMode $EncryptionMode
 ```
 
 > **CRITICAL**: `contractId` must be `"Analytics"` (capital A). Lowercase causes silent
 > token exchange failures at runtime.
 >
-> **CPK**: `-setupKeyVault` grants the managed identity `Key Vault Crypto User` and
+> **CPK**: `-EncryptionMode CPK` automatically grants the managed identity `Key Vault Crypto Officer` and
 > `Key Vault Secrets User` roles needed for KEK release and DEK unwrapping.
 
 **Wait**: RBAC propagation takes 60-120 seconds. The script waits and retries.
@@ -515,7 +518,7 @@ $env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
 $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 az managedcleanroom frontend analytics dataset show `
     --collaboration-id $collabId `
-    --document-id "$persona-input-csv" -o json
+    --document-id "$persona-input-csv$suffix" -o json
 ```
 Should show `"state": "Accepted"`.
 
@@ -530,21 +533,24 @@ Should show `"state": "Accepted"`.
 ```powershell
 . "generated/$personaRg/names.generated.ps1"
 
+$datasetName = "$persona-input-csv-cpk"   # e.g., "woodgrove-input-csv-cpk"
+$kekName = "$datasetName-kek"
+
 # Check KEK
-az keyvault key show --vault-name $KEYVAULT_NAME --name "<dataset-name>-kek" `
+az keyvault key show --vault-name $KEYVAULT_NAME --name $kekName `
     --query '{exportable:attributes.exportable, keyType:key.kty, ops:key.keyOps}' -o json
 # Expected: exportable: true, keyType: "RSA-HSM", ops: ["encrypt", "wrapKey"]
 
 # Check wrapped DEK secret
 az keyvault secret show --vault-name $KEYVAULT_NAME `
-    --name "wrapped-<dataset-name>-dek-<kek-name>" `
+    --name "wrapped-$datasetName-dek-$kekName" `
     --query '{name:name, id:id}' -o json
 
 # Check published dataset has kek/dek references
 $env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
 $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 az managedcleanroom frontend analytics dataset show `
-    --collaboration-id $collabId --document-id "<dataset-name>" -o json
+    --collaboration-id $collabId --document-id $datasetName -o json
 # Should include kek.kid, kek.maaUrl, dek.secretId
 ```
 
@@ -555,16 +561,18 @@ az managedcleanroom frontend analytics dataset show `
 ## Step 08: Publish Query `[WOODGROVE]`
 
 > **Terminal: T2 (Woodgrove)** — Woodgrove proposes the SQL query.
+>
+> `$suffix` and `$queryName` were set in Step 1.4 based on `$EncryptionMode`.
 
 ### Single-collaborator query (Woodgrove data only)
 
 ```powershell
 ./scripts/09-publish-query.ps1 -collaborationId $collabId `
-    -queryName "query1" `
+    -queryName $queryName `
     -queryDir "./demos/query/woodgrove/query1" `
-    -publisherInputDataset "woodgrove-input-csv" `
-    -consumerInputDataset "woodgrove-input-csv" `
-    -outputDataset "woodgrove-output-csv" `
+    -publisherInputDataset "woodgrove-input-csv$suffix" `
+    -consumerInputDataset "woodgrove-input-csv$suffix" `
+    -outputDataset "woodgrove-output-csv$suffix" `
     -frontendEndpoint $frontend `
     -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
@@ -574,17 +582,15 @@ az managedcleanroom frontend analytics dataset show `
 
 ```powershell
 ./scripts/09-publish-query.ps1 -collaborationId $collabId `
-    -queryName "query2" `
+    -queryName "query2$suffix" `
     -queryDir "./demos/query/woodgrove/query1" `
-    -publisherInputDataset "northwind-input-csv" `
-    -consumerInputDataset "woodgrove-input-csv" `
-    -outputDataset "woodgrove-output-csv" `
+    -publisherInputDataset "northwind-input-csv$suffix" `
+    -consumerInputDataset "woodgrove-input-csv$suffix" `
+    -outputDataset "woodgrove-output-csv$suffix" `
     -frontendEndpoint $frontend `
     -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
 ```
-
-> **CPK**: Use CPK dataset names (e.g., `northwind-input-csv-cpk`, `woodgrove-output-csv-cpk`).
 
 The query has 3 segments (in `demos/query/woodgrove/query1/`):
 - **Segment 1** (seq=1): `CREATE OR REPLACE TEMP VIEW publisher_view AS SELECT * FROM publisher_data`
@@ -602,7 +608,7 @@ The query has 3 segments (in `demos/query/woodgrove/query1/`):
 > **Multi-collaborator**: Both collaborators must vote on queries that reference their data.
 
 ```powershell
-./scripts/10-vote-query.ps1 -collaborationId $collabId -queryName "query1" `
+./scripts/10-vote-query.ps1 -collaborationId $collabId -queryName $queryName `
     -frontendEndpoint $frontend `
     -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
@@ -610,7 +616,7 @@ The query has 3 segments (in `demos/query/woodgrove/query1/`):
 
 For `query2` _(multi-collaborator only)_ — **each** collaborator runs:
 ```powershell
-./scripts/10-vote-query.ps1 -collaborationId $collabId -queryName "query2" `
+./scripts/10-vote-query.ps1 -collaborationId $collabId -queryName "query2$suffix" `
     -frontendEndpoint $frontend `
     -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
@@ -630,7 +636,7 @@ For `query2` _(multi-collaborator only)_ — **each** collaborator runs:
 > **Terminal: T2 (Woodgrove)**
 
 ```powershell
-./scripts/11-run-query.ps1 -collaborationId $collabId -queryName "query1" `
+./scripts/11-run-query.ps1 -collaborationId $collabId -queryName $queryName `
     -frontendEndpoint $frontend `
     -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
@@ -690,7 +696,7 @@ $jobId = "cl-spark-<uuid>"
 
 ```powershell
 ./scripts/14-run-history.ps1 -collaborationId $collabId `
-    -queryName "query1" `
+    -queryName $queryName `
     -frontendEndpoint $frontend `
     -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
@@ -739,12 +745,12 @@ Get-Content $outputFile
 . "generated/$personaRg/names.generated.ps1"
 
 ./scripts/12-view-results.ps1 -collaborationId $collabId `
-    -queryName "query1" `
+    -queryName $queryName `
     -frontendEndpoint $frontend `
     -TokenFile $personaTokenFile `
     -ApiMode $ApiMode `
     -DownloadCpkOutput `
-    -OutputDekFile "generated/datastores/keys/woodgrove-output-csv-cpk-dek.bin" `
+    -OutputDekFile "generated/datastores/keys/woodgrove-output-csv$suffix-dek.bin" `
     -OutputStorageAccount $STORAGE_ACCOUNT_NAME
 ```
 

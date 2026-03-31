@@ -46,8 +46,14 @@ param(
 
     [string]$persona,
 
-    # For CPK mode, the cleanroom workload needs Key Vault access to read the
-    # wrapped DEK secret and release the KEK. Pass -setupKeyVault for CPK flows.
+    # Encryption mode: "SSE" (default) or "CPK".
+    # CPK mode automatically grants Key Vault access (Crypto Officer + Secrets User)
+    # so the cleanroom workload can release the KEK and read the wrapped DEK.
+    [ValidateSet("SSE", "CPK")]
+    [string]$EncryptionMode = "SSE",
+
+    # Legacy switch — still honored for backward compatibility.
+    # If -setupKeyVault is passed, KV access is granted regardless of EncryptionMode.
     [switch]$setupKeyVault = $false
 )
 
@@ -71,6 +77,11 @@ Write-Host "Granting access for subject: $subject" -ForegroundColor Cyan
 Write-Host "Issuer URL: $issuerUrl" -ForegroundColor Yellow
 
 # Call common setup-access.ps1. For CPK, pass -setupKeyVault to grant KV access.
+$needKV = $setupKeyVault -or ($EncryptionMode -eq "CPK")
+Write-Host "Encryption mode: $EncryptionMode" -ForegroundColor Yellow
+if ($needKV) {
+    Write-Host "Key Vault access will be configured (CPK/setupKeyVault)." -ForegroundColor Yellow
+}
 Write-Host "`n=== Setting up access ===" -ForegroundColor Cyan
 & "$PSScriptRoot/common/setup-access.ps1" `
     -resourceGroup $resourceGroup `
@@ -78,6 +89,6 @@ Write-Host "`n=== Setting up access ===" -ForegroundColor Cyan
     -subject $subject `
     -issuerUrl $issuerUrl `
     -outDir $outDir `
-    -setupKeyVault:$setupKeyVault
+    -setupKeyVault:$needKV
 
 Write-Host "`nAccess granted for subject '$subject'." -ForegroundColor Green

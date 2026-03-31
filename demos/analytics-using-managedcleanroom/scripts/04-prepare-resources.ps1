@@ -41,8 +41,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
-Write-Host "Preparing resources for SSE analytics scenario..." -ForegroundColor Cyan
-Write-Host "Storage type: blob (SSE - server-side encryption)" -ForegroundColor Yellow
+Write-Host "Preparing resources for $($EncryptionMode ?? 'SSE') analytics scenario..." -ForegroundColor Cyan
+Write-Host "Storage type: blob" -ForegroundColor Yellow
 
 & "$PSScriptRoot/common/prepare-resources.ps1" `
     -resourceGroup $resourceGroup `

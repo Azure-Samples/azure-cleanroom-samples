@@ -89,6 +89,22 @@ $outDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPat
 # Python helper scripts directory
 $pythonScriptsDir = "$PSScriptRoot/common"
 
+# Resolve python executable (python3 on Linux/macOS, python on Windows).
+# Windows has a python3.exe stub that opens Microsoft Store — test with --version.
+$script:pythonExe = $null
+foreach ($candidate in @("python3", "python")) {
+    try {
+        $PSNativeCommandUseErrorActionPreference = $false
+        & $candidate --version 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { $script:pythonExe = $candidate; break }
+    } catch {}
+}
+$PSNativeCommandUseErrorActionPreference = $true
+if (-not $script:pythonExe) {
+    Write-Host "ERROR: Python not found. Install Python 3 from https://python.org" -ForegroundColor Red
+    exit 1
+}
+
 # Runs an az command, returning $null instead of throwing if it fails.
 function Invoke-AzSafe {
     param([string[]]$Arguments)
@@ -305,7 +321,7 @@ function New-DatasetKekAndWrappedDek {
     }
 
     $PSNativeCommandUseErrorActionPreference = $false
-    python3 "$pythonScriptsDir/create-kek.py" `
+    & $script:pythonExe "$pythonScriptsDir/create-kek.py" `
         --kek-name $kekName `
         --output-dir $kekOutputDir `
         --skr-policy-json $skrPolicyJson `
@@ -324,7 +340,7 @@ function New-DatasetKekAndWrappedDek {
     $kekPemFile = Join-Path $kekOutputDir "$kekName.pem"
 
     $PSNativeCommandUseErrorActionPreference = $false
-    $wrappedDekBase64 = python3 "$pythonScriptsDir/generate-wrapped-dek.py" `
+    $wrappedDekBase64 = & $script:pythonExe "$pythonScriptsDir/generate-wrapped-dek.py" `
         --dek-file $dekFile `
         --kek-public-key-file $kekPemFile
     if ($LASTEXITCODE -ne 0) {

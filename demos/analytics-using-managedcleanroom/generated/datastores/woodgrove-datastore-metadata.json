@@ -1,0 +1,74 @@
+{
+  "output": {
+    "_local": {
+      "dekFile": "Q:\\repo\\azure-cleanroom-samples\\demos\\analytics-using-managedcleanroom\\generated\\datastores\\keys\\woodgrove-output-csv-cpk-dek.bin"
+    },
+    "encryption": {
+      "kekName": "woodgrove-output-csv-cpk-kek",
+      "dekSecretName": "wrapped-woodgrove-output-csv-cpk-dek-woodgrove-output-csv-cpk-kek",
+      "dekStoreUrl": "https://kv-d75df67333d7dcf341d73.vault.azure.net",
+      "kekStoreUrl": "https://kv-d75df67333d7dcf341d73.vault.azure.net"
+    },
+    "storeUrl": "https://sad75df67333d7dcf341d736.blob.core.windows.net/",
+    "containerName": "woodgrove-output",
+    "storeType": "Azure_BlobStorage",
+    "storeId": "/subscriptions/fccb68eb-8ccf-49a6-a69a-7ea3c2867e9c/resourceGroups/cr-e2e-woodgrove-rg/providers/Microsoft.Storage/storageAccounts/sad75df67333d7dcf341d736",
+    "schema": {
+      "fields": [
+        {
+          "fieldType": "string",
+          "fieldName": "author"
+        },
+        {
+          "fieldType": "long",
+          "fieldName": "Number_Of_Mentions"
+        },
+        {
+          "fieldType": "number",
+          "fieldName": "Restricted_Sum"
+        }
+      ],
+      "format": "csv"
+    },
+    "name": "woodgrove-output-csv-cpk",
+    "encryptionMode": "CPK"
+  },
+  "input": {
+    "_local": {
+      "dekFile": "Q:\\repo\\azure-cleanroom-samples\\demos\\analytics-using-managedcleanroom\\generated\\datastores\\keys\\woodgrove-input-csv-cpk-dek.bin"
+    },
+    "encryption": {
+      "kekName": "woodgrove-input-csv-cpk-kek",
+      "dekSecretName": "wrapped-woodgrove-input-csv-cpk-dek-woodgrove-input-csv-cpk-kek",
+      "dekStoreUrl": "https://kv-d75df67333d7dcf341d73.vault.azure.net",
+      "kekStoreUrl": "https://kv-d75df67333d7dcf341d73.vault.azure.net"
+    },
+    "storeUrl": "https://sad75df67333d7dcf341d736.blob.core.windows.net/",
+    "containerName": "woodgrove-input",
+    "storeType": "Azure_BlobStorage",
+    "storeId": "/subscriptions/fccb68eb-8ccf-49a6-a69a-7ea3c2867e9c/resourceGroups/cr-e2e-woodgrove-rg/providers/Microsoft.Storage/storageAccounts/sad75df67333d7dcf341d736",
+    "schema": {
+      "fields": [
+        {
+          "fieldType": "date",
+          "fieldName": "date"
+        },
+        {
+          "fieldType": "string",
+          "fieldName": "time"
+        },
+        {
+          "fieldType": "string",
+          "fieldName": "author"
+        },
+        {
+          "fieldType": "string",
+          "fieldName": "mentions"
+        }
+      ],
+      "format": "csv"
+    },
+    "name": "woodgrove-input-csv-cpk",
+    "encryptionMode": "CPK"
+  }
+}

@@ -75,7 +75,8 @@ function Get-InputData {
             "--format", $format,
             "--schema-fields", $schemaFields
         )
-        python3 @argsList
+        $pyExe = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
+        & $pyExe @argsList
         if ($LASTEXITCODE -ne 0) {
             throw "Error executing data conversion script"
         }

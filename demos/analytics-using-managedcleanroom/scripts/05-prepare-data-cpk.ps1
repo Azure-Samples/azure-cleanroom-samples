@@ -94,6 +94,22 @@ if (-not $azcopyPath) {
     exit 1
 }
 
+# Resolve python executable (python3 on Linux/macOS, python on Windows).
+# Windows has a python3.exe stub that opens Microsoft Store — test with --version.
+$script:pythonExe = $null
+foreach ($candidate in @("python3", "python")) {
+    try {
+        $PSNativeCommandUseErrorActionPreference = $false
+        & $candidate --version 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { $script:pythonExe = $candidate; break }
+    } catch {}
+}
+$PSNativeCommandUseErrorActionPreference = $true
+if (-not $script:pythonExe) {
+    Write-Host "ERROR: Python not found. Install Python 3 from https://python.org" -ForegroundColor Red
+    exit 1
+}
+
 # Resolve storage and Key Vault details.
 Write-Host "Resolving resources..." -ForegroundColor Cyan
 $storageJson = az storage account show `
@@ -135,9 +151,11 @@ Write-Host "`n=== Step 2: Generating Data Encryption Key (DEK) ===" -ForegroundC
 $dekDir = Join-Path $outDir "datastores" "keys"
 New-Item -ItemType Directory -Path $dekDir -Force | Out-Null
 
-# Generate a 32-byte random DEK using Python (matches az cleanroom CLI implementation).
+# Generate a 32-byte random DEK (matches az cleanroom CLI implementation).
 $inputDekFile = Join-Path $dekDir "$inputDatasetName-dek.bin"
-python3 -c "import os; open('$inputDekFile', 'wb').write(os.urandom(32))"
+$dek = [byte[]]::new(32)
+[System.Security.Cryptography.RandomNumberGenerator]::Fill($dek)
+[System.IO.File]::WriteAllBytes($inputDekFile, $dek)
 $inputDekBytes = [System.IO.File]::ReadAllBytes($inputDekFile)
 $inputDekBase64 = [Convert]::ToBase64String($inputDekBytes)
 $inputDekSha256 = [Convert]::ToBase64String(
@@ -147,7 +165,9 @@ Write-Host "Input DEK generated (32 bytes): $inputDekFile" -ForegroundColor Gree
 
 if ($persona -eq "woodgrove") {
     $outputDekFile = Join-Path $dekDir "$outputDatasetName-dek.bin"
-    python3 -c "import os; open('$outputDekFile', 'wb').write(os.urandom(32))"
+    $dek = [byte[]]::new(32)
+    [System.Security.Cryptography.RandomNumberGenerator]::Fill($dek)
+    [System.IO.File]::WriteAllBytes($outputDekFile, $dek)
     Write-Host "Output DEK generated (32 bytes): $outputDekFile" -ForegroundColor Green
 }
 
