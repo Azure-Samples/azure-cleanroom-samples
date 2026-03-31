@@ -190,23 +190,20 @@ $oidcStorageAccount = "cleanroomoidc"
 # $oidcStorageAccount = ""
 ```
 
-### 1.5 Generate MSAL Token (each collaborator terminal)
+### 1.5 Generate MSAL Token & Extract OID (each collaborator terminal)
+
+> **CRITICAL**: The `oid` claim from your JWT is used for federated credentials in Step 05.
+> See [Appendix A](#appendix-a-federated-credential-subject-reference).
 
 ```powershell
+# Generate MSAL token
 $token = Get-MsalToken -ClientId "8a3849c1-81c5-4d62-b83e-3bb2bb11251a" `
     -TenantId "common" -Scopes "User.Read" -DeviceCode
-$token.IdToken | Out-File -FilePath "/tmp/msal-idtoken-$persona.txt" -NoNewline
-$personaTokenFile = "/tmp/msal-idtoken-$persona.txt"
-```
+$personaTokenFile = Join-Path ([System.IO.Path]::GetTempPath()) "msal-idtoken-$persona.txt"
+$token.IdToken | Out-File -FilePath $personaTokenFile -NoNewline
+Write-Host "Token saved to: $personaTokenFile"
 
-Sign in with **your** Microsoft account when prompted.
-
-### 1.6 Extract JWT `oid` (each collaborator terminal)
-
-> **CRITICAL**: You need the `oid` claim from your JWT. This is used for federated
-> credentials in Step 05. See [Appendix A](#appendix-a-federated-credential-subject-reference).
-
-```powershell
+# Extract JWT oid
 $tokenB64 = (Get-Content $personaTokenFile -Raw).Split('.')[1]
 $padLen = (4 - $tokenB64.Length % 4) % 4
 $padded = $tokenB64 + ('=' * $padLen)
@@ -215,18 +212,20 @@ $personaOid = $claims.oid
 Write-Host "JWT oid: $personaOid"
 ```
 
+Sign in with **your** Microsoft account when prompted.
+
 > For MSA (personal Microsoft accounts), the OID typically starts with `00000000-0000-0000-`.
 > This is **different** from `az ad signed-in-user show --query id` — always use the JWT `oid`.
 
-### 1.7 Configure CLI Extension (each collaborator terminal, CLI mode only)
+### 1.6 Configure CLI Extension (each collaborator terminal, CLI mode only)
 
 ```powershell
 az managedcleanroom frontend configure --endpoint $frontend
 ```
 
-### 1.8 Token Lifetime
+### 1.7 Token Lifetime
 
-MSAL tokens last ~24 hours. If a token expires mid-flow, regenerate it (repeat 1.5 and 1.6).
+MSAL tokens last ~24 hours. If a token expires mid-flow, regenerate it (repeat 1.5).
 
 ---
 
@@ -243,20 +242,25 @@ az group create --name $collabRg --location $location -o none
 ### 2.2 Create Collaboration
 
 ```powershell
+$ownerObjectId = az ad signed-in-user show --query id -o tsv
+$body = @{
+    location = $location
+    properties = @{
+        consortiumType = "ConfidentialAKS"
+        userIdentity = @{
+            tenantId = $tenantId
+            objectId = $ownerObjectId
+            accountType = "MicrosoftAccount"
+        }
+    }
+} | ConvertTo-Json -Depth 4 -Compress
+$bodyFile = Join-Path ([System.IO.Path]::GetTempPath()) "create-collab.json"
+[System.IO.File]::WriteAllText($bodyFile, $body)
+
 az rest --method PUT `
     --url "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName?api-version=$armApiVersion" `
     --resource "https://management.azure.com/" `
-    --body "{
-        `"location`": `"$location`",
-        `"properties`": {
-            `"consortiumType`": `"ConfidentialAKS`",
-            `"userIdentity`": {
-                `"tenantId`": `"$tenantId`",
-                `"objectId`": `"$(az ad signed-in-user show --query id -o tsv)`",
-                `"accountType`": `"MicrosoftAccount`"
-            }
-        }
-    }"
+    --body "@$bodyFile"
 ```
 
 **Expected**: 201 Created or 200 OK. May return 202 — poll the `Location` header (2-5 min).
@@ -264,10 +268,14 @@ az rest --method PUT `
 ### 2.3 Enable Analytics Workload
 
 ```powershell
+$body = @{ workloadType = "analytics" } | ConvertTo-Json -Compress
+$bodyFile = Join-Path ([System.IO.Path]::GetTempPath()) "enable-workload.json"
+[System.IO.File]::WriteAllText($bodyFile, $body)
+
 az rest --method POST `
     --url "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName/enableWorkload?api-version=$armApiVersion" `
     --resource "https://management.azure.com/" `
-    --body '{"workloadType": "analytics"}'
+    --body "@$bodyFile"
 ```
 
 > **CRITICAL**: Only pass `workloadType`. Do NOT pass `securityPolicyOption`.
@@ -286,10 +294,15 @@ az rest --method POST `
 Repeat for each collaborator email:
 
 ```powershell
+$collaboratorEmail = "<collaborator-email>"
+$body = @{ Collaborator = @{ UserIdentifier = $collaboratorEmail } } | ConvertTo-Json -Depth 3 -Compress
+$bodyFile = Join-Path ([System.IO.Path]::GetTempPath()) "add-collaborator.json"
+[System.IO.File]::WriteAllText($bodyFile, $body)
+
 az rest --method POST `
     --url "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName/addCollaborator?api-version=$armApiVersion" `
     --resource "https://management.azure.com/" `
-    --body "{`"email`": `"<collaborator-email>`"}"
+    --body "@$bodyFile"
 ```
 
 **Expected**: 202 Accepted for each.
@@ -303,19 +316,32 @@ az rest --method POST `
 $env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
 $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 
-$collabs = az managedcleanroom frontend collaboration list -o json | ConvertFrom-Json
-$collabId = ($collabs | Where-Object { $_.name -match "<collaboration-name>" }).id
-Write-Host "Collaboration UUID: $collabId"
+# List all collaborations visible to you
+$collabs = (az managedcleanroom frontend collaboration list -o json | ConvertFrom-Json).collaborations
+$collabs | Format-Table @{L='#';E={[array]::IndexOf($collabs,$_)+1}}, collaborationName, collaborationId, userStatus
+
+# Choose your collaboration (enter the number)
+$choice = Read-Host "Enter the number of your collaboration"
+$collabId = $collabs[[int]$choice - 1].collaborationId
+Write-Host "Selected: $collabId"
 ```
 
-> Replace `<collaboration-name>` with a substring that matches your collaboration. The
-> collaborator can see the collaboration because they were added in Step 3.1.
-
-### 3.3 Accept Invitation — Each Collaborator Terminal
+### 3.3 List & Accept Invitation — Each Collaborator Terminal
 
 ```powershell
+# List pending invitations
+$invitations = (az managedcleanroom frontend invitation list `
+    --collaboration-id $collabId -o json | ConvertFrom-Json).invitations
+$invitations | Format-Table invitationId, accountType, status
+
+# Get the invitation ID
+$invitationId = $invitations[0].invitationId
+Write-Host "Invitation ID: $invitationId"
+
+# Accept the invitation
 az managedcleanroom frontend invitation accept `
-    --collaboration-id $collabId
+    --collaboration-id $collabId `
+    --invitation-id $invitationId
 ```
 
 **Verify** (any collaborator terminal):
@@ -400,7 +426,7 @@ Get-Content "generated/$personaRg/issuer-url.txt"
 
 ### 5.2 Grant Access & Create Federated Credentials
 
-> **CRITICAL**: `-userId` must be the **JWT `oid`** from Step 01.6 — NOT a persona name.
+> **CRITICAL**: `-userId` must be the **JWT `oid`** from Step 01.5 — NOT a persona name.
 > See [Appendix A](#appendix-a-federated-credential-subject-reference).
 
 ```powershell
@@ -732,7 +758,7 @@ For MSA (personal Microsoft) accounts, the JWT `oid` and Graph API object ID are
 
 | Source | Command | Use? |
 |---|---|---|
-| JWT `oid` (correct) | PowerShell decode from Step 01.6 | **YES** |
+| JWT `oid` (correct) | PowerShell decode from Step 01.5 | **YES** |
 | Graph API (wrong) | `az ad signed-in-user show --query id` | **NO** |
 | Dataset `proposerId` | `dataset show` response | **YES** (to verify) |
 
