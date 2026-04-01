@@ -33,21 +33,36 @@ Supports **SSE** and **CPK** encryption modes, with **CLI** or **REST API** oper
 
 ### Mode Flags
 
-Set once at the start. All scripts respect these flags via parameters.
+Set once at the start. These flags only affect **frontend** operations (Steps 05-12).
 
 ```powershell
 $ApiMode = "cli"           # "cli" (az managedcleanroom frontend) or "rest" (Invoke-RestMethod)
 $EncryptionMode = "SSE"    # "SSE" (Azure-managed keys) or "CPK" (customer-provided keys)
 ```
 
-| Mode | Frontend operations | ARM operations | When to use |
-|---|---|---|---|
-| `cli` | `az managedcleanroom frontend` commands | `az rest` | Default. Requires `managedcleanroom` CLI extension. |
-| `rest` | `Invoke-RestMethod` via `frontend-helpers.ps1` | `az rest` | Fallback if CLI extension has bugs. |
+#### Frontend API Mode (`$ApiMode`)
 
-> **NOTE**: ARM operations (create collaboration, enable workload, add collaborator) always
-> use `az rest` regardless of `$ApiMode`. The mode flag only affects **frontend** operations
-> (dataset publish, query run, consent, etc.).
+| Mode | How frontend calls are made | When to use |
+|---|---|---|
+| `cli` | `az managedcleanroom frontend` commands | Default. Requires `managedcleanroom` CLI extension. |
+| `rest` | `Invoke-RestMethod` via `frontend-helpers.ps1` | Automations. |
+
+#### ARM Collaboration Operations (always CLI)
+
+ARM operations use `az managedcleanroom collaboration` commands via `collaboration-helpers.ps1`.
+These are **not affected** by `$ApiMode`.
+
+> **IMPORTANT**: Both the CLI commands and raw `az rest` calls against the Private CleanRoom RP
+> require the Private CleanRoom Cloud to be configured first. Call `Initialize-PrivateCleanRoomCloud`
+> (from `collaboration-helpers.ps1`) before any ARM collaboration operation.
+
+| Helper Function | CLI Command |
+|---|---|
+| `Initialize-PrivateCleanRoomCloud` | `az cloud register` + `az cloud set` + `$env:UsePrivateCleanRoomNamespace` |
+| `New-Collaboration` | `az managedcleanroom collaboration create` |
+| `Get-Collaboration` | `az managedcleanroom collaboration show` |
+| `Enable-CollaborationWorkload` | `az managedcleanroom collaboration enable-workload` |
+| `Add-Collaborator` | `az managedcleanroom collaboration add-collaborator` |
 
 ### Collaboration Modes
 
@@ -143,10 +158,6 @@ Write-Host "Subscription: $subscription, Tenant: $tenantId"
 # --- Location ---
 $location = "westus"
 
-# --- ARM endpoints ---
-$armEndpoint = "https://eastus2euap.management.azure.com"
-$armApiVersion = "2026-03-31-preview"
-
 # --- Collaboration ---
 $collabName = "<collaboration-name>"
 $collabRg = "<collaboration-resource-group>"
@@ -238,52 +249,51 @@ MSAL tokens last ~24 hours. If a token expires mid-flow, regenerate it (repeat 1
 
 > **Terminal: T1 (Owner)**
 
-### 2.1 Create Resource Group
+### 2.1 Configure Private CleanRoom Cloud
+
+```powershell
+$privateCloudName = "PrivateCleanroomAzureCloud"
+az cloud register --name $privateCloudName `
+    --endpoint-resource-manager "https://eastus2euap.management.azure.com/" 2>$null
+az cloud set --name $privateCloudName
+$env:UsePrivateCleanRoomNamespace = "true"
+```
+
+> Registers a custom Azure cloud pointing to the Private CleanRoom RP endpoint
+> and enables the private namespace. Required before any `az managedcleanroom collaboration` commands.
+
+### 2.2 Create Resource Group
 
 ```powershell
 az group create --name $collabRg --location $location -o none
 ```
 
-### 2.2 Create Collaboration
+### 2.3 Create Collaboration
 
 ```powershell
-$ownerObjectId = az ad signed-in-user show --query id -o tsv
-$body = @{
-    location = $location
-    properties = @{
-        consortiumType = "ConfidentialAKS"
-        userIdentity = @{
-            tenantId = $tenantId
-            objectId = $ownerObjectId
-            accountType = "MicrosoftAccount"
-        }
-    }
-} | ConvertTo-Json -Depth 4 -Compress
-$bodyFile = Join-Path ([System.IO.Path]::GetTempPath()) "create-collab.json"
-[System.IO.File]::WriteAllText($bodyFile, $body)
-
-az rest --method PUT `
-    --url "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName?api-version=$armApiVersion" `
-    --resource "https://management.azure.com/" `
-    --body "@$bodyFile"
+az managedcleanroom collaboration create `
+    --collaboration-name $collabName `
+    --resource-group $collabRg `
+    --location $location
 ```
 
-**Expected**: 201 Created or 200 OK. May return 202 — poll the `Location` header (2-5 min).
+**Expected**: 201 Created or 200 OK. May return 202 — poll until complete (2-5 min).
 
-### 2.3 Enable Analytics Workload
+**Verify**:
+```powershell
+az managedcleanroom collaboration show `
+    --collaboration-name $collabName `
+    --resource-group $collabRg
+```
+
+### 2.4 Enable Analytics Workload
 
 ```powershell
-$body = @{ workloadType = "analytics" } | ConvertTo-Json -Compress
-$bodyFile = Join-Path ([System.IO.Path]::GetTempPath()) "enable-workload.json"
-[System.IO.File]::WriteAllText($bodyFile, $body)
-
-az rest --method POST `
-    --url "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName/enableWorkload?api-version=$armApiVersion" `
-    --resource "https://management.azure.com/" `
-    --body "@$bodyFile"
+az managedcleanroom collaboration enable-workload `
+    --collaboration-name $collabName `
+    --resource-group $collabRg `
+    --workload-type analytics
 ```
-
-> **CRITICAL**: Only pass `workloadType`. Do NOT pass `securityPolicyOption`.
 
 **Expected**: 202 Accepted. Poll until complete (**5-15 minutes**).
 
@@ -300,14 +310,10 @@ Repeat for each collaborator email:
 
 ```powershell
 $collaboratorEmail = "<collaborator-email>"
-$body = @{ Collaborator = @{ UserIdentifier = $collaboratorEmail } } | ConvertTo-Json -Depth 3 -Compress
-$bodyFile = Join-Path ([System.IO.Path]::GetTempPath()) "add-collaborator.json"
-[System.IO.File]::WriteAllText($bodyFile, $body)
-
-az rest --method POST `
-    --url "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName/addCollaborator?api-version=$armApiVersion" `
-    --resource "https://management.azure.com/" `
-    --body "@$bodyFile"
+az managedcleanroom collaboration add-collaborator `
+    --collaboration-name $collabName `
+    --resource-group $collabRg `
+    --user-identifier $collaboratorEmail
 ```
 
 **Expected**: 202 Accepted for each.
@@ -1052,29 +1058,21 @@ $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 
 ## Appendix F: Known Bugs & Workarounds
 
-### 1. ~~`Invoke-AzCli` stderr throws~~ (FIXED)
+### 1. ARM `collaborationId` field is null
 
-`Invoke-AzCli` in `frontend-helpers.ps1` now saves/restores `$PSNativeCommandUseErrorActionPreference`
-in a `try/finally` block and filters `ErrorRecord` objects from the `2>&1` capture.
+`az managedcleanroom collaboration show` returns `properties.collaborationId: null`.
+**Workaround**: Use `az managedcleanroom frontend collaboration list` to get the frontend UUID (Step 03.2).
 
-### 2. ARM `collaborationId` field is null
+### 2. Collaboration stops working — Force Recover
 
-`az rest GET .../Collaborations/<name>` returns `properties.collaborationId: null`.
-**Workaround**: Use `az managedcleanroom frontend collaboration list` (Step 03.2).
+If the collaboration becomes unresponsive (e.g., `ContractNotFound`, frontend errors on all operations), force-recover:
 
-### 3. `--consortium-type` and `--user-identity` not valid CLI parameters
+```powershell
+az managedcleanroom collaboration recover `
+    --collaboration-name $collabName `
+    --resource-group $collabRg `
+    --force-recover $true
+```
 
-The `az managedcleanroom collaboration create` command doesn't accept these parameters.
-**Workaround**: Use `az rest` for collaboration creation (Step 02.1).
-
-### 4. ~~`08-publish-dataset-cpk.ps1` double `ConvertFrom-Json`~~ (FIXED)
-
-Removed the redundant `ConvertFrom-Json` call on the already-parsed `Invoke-AzCli` result.
-
-### 5. ~~`07-grant-access.ps1` missing `-setupKeyVault`~~ (FIXED)
-
-Added `-setupKeyVault` as a passthrough switch parameter.
-
-### 6. ~~`12-view-results.ps1` azcopy fails on HNS blobs~~ (FIXED)
-
-Added `--include-pattern "*.csv;*.crc;*_SUCCESS*"` to skip HNS directory marker blobs.
+> This is a last-resort operation. It resets the collaboration's internal state.
+> Existing datasets and queries need not be republished after recovery.
