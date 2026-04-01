@@ -277,7 +277,7 @@ az managedcleanroom collaboration create `
 az managedcleanroom collaboration enable-workload `
     --collaboration-name $collabName `
     --resource-group $collabRg `
-    --workload-type analytics
+    --workload-type Analytics
 ```
 
 **Expected**: 202 Accepted. Poll until complete (**7 minutes**).
@@ -309,6 +309,14 @@ az managedcleanroom collaboration add-collaborator `
 ```
 
 **Expected**: 202 Accepted for each.
+
+**Verify**:
+```powershell
+az managedcleanroom collaboration show `
+    --collaboration-name $collabName `
+    --resource-group $collabRg `
+    --query collaborators -o table
+```
 
 ### 3.2 Get Collaboration UUID — Each Collaborator Terminal
 
