@@ -269,14 +269,7 @@ az managedcleanroom collaboration create `
     --location $location
 ```
 
-**Expected**: 201 Created or 200 OK. May return 202 — poll until complete (2-5 min).
-
-**Verify**:
-```powershell
-az managedcleanroom collaboration show `
-    --collaboration-name $collabName `
-    --resource-group $collabRg
-```
+**Expected**: 202 Accepted — poll until complete (~25 minutes).
 
 ### 2.4 Enable Analytics Workload
 
@@ -287,7 +280,14 @@ az managedcleanroom collaboration enable-workload `
     --workload-type analytics
 ```
 
-**Expected**: 202 Accepted. Poll until complete (**5-15 minutes**).
+**Expected**: 202 Accepted. Poll until complete (**7 minutes**).
+
+**Verify**:
+```powershell
+az managedcleanroom collaboration show `
+    --collaboration-name $collabName `
+    --resource-group $collabRg
+```
 
 > After this step, the Owner is done with setup. Remaining ARM operations (add collaborators)
 > are in Step 03. The Owner does NOT need the `managedcleanroom` CLI extension or frontend access.
