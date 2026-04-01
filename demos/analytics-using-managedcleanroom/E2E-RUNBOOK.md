@@ -25,7 +25,7 @@ Supports **SSE** and **CPK** encryption modes, with **CLI** or **REST API** oper
 - [Appendix C: CPK Deep Dive](#appendix-c-cpk-deep-dive)
 - [Appendix D: CLI Command Reference](#appendix-d-cli-command-reference)
 - [Appendix E: API Response Reference](#appendix-e-api-response-reference)
-- [Appendix F: Known Bugs & Workarounds](#appendix-f-known-bugs--workarounds)
+- [Appendix F: Collaboration Management](#appendix-f-collaboration-management)
 
 ---
 
@@ -1068,14 +1068,9 @@ $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 
 ---
 
-## Appendix F: Known Bugs & Workarounds
+## Appendix F: Collaboration Management
 
-### 1. ARM `collaborationId` field is null
-
-`az managedcleanroom collaboration show` returns `properties.collaborationId: null`.
-**Workaround**: Use `az managedcleanroom frontend collaboration list` to get the frontend UUID (Step 03.2).
-
-### 2. Collaboration stops working — Force Recover
+### Force Recover
 
 If the collaboration becomes unresponsive (e.g., `ContractNotFound`, frontend errors on all operations), force-recover:
 
@@ -1088,3 +1083,15 @@ az managedcleanroom collaboration recover `
 
 > This is a last-resort operation. It resets the collaboration's internal state.
 > Existing datasets and queries need not be republished after recovery.
+
+### Delete Collaboration
+
+To permanently delete a collaboration and its associated resources:
+
+```powershell
+az managedcleanroom collaboration delete `
+    --collaboration-name $collabName `
+    --resource-group $collabRg
+```
+
+> This permanently deletes the collaboration and all its associated resources.
