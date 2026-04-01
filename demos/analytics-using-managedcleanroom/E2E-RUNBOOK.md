@@ -49,20 +49,8 @@ $EncryptionMode = "SSE"    # "SSE" (Azure-managed keys) or "CPK" (customer-provi
 
 #### ARM Collaboration Operations (always CLI)
 
-ARM operations use `az managedcleanroom collaboration` commands via `collaboration-helpers.ps1`.
-These are **not affected** by `$ApiMode`.
-
-> **IMPORTANT**: Both the CLI commands and raw `az rest` calls against the Private CleanRoom RP
-> require the Private CleanRoom Cloud to be configured first. Call `Initialize-PrivateCleanRoomCloud`
-> (from `collaboration-helpers.ps1`) before any ARM collaboration operation.
-
-| Helper Function | CLI Command |
-|---|---|
-| `Initialize-PrivateCleanRoomCloud` | `az cloud register` + `az cloud set` + `$env:UsePrivateCleanRoomNamespace` |
-| `New-Collaboration` | `az managedcleanroom collaboration create` |
-| `Get-Collaboration` | `az managedcleanroom collaboration show` |
-| `Enable-CollaborationWorkload` | `az managedcleanroom collaboration enable-workload` |
-| `Add-Collaborator` | `az managedcleanroom collaboration add-collaborator` |
+ARM operations use `az managedcleanroom collaboration` commands and are **not affected** by `$ApiMode`.
+The Private CleanRoom Cloud must be configured first (Step 2.1).
 
 ### Collaboration Modes
 
