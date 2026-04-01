@@ -35,6 +35,8 @@ param(
     [Parameter(Mandatory)]
     [string]$dataDir,
 
+    [string]$datasetSuffix = "",
+
     [string]$outDir = "./generated"
 )
 
@@ -122,7 +124,7 @@ $inputSchema = @{
 
 $datastoreMetadata = @{
     input = @{
-        name         = "$persona-input-csv"
+        name         = "$persona-input-csv$datasetSuffix"
         storeType    = "Azure_BlobStorage"
         storeId      = $storageAccountId
         storeUrl     = $storageBlobEndpoint
@@ -142,7 +144,7 @@ if ($persona -eq "woodgrove") {
         )
     }
     $datastoreMetadata.output = @{
-        name         = "woodgrove-output-csv"
+        name         = "woodgrove-output-csv$datasetSuffix"
         storeType    = "Azure_BlobStorage"
         storeId      = $storageAccountId
         storeUrl     = $storageBlobEndpoint
