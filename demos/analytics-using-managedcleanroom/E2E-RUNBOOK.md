@@ -184,9 +184,13 @@ $location = "westus"
 $ApiMode = "cli"           # "cli" or "rest"
 $EncryptionMode = "SSE"    # "SSE" or "CPK"
 
-# --- Derived names (auto-adjust for encryption mode) ---
-$suffix = if ($EncryptionMode -eq "CPK") { "-cpk" } else { "" }
+# --- Iteration (increment for each new dataset publish: 1, 2, 3, ...) ---
+$iteration = 1
+
+# --- Derived names (auto-adjust for encryption mode + iteration) ---
+$suffix = if ($EncryptionMode -eq "CPK") { "-cpk-v$iteration" } else { "-v$iteration" }
 $queryName = "query1$suffix"
+Write-Host "Dataset suffix: '$suffix', Query: '$queryName'"
 
 # --- Persona (set to YOUR persona) ---
 $persona = "woodgrove"                # T2: "woodgrove"  |  T3: "northwind"
@@ -403,7 +407,8 @@ if ($persona -eq "woodgrove") {
 
 ```powershell
 ./scripts/05-prepare-data-sse.ps1 -resourceGroup $personaRg -persona $persona `
-    -dataDir "./generated/datasource/$persona"
+    -dataDir "./generated/datasource/$persona" `
+    -datasetSuffix "$suffix"
 ```
 
 #### CPK Mode
@@ -411,7 +416,7 @@ if ($persona -eq "woodgrove") {
 ```powershell
 ./scripts/05-prepare-data-cpk.ps1 -resourceGroup $personaRg -persona $persona `
     -dataDir "./generated/datasource/$persona/csv" `
-    -datasetSuffix "-cpk"
+    -datasetSuffix "$suffix"
 ```
 
 > CPK mode generates a 32-byte DEK per dataset, uploads data via `azcopy --cpk-by-value`,
@@ -492,6 +497,25 @@ az identity federated-credential list `
 > - Woodgrove publishes: 1 input dataset (read) + 1 output dataset (write)
 > - Northwind publishes: 1 input dataset (read) only
 
+### 6.0 Update Naming (run before every publish)
+
+Re-derive names from the current `$iteration` value. On repeat publishes, increment first.
+
+```powershell
+# Increment iteration (skip this line on the very first publish)
+# $iteration++
+
+# Derive suffix and query name
+$suffix = if ($EncryptionMode -eq "CPK") { "-cpk-v$iteration" } else { "-v$iteration" }
+$queryName = "query1$suffix"
+Write-Host "Iteration: $iteration | Suffix: '$suffix' | Query: '$queryName'"
+Write-Host "  Input dataset:  $persona-input-csv$suffix"
+Write-Host "  Output dataset: woodgrove-output-csv$suffix"
+```
+
+> **Repeat publish**: Uncomment `$iteration++`, run the block, then continue with
+> Steps 4.3 → 06 → 08 → 09 → 10. All downstream commands pick up the new `$suffix`.
+
 ### SSE Mode
 
 ```powershell
@@ -539,7 +563,7 @@ Should show `"state": "Accepted"`.
 ```powershell
 . "generated/$personaRg/names.generated.ps1"
 
-$datasetName = "$persona-input-csv-cpk"   # e.g., "woodgrove-input-csv-cpk"
+$datasetName = "$persona-input-csv$suffix"   # e.g., "woodgrove-input-csv-cpk-v1"
 $kekName = "$datasetName-kek"
 
 # Check KEK
@@ -818,7 +842,7 @@ $env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
 $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 az managedcleanroom frontend analytics dataset show `
     --collaboration-id $collabId `
-    --document-id "$persona-input-csv" -o json
+    --document-id "$persona-input-csv$suffix" -o json
 # Check proposerId — should match $personaOid
 ```
 
