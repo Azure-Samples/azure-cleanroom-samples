@@ -153,7 +153,7 @@ if ($existingInput) {
         -Meta $inputMeta `
         -Identity $identityMeta `
         -AccessMode "read" `
-        -AllowedFields @("date", "author", "mentions")
+        -AllowedFields $(if ($persona -eq "northwind") { @("hashed_email", "annual_income", "region") } else { @("hashed_email", "purchase_history") })
 
     Publish-FrontendDataset -Context $feCtx `
         -CollaborationId $collaborationId `
@@ -181,7 +181,7 @@ if ($persona -eq "woodgrove" -and $datastoreMeta.output) {
             -Meta $datastoreMeta.output `
             -Identity $identityMeta `
             -AccessMode "write" `
-            -AllowedFields @("author", "Number_Of_Mentions")
+            -AllowedFields @("user_id")
 
         Publish-FrontendDataset -Context $feCtx `
             -CollaborationId $collaborationId `
@@ -198,13 +198,3 @@ if ($persona -eq "woodgrove" -and $datastoreMeta.output) {
 }
 
 Write-Host "`nDataset publishing complete for '$persona'." -ForegroundColor Green
-
-# -- Enable execution consent on published datasets -----------------------------
-Write-Host "`n=== Enabling execution consent on datasets ===" -ForegroundColor Cyan
-Set-FrontendConsent -Context $feCtx -CollaborationId $collaborationId -DocumentId $inputMeta.name -Action "enable" -TokenFile $TokenFile
-Write-Host "Execution consent enabled for input dataset '$($inputMeta.name)'." -ForegroundColor Green
-
-if ($persona -eq "woodgrove" -and $datastoreMeta.output) {
-    Set-FrontendConsent -Context $feCtx -CollaborationId $collaborationId -DocumentId $datastoreMeta.output.name -Action "enable" -TokenFile $TokenFile
-    Write-Host "Execution consent enabled for output dataset '$($datastoreMeta.output.name)'." -ForegroundColor Green
-}

@@ -172,13 +172,8 @@ $location = "westus"
 $ApiMode = "cli"           # "cli" or "rest"
 $EncryptionMode = "SSE"    # "SSE" or "CPK"
 
-# --- Iteration (increment for each new dataset publish: 1, 2, 3, ...) ---
-$iteration = 1
-
-# --- Derived names (auto-adjust for encryption mode + iteration) ---
-$suffix = if ($EncryptionMode -eq "CPK") { "-cpk-v$iteration" } else { "-v$iteration" }
-$queryName = "query1$suffix"
-Write-Host "Dataset suffix: '$suffix', Query: '$queryName'"
+# --- Iteration (incremented before each publish: starts at 0, first publish = v1) ---
+$iteration = 0
 
 # --- Persona (set to YOUR persona) ---
 $persona = "woodgrove"                # T2: "woodgrove"  |  T3: "northwind"
@@ -269,7 +264,7 @@ az managedcleanroom collaboration create `
     --location $location
 ```
 
-**Expected**: 202 Accepted — poll until complete (~25 minutes).
+**Runtime**: ~25 minutes
 
 ### 2.4 Enable Analytics Workload
 
@@ -280,7 +275,7 @@ az managedcleanroom collaboration enable-workload `
     --workload-type Analytics
 ```
 
-**Expected**: 202 Accepted. Poll until complete (**7 minutes**).
+**Runtime**: ~7 minutes
 
 **Verify**:
 ```powershell
@@ -307,8 +302,6 @@ az managedcleanroom collaboration add-collaborator `
     --resource-group $collabRg `
     --user-identifier $collaboratorEmail
 ```
-
-**Expected**: 202 Accepted for each.
 
 **Verify**:
 ```powershell
@@ -380,24 +373,41 @@ Should show `"status": "Active"` once all invitations are accepted.
 
 **Verify**: `generated/$personaRg/names.generated.ps1` and `resources.generated.json` exist.
 
-### 4.2 Download Sample Data
+### 4.2 Generate Sample Data
 
-Downloads Twitter CSV data from the `Azure-Samples/Synapse` GitHub repo into the local data directory.
+Generates synthetic CSV data locally (~8 MB per persona) for the audience overlap demo.
 
 ```powershell
-. "./scripts/common/get-input-data.ps1"
-$dataDir = "./generated/datasource/$persona"
-
-if ($persona -eq "woodgrove") {
-    Get-ConsumerData -dataDir $dataDir -format csv -schemaFields "date:date,time:string,author:string,mentions:string"
-} else {
-    Get-PublisherData -dataDir $dataDir -format csv -schemaFields "date:date,time:string,author:string,mentions:string"
-}
+./demos/generate-data.ps1 -persona $persona
 ```
+
+- **Northwind**: `audience_id`, `hashed_email`, `annual_income`, `region` (100k rows)
+- **Woodgrove**: `user_id`, `hashed_email`, `purchase_history` (100k rows)
+- 20% of `hashed_email` values overlap between both datasets.
+
+> In a real scenario you would use your own data — skip this step and
+> point `-dataDir` at your existing files in Step 4.3.
 
 **Verify**: `generated/datasource/$persona/csv/` contains `.csv` files.
 
-### 4.3 Upload Data
+### 4.3 Set Dataset Names
+
+Increments the iteration counter and derives the dataset suffix and query name.
+Run this block every time — first run and subsequent re-publishes alike.
+
+```powershell
+$iteration++
+$suffix = if ($EncryptionMode -eq "CPK") { "-cpk-v$iteration" } else { "-v$iteration" }
+$queryName = "query1$suffix"
+Write-Host "Iteration: $iteration | Suffix: '$suffix' | Query: '$queryName'"
+Write-Host "  Input dataset:  $persona-input-csv$suffix"
+Write-Host "  Output dataset: woodgrove-output-csv$suffix"
+```
+
+> **Repeat publish**: Run this block again (increments to v2, v3, ...), then continue with
+> Steps 4.4 → 06 → 08 → 09 → 10. All downstream commands pick up the new `$suffix`.
+
+### 4.4 Upload Data
 
 #### SSE Mode
 
@@ -493,25 +503,6 @@ az identity federated-credential list `
 > - Woodgrove publishes: 1 input dataset (read) + 1 output dataset (write)
 > - Northwind publishes: 1 input dataset (read) only
 
-### 6.0 Update Naming (run before every publish)
-
-Re-derive names from the current `$iteration` value. On repeat publishes, increment first.
-
-```powershell
-# Increment iteration (skip this line on the very first publish)
-# $iteration++
-
-# Derive suffix and query name
-$suffix = if ($EncryptionMode -eq "CPK") { "-cpk-v$iteration" } else { "-v$iteration" }
-$queryName = "query1$suffix"
-Write-Host "Iteration: $iteration | Suffix: '$suffix' | Query: '$queryName'"
-Write-Host "  Input dataset:  $persona-input-csv$suffix"
-Write-Host "  Output dataset: woodgrove-output-csv$suffix"
-```
-
-> **Repeat publish**: Uncomment `$iteration++`, run the block, then continue with
-> Steps 4.3 → 06 → 08 → 09 → 10. All downstream commands pick up the new `$suffix`.
-
 ### SSE Mode
 
 ```powershell
@@ -588,7 +579,7 @@ az managedcleanroom frontend analytics dataset show `
 
 > **Terminal: T2 (Woodgrove)** — Woodgrove proposes the SQL query.
 >
-> `$suffix` and `$queryName` were set in Step 1.4 based on `$EncryptionMode`.
+> `$suffix` and `$queryName` were set in Step 4.3 based on `$EncryptionMode`.
 
 ### Single-collaborator query (Woodgrove data only)
 
@@ -609,7 +600,7 @@ az managedcleanroom frontend analytics dataset show `
 ```powershell
 ./scripts/09-publish-query.ps1 -collaborationId $collabId `
     -queryName "query2$suffix" `
-    -queryDir "./demos/query/woodgrove/query1" `
+    -queryDir "./demos/query/woodgrove/query2" `
     -publisherInputDataset "northwind-input-csv$suffix" `
     -consumerInputDataset "woodgrove-input-csv$suffix" `
     -outputDataset "woodgrove-output-csv$suffix" `
@@ -621,7 +612,14 @@ az managedcleanroom frontend analytics dataset show `
 The query has 3 segments (in `demos/query/woodgrove/query1/`):
 - **Segment 1** (seq=1): `CREATE OR REPLACE TEMP VIEW publisher_view AS SELECT * FROM publisher_data`
 - **Segment 2** (seq=1): `CREATE OR REPLACE TEMP VIEW consumer_view AS SELECT * FROM consumer_data`
-- **Segment 3** (seq=2): `SELECT author, COUNT(*) ... FROM (... UNION ALL ...) WHERE mentions LIKE '%MikeDoesBigData%' GROUP BY author`
+- **Segment 3** (seq=2): `SELECT DISTINCT consumer_view.user_id ... WHERE consumer_view.purchase_history IN ('Sofa', 'Bed', ...)`
+
+> **Single-collaborator**: Both views point to the same woodgrove dataset (self-join). The
+> query filters by `purchase_history` — a column that exists in both views.
+>
+> **Multi-collaborator** (query2, in `demos/query/woodgrove/query2/`): Uses a cross-dataset
+> overlap JOIN on `hashed_email` with filters on northwind-only columns (`annual_income`,
+> `region`).
 
 **Expected**: 204 No Content.
 
@@ -648,10 +646,14 @@ For `query2` _(multi-collaborator only)_ — **each** collaborator runs:
     -ApiMode $ApiMode
 ```
 
-> **Consent ordering** (multi-collaborator): Consent can only be enabled on an `Accepted`
-> query. The query stays `Proposed` until all votes are in. The script enables consent
-> automatically after voting. If the first voter's consent fails (query still `Proposed`),
-> re-run after the last voter votes.
+> **Note**: All documents (datasets and queries) have execution consent enabled by default.
+> To revoke or re-enable consent later, use:
+> ```powershell
+> az managedcleanroom frontend consent set `
+>     --collaboration-id $collabId `
+>     --document-id "<document-name>" `
+>     --consent-action disable   # or "enable"
+> ```
 
 **Verify**: Query shows `"state": "Accepted"` with `proposalId` populated.
 
@@ -734,8 +736,8 @@ $jobId = "cl-spark-<uuid>"
   "queryId": "query1",
   "latestRun": {
     "isSuccessful": true,
-    "stats": { "rowsRead": 13872, "rowsWritten": 697 },
-    "durationSeconds": 1039
+    "stats": { "rowsRead": ..., "rowsWritten": ... },
+    "durationSeconds": ...
   }
 }
 ```

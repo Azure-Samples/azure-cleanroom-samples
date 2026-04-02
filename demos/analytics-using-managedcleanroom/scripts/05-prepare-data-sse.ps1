@@ -114,12 +114,20 @@ if (-not (Test-Path $datastoreDir)) {
 
 $inputSchema = @{
     format = "csv"
-    fields = @(
-        @{ fieldName = "date"; fieldType = "date" }
-        @{ fieldName = "time"; fieldType = "string" }
-        @{ fieldName = "author"; fieldType = "string" }
-        @{ fieldName = "mentions"; fieldType = "string" }
-    )
+    fields = if ($persona -eq "northwind") {
+        @(
+            @{ fieldName = "audience_id"; fieldType = "string" }
+            @{ fieldName = "hashed_email"; fieldType = "string" }
+            @{ fieldName = "annual_income"; fieldType = "long" }
+            @{ fieldName = "region"; fieldType = "string" }
+        )
+    } else {
+        @(
+            @{ fieldName = "user_id"; fieldType = "string" }
+            @{ fieldName = "hashed_email"; fieldType = "string" }
+            @{ fieldName = "purchase_history"; fieldType = "string" }
+        )
+    }
 }
 
 $datastoreMetadata = @{
@@ -138,9 +146,7 @@ if ($persona -eq "woodgrove") {
     $outputSchema = @{
         format = "csv"
         fields = @(
-            @{ fieldName = "author"; fieldType = "string" }
-            @{ fieldName = "Number_Of_Mentions"; fieldType = "long" }
-            @{ fieldName = "Restricted_Sum"; fieldType = "number" }
+            @{ fieldName = "user_id"; fieldType = "string" }
         )
     }
     $datastoreMetadata.output = @{

@@ -12,7 +12,6 @@
       2. Fetch the SKR release policy from the just-published dataset
       3. Create a per-dataset KEK locally (RSA-2048) and import to Key Vault with the SKR policy
       4. Wrap the DEK with the KEK (RSA-OAEP-SHA256, client-side) and store as a Key Vault secret
-      5. Enable execution consent on published datasets
 
     This matches the az cleanroom CLI's actual implementation:
     - KEK is generated locally as RSA-2048, then imported via `az keyvault key import`
@@ -217,7 +216,7 @@ if ($existingInput) {
         -Meta $inputMeta `
         -Identity $identityMeta `
         -AccessMode "read" `
-        -AllowedFields @("date", "author", "mentions")
+        -AllowedFields $(if ($persona -eq "northwind") { @("hashed_email", "annual_income", "region") } else { @("hashed_email", "purchase_history") })
 
     Publish-FrontendDataset -Context $feCtx `
         -CollaborationId $collaborationId `
@@ -245,7 +244,7 @@ if ($persona -eq "woodgrove" -and $datastoreMeta.output) {
             -Meta $datastoreMeta.output `
             -Identity $identityMeta `
             -AccessMode "write" `
-            -AllowedFields @("author", "Number_Of_Mentions")
+            -AllowedFields @("user_id")
 
         Publish-FrontendDataset -Context $feCtx `
             -CollaborationId $collaborationId `
@@ -378,18 +377,6 @@ if ($persona -eq "woodgrove" -and $datastoreMeta.output) {
         -OutputDir $outDir
 }
 
-# ==============================================================================
-# PHASE B-3: Enable execution consent on published datasets
-# ==============================================================================
-
-Write-Host "`n=== Phase B-3: Enabling execution consent ===" -ForegroundColor Cyan
-Set-FrontendConsent -Context $feCtx -CollaborationId $collaborationId -DocumentId $inputMeta.name -Action "enable" -TokenFile $TokenFile
-Write-Host "Execution consent enabled for input dataset '$($inputMeta.name)'." -ForegroundColor Green
-
-if ($persona -eq "woodgrove" -and $datastoreMeta.output) {
-    Set-FrontendConsent -Context $feCtx -CollaborationId $collaborationId -DocumentId $datastoreMeta.output.name -Action "enable" -TokenFile $TokenFile
-    Write-Host "Execution consent enabled for output dataset '$($datastoreMeta.output.name)'." -ForegroundColor Green
-}
 
 Write-Host "`n=== CPK dataset publishing complete for '$persona' ===" -ForegroundColor Green
 Write-Host "  Datasets published with per-dataset KEKs and wrapped DEKs." -ForegroundColor Green
