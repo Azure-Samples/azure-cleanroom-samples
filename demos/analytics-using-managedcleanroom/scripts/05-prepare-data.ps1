@@ -110,8 +110,10 @@ if ($variant -eq "cpk") {
     $kvUrl = $kvJson.properties.vaultUri.TrimEnd('/')
 }
 
-$inputContainer = "$persona-input"
-$outputContainer = "$persona-output"
+# Container names: each iteration gets unique containers to avoid CPK key conflicts.
+# For SSE, the suffix is still applied for consistency (idempotent container create).
+$inputContainer = if ($datasetSuffix) { "$persona-input$datasetSuffix" } else { "$persona-input" }
+$outputContainer = if ($datasetSuffix) { "$persona-output$datasetSuffix" } else { "$persona-output" }
 
 # Dataset naming
 $inputDatasetName = "$persona-input-csv$datasetSuffix"

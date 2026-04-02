@@ -95,10 +95,8 @@ demos/analytics-using-managedcleanroom/
 | Azure CLI | 2.75.0+ |
 | `managedcleanroom` extension | `az extension add --name managedcleanroom` (v1.0.0b5+) |
 | PowerShell | 7.x+ |
-| Python 3 | 3.10+ — `python --version` (Windows) or `python3 --version` (Linux/macOS) |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) — Windows: `winget install Microsoft.AzCopy` / Linux: `curl -sL https://aka.ms/downloadazcopy-v10-linux \| tar xz --strip-components=1 -C /usr/local/bin` |
-| `cryptography` package | CPK mode only — `pip install cryptography` |
 
 ### 1.2 Azure Subscription Permissions
 
@@ -174,9 +172,9 @@ $EncryptionMode = "SSE"    # "SSE" or "CPK"
 # --- Iteration (incremented before each publish: starts at 0, first publish = v1) ---
 $iteration = 0
 
-# --- Persona (set to YOUR persona) ---
+# --- Persona (set to YOUR persona — this is the ONLY value that differs per terminal) ---
 $persona = "woodgrove"                # T2: "woodgrove"  |  T3: "northwind"
-$personaRg = "cr-e2e-woodgrove-rg"    # T2: "cr-e2e-woodgrove-rg"  |  T3: "cr-e2e-northwind-rg"
+$personaRg = "cr-e2e-$persona-rg"     # derived — no need to change
 $personaEmail = "<your-email>"
 
 # --- Create resource group (if it doesn't exist) ---
@@ -444,13 +442,31 @@ if ($oidcStorageAccount) { $identityParams["OidcStorageAccount"] = $oidcStorageA
 ./scripts/06-setup-identity.ps1 @identityParams
 ```
 
-> **MSFT tenant**: Uses the pre-provisioned whitelisted SA (`cleanroomoidc`). If this SA
-> is in a different tenant than your `az login` session, the upload will fail with
-> "Issuer validation failed". Open a separate terminal, `az login --tenant <msft-tenant-id>`,
-> and run the OIDC upload from there.
+> **MSFT tenant (same tenant)**: Uses the pre-provisioned whitelisted SA (`cleanroomoidc`).
+> The first collaborator uploads OIDC docs; subsequent collaborators in the same tenant can
+> either pass `-OidcStorageAccount` (idempotent overwrite) or use `-IssuerUrl` to skip the upload.
+
+> **Cross-tenant / reuse existing issuer**: If another collaborator already set up the OIDC
+> issuer, pass `-IssuerUrl` to skip the upload and just register the URL with CGS for your
+> tenant. The OIDC discovery document is public — no cross-tenant storage access needed.
 >
-> **All other tenants**: Omit `-OidcStorageAccount`. The script automatically creates a new
-> storage account with static website enabled in the collaborator's resource group.
+> ```powershell
+> # Collaborator B (different tenant or subscription — reuses A's issuer URL)
+> $identityParams = @{
+>     resourceGroup    = $personaRg
+>     persona          = $persona
+>     collaborationId  = $collabId
+>     frontendEndpoint = $frontend
+>     TokenFile        = $personaTokenFile
+>     ApiMode          = $ApiMode
+>     IssuerUrl        = "<issuer-url-from-collaborator-A>"   # e.g., https://cleanroomoidc.z22.web.core.windows.net/<collab-id>
+> }
+> ./scripts/06-setup-identity.ps1 @identityParams
+> ```
+
+> **New tenant (no shared SA)**: Omit both `-OidcStorageAccount` and `-IssuerUrl`. The script
+> automatically creates a new storage account with static website enabled in the collaborator's
+> resource group.
 
 **Verify**:
 ```powershell
@@ -528,6 +544,8 @@ Should show `"state": "Accepted"`.
 > **Terminal: T2 (Woodgrove)** — Woodgrove proposes the SQL query.
 >
 > `$suffix` and `$queryName` were set in Step 4.3 based on `$EncryptionMode`.
+> Each collaborator has their own `$suffix` — make sure to use the correct
+> dataset name for each collaborator when publishing queries.
 
 ### Single-collaborator query (Woodgrove data only)
 
@@ -545,11 +563,23 @@ Should show `"state": "Accepted"`.
 
 ### Multi-collaborator query (both datasets) — _multi-collaborator only_
 
+> **IMPORTANT**: Northwind's dataset name uses Northwind's suffix, which may differ
+> from Woodgrove's. Get the exact dataset name from Northwind, or list published
+> datasets to find it:
+> ```powershell
+> az managedcleanroom frontend analytics dataset list `
+>     --collaboration-id $collabId -o json | ConvertFrom-Json |
+>     Select-Object -ExpandProperty datasets |
+>     Where-Object { $_.id -match "northwind" } |
+>     ForEach-Object { Write-Host $_.id }
+> ```
+
 ```powershell
+$northwindDataset = "<northwind-input-dataset-name>"   # e.g., "northwind-input-csv-cpk-v1"
 ./scripts/09-publish-query.ps1 -collaborationId $collabId `
     -queryName "query2$suffix" `
     -queryDir "./demos/query/woodgrove/query2" `
-    -publisherInputDataset "northwind-input-csv$suffix" `
+    -publisherInputDataset $northwindDataset `
     -consumerInputDataset "woodgrove-input-csv$suffix" `
     -outputDataset "woodgrove-output-csv$suffix" `
     -frontendEndpoint $frontend `
@@ -587,8 +617,17 @@ The query has 3 segments (in `demos/query/woodgrove/query1/`):
 ```
 
 For `query2` _(multi-collaborator only)_ — **each** collaborator runs:
+
+> Northwind must use the exact query name published by Woodgrove. Get it from Woodgrove
+> or list published queries:
+> ```powershell
+> az managedcleanroom frontend analytics query list `
+>     --collaboration-id $collabId -o json
+> ```
+
 ```powershell
-./scripts/10-vote-query.ps1 -collaborationId $collabId -queryName "query2$suffix" `
+$query2Name = "<query2-name-from-woodgrove>"   # e.g., "query2-cpk-v1"
+./scripts/10-vote-query.ps1 -collaborationId $collabId -queryName $query2Name `
     -frontendEndpoint $frontend `
     -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
@@ -702,7 +741,7 @@ $jobId = "cl-spark-<uuid>"
 # Strip the "cl-spark-" prefix to get the run UUID used in the blob path
 $runUuid = $jobId -replace '^cl-spark-', ''
 $blobs = az storage blob list --account-name $STORAGE_ACCOUNT_NAME `
-    --container-name woodgrove-output `
+    --container-name "woodgrove-output$suffix" `
     --prefix "Analytics/" --auth-mode login -o json | ConvertFrom-Json
 $csvBlob = ($blobs | Where-Object {
     $_.name -match '\.csv$' -and $_.name -notmatch '\.crc$' -and $_.name -match $runUuid
@@ -712,7 +751,7 @@ Write-Host "Output blob: $csvBlob"
 # Download it
 $outputFile = Join-Path "." "output.csv"
 az storage blob download --account-name $STORAGE_ACCOUNT_NAME `
-    --container-name woodgrove-output `
+    --container-name "woodgrove-output$suffix" `
     --name $csvBlob `
     --file $outputFile --auth-mode login
 
@@ -739,7 +778,8 @@ Get-Content $outputFile
     -ApiMode $ApiMode `
     -DownloadCpkOutput `
     -OutputDekFile "generated/datastores/keys/woodgrove-output-csv$suffix-dek.bin" `
-    -OutputStorageAccount $STORAGE_ACCOUNT_NAME
+    -OutputStorageAccount $STORAGE_ACCOUNT_NAME `
+    -OutputContainer "woodgrove-output$suffix"
 ```
 
 > The `--include-pattern "*.csv;*.crc;*_SUCCESS*"` filter is required for HNS-enabled
@@ -941,7 +981,7 @@ Runtime:  SKR release → KEK private → unwrap DEK → CPK header → Storage 
 ### CPK Key Management Details
 
 **KEK creation** (done by `08-publish-dataset.ps1`):
-- Generated locally as RSA-2048 using Python `cryptography` lib
+- Generated locally as RSA-2048 using .NET `System.Security.Cryptography.RSA`
 - Imported via `az keyvault key import` (NOT `key create`)
 - `--exportable true --protection hsm --immutable false`
 - SKR release policy attached (fetched from published dataset's `skr-policy` endpoint)

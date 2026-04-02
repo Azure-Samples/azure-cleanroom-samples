@@ -13,7 +13,6 @@
     - 04-prepare-resources.ps1 must have been run.
     - 05-prepare-data.ps1 must have been run (uploads data, saves metadata).
     - 06-setup-identity.ps1 must have been run (OIDC setup, saves identity metadata).
-    - For CPK: Python 3 with `cryptography` package installed.
 
 .PARAMETER collaborationId
     The collaboration frontend UUID.
@@ -76,9 +75,6 @@ $feCtx = New-FrontendContext -frontendEndpoint $frontendEndpoint -ApiMode $ApiMo
 # Resolve outDir to absolute path
 $outDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($outDir)
 
-# Python helper scripts directory
-$pythonScriptsDir = "$PSScriptRoot/common"
-
 # Runs an az command, returning $null instead of throwing if it fails.
 function Invoke-AzSafe {
     param([string[]]$Arguments)
@@ -123,23 +119,6 @@ Write-Host "Using OIDC issuer URL: $oidcIssuerUrl" -ForegroundColor Cyan
 $isCpk = ($datastoreMeta.input.encryptionMode -eq "CPK")
 $encryptionMode = if ($isCpk) { "CPK" } else { "SSE" }
 Write-Host "Encryption mode: $encryptionMode" -ForegroundColor Cyan
-
-# CPK prerequisites: resolve Python
-if ($isCpk) {
-    $script:pythonExe = $null
-    foreach ($candidate in @("python3", "python")) {
-        try {
-            $PSNativeCommandUseErrorActionPreference = $false
-            & $candidate --version 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0) { $script:pythonExe = $candidate; break }
-        } catch {}
-    }
-    $PSNativeCommandUseErrorActionPreference = $true
-    if (-not $script:pythonExe) {
-        Write-Host "ERROR: Python not found (required for CPK). Install Python 3 from https://python.org" -ForegroundColor Red
-        exit 1
-    }
-}
 
 $inputMeta = $datastoreMeta.input
 
@@ -212,7 +191,7 @@ if ($existingInput) {
         -Meta $inputMeta `
         -Identity $identityMeta `
         -AccessMode "read" `
-        -AllowedFields $(if ($persona -eq "northwind") { @("hashed_email", "annual_income", "region") } else { @("hashed_email", "purchase_history") }) `
+        -AllowedFields $(if ($persona -eq "northwind") { @("hashed_email", "annual_income", "region") } else { @("user_id", "hashed_email", "purchase_history") }) `
         -EncryptionMode $encryptionMode
 
     Publish-FrontendDataset -Context $feCtx `
@@ -284,7 +263,10 @@ if ($isCpk) {
             exit 1
         }
 
-        # Fetch SKR release policy
+        # Read the DEK bytes
+        $dekBytes = [System.IO.File]::ReadAllBytes($dekFile)
+
+        # Step 1: Fetch SKR release policy from the published dataset.
         Write-Host "  Fetching SKR release policy from dataset '$datasetName'..." -ForegroundColor Yellow
         $PSNativeCommandUseErrorActionPreference = $false
         $skrPolicy = Invoke-AzCli @(
@@ -298,9 +280,22 @@ if ($isCpk) {
         $skrPolicyJson = $skrPolicy | ConvertTo-Json -Depth 10 -Compress
         Write-Host "  SKR policy fetched. ccePolicyHash: $($skrPolicy.anyOf[0].allOf[0].equals)" -ForegroundColor Green
 
-        # Create KEK locally and import to Key Vault
-        Write-Host "  Creating KEK '$kekName' (local RSA-2048 + import to KV)..." -ForegroundColor Yellow
+        # Step 2: Generate RSA-2048 KEK locally.
+        Write-Host "  Generating KEK '$kekName' (RSA-2048)..." -ForegroundColor Yellow
         $kekOutputDir = Join-Path $OutputDir "datastores" "keys"
+        New-Item -ItemType Directory -Path $kekOutputDir -Force | Out-Null
+
+        $rsa = [System.Security.Cryptography.RSA]::Create(2048)
+        $kekPemFile = Join-Path $kekOutputDir "$kekName.pem"
+        $rsa.ExportPkcs8PrivateKeyPem() | Set-Content -Path $kekPemFile -NoNewline
+        Write-Host "  KEK private key saved to '$kekPemFile'." -ForegroundColor Green
+
+        # Save SKR policy to file (for reference/debugging).
+        $skrPolicyFile = Join-Path $kekOutputDir "$kekName-skr-policy.json"
+        [System.IO.File]::WriteAllText($skrPolicyFile, $skrPolicyJson)
+
+        # Step 3: Import KEK to Key Vault with SKR release policy.
+        Write-Host "  Importing KEK '$kekName' to Key Vault with SKR policy..." -ForegroundColor Yellow
 
         $existingKey = Invoke-AzSafe @("keyvault", "key", "show", "--vault-name", $KeyVaultName, "--name", $kekName)
         if ($existingKey) {
@@ -311,37 +306,29 @@ if ($isCpk) {
             Start-Sleep -Seconds 5
         }
 
-        $PSNativeCommandUseErrorActionPreference = $false
-        & $script:pythonExe "$pythonScriptsDir/create-kek.py" `
-            --kek-name $kekName `
-            --output-dir $kekOutputDir `
-            --skr-policy-json $skrPolicyJson `
-            --key-vault-url "https://${KeyVaultName}.vault.azure.net" 2>&1 | ForEach-Object {
-            Write-Host "  $_" -ForegroundColor DarkGray
-        }
+        az keyvault key import `
+            --vault-name $KeyVaultName `
+            --name $kekName `
+            --pem-file $kekPemFile `
+            --protection hsm `
+            --exportable true `
+            --ops wrapKey unwrapKey `
+            --policy "@$skrPolicyFile" `
+            --output none
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "  ERROR: Failed to create KEK '$kekName'" -ForegroundColor Red
+            Write-Host "  ERROR: Failed to import KEK '$kekName' to Key Vault." -ForegroundColor Red
             exit 1
         }
-        $PSNativeCommandUseErrorActionPreference = $true
         Write-Host "  KEK '$kekName' imported to Key Vault." -ForegroundColor Green
 
-        # Wrap DEK with KEK
+        # Step 4: Wrap DEK with KEK (RSA-OAEP-SHA256, client-side).
         Write-Host "  Wrapping DEK with KEK..." -ForegroundColor Yellow
-        $kekPemFile = Join-Path $kekOutputDir "$kekName.pem"
+        $wrappedDekBytes = $rsa.Encrypt($dekBytes, [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
+        $wrappedDekBase64 = [Convert]::ToBase64String($wrappedDekBytes)
+        $rsa.Dispose()
+        Write-Host "  DEK wrapped ($($wrappedDekBase64.Length) chars base64)." -ForegroundColor Green
 
-        $PSNativeCommandUseErrorActionPreference = $false
-        $wrappedDekBase64 = & $script:pythonExe "$pythonScriptsDir/generate-wrapped-dek.py" `
-            --dek-file $dekFile `
-            --kek-public-key-file $kekPemFile
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "  ERROR: Failed to wrap DEK" -ForegroundColor Red
-            exit 1
-        }
-        $PSNativeCommandUseErrorActionPreference = $true
-        Write-Host "  DEK wrapped ($(($wrappedDekBase64).Length) chars base64)." -ForegroundColor Green
-
-        # Store wrapped DEK as Key Vault secret
+        # Step 5: Store wrapped DEK as a Key Vault secret.
         Write-Host "  Storing wrapped DEK as secret '$wrappedDekSecretName'..." -ForegroundColor Yellow
         az keyvault secret set `
             --vault-name $KeyVaultName `
