@@ -14,12 +14,11 @@ Supports **SSE** and **CPK** encryption modes, with **CLI** or **REST API** oper
 - [Step 04: Resource Provisioning](#step-04-resource-provisioning) `[EACH COLLABORATOR]`
 - [Step 05: OIDC Identity & Federated Credentials](#step-05-oidc-identity--federated-credentials) `[EACH COLLABORATOR]`
 - [Step 06: Publish Datasets](#step-06-publish-datasets) `[EACH COLLABORATOR]`
-- [Step 07: CPK Key Management](#step-07-cpk-key-management) `[EACH COLLABORATOR]` _(CPK only)_
-- [Step 08: Publish Query](#step-08-publish-query) `[WOODGROVE]`
-- [Step 09: Approve Query](#step-09-approve-query) `[EACH COLLABORATOR]`
-- [Step 10: Execute Query](#step-10-execute-query) `[WOODGROVE]`
-- [Step 11: Monitor Query](#step-11-monitor-query) `[ANY]`
-- [Step 12: Results & Audit](#step-12-results--audit) `[WOODGROVE]`
+- [Step 07: Publish Query](#step-07-publish-query) `[WOODGROVE]`
+- [Step 08: Approve Query](#step-08-approve-query) `[EACH COLLABORATOR]`
+- [Step 09: Execute Query](#step-09-execute-query) `[WOODGROVE]`
+- [Step 10: Monitor Query](#step-10-monitor-query) `[ANY]`
+- [Step 11: Results & Audit](#step-11-results--audit) `[WOODGROVE]`
 - [Appendix A: Federated Credential Subject Reference](#appendix-a-federated-credential-subject-reference)
 - [Appendix B: Troubleshooting](#appendix-b-troubleshooting)
 - [Appendix C: CPK Deep Dive](#appendix-c-cpk-deep-dive)
@@ -96,10 +95,8 @@ demos/analytics-using-managedcleanroom/
 | Azure CLI | 2.75.0+ |
 | `managedcleanroom` extension | `az extension add --name managedcleanroom` (v1.0.0b5+) |
 | PowerShell | 7.x+ |
-| Python 3 | 3.10+ — `python --version` (Windows) or `python3 --version` (Linux/macOS) |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) — Windows: `winget install Microsoft.AzCopy` / Linux: `curl -sL https://aka.ms/downloadazcopy-v10-linux \| tar xz --strip-components=1 -C /usr/local/bin` |
-| `cryptography` package | CPK mode only — `pip install cryptography` |
 
 ### 1.2 Azure Subscription Permissions
 
@@ -172,17 +169,12 @@ $location = "westus"
 $ApiMode = "cli"           # "cli" or "rest"
 $EncryptionMode = "SSE"    # "SSE" or "CPK"
 
-# --- Iteration (increment for each new dataset publish: 1, 2, 3, ...) ---
-$iteration = 1
+# --- Iteration (incremented before each publish: starts at 0, first publish = v1) ---
+$iteration = 0
 
-# --- Derived names (auto-adjust for encryption mode + iteration) ---
-$suffix = if ($EncryptionMode -eq "CPK") { "-cpk-v$iteration" } else { "-v$iteration" }
-$queryName = "query1$suffix"
-Write-Host "Dataset suffix: '$suffix', Query: '$queryName'"
-
-# --- Persona (set to YOUR persona) ---
+# --- Persona (set to YOUR persona — this is the ONLY value that differs per terminal) ---
 $persona = "woodgrove"                # T2: "woodgrove"  |  T3: "northwind"
-$personaRg = "cr-e2e-woodgrove-rg"    # T2: "cr-e2e-woodgrove-rg"  |  T3: "cr-e2e-northwind-rg"
+$personaRg = "cr-e2e-$persona-rg"     # derived — no need to change
 $personaEmail = "<your-email>"
 
 # --- Create resource group (if it doesn't exist) ---
@@ -269,7 +261,7 @@ az managedcleanroom collaboration create `
     --location $location
 ```
 
-**Expected**: 202 Accepted — poll until complete (~25 minutes).
+**Runtime**: ~25 minutes
 
 ### 2.4 Enable Analytics Workload
 
@@ -280,7 +272,7 @@ az managedcleanroom collaboration enable-workload `
     --workload-type Analytics
 ```
 
-**Expected**: 202 Accepted. Poll until complete (**7 minutes**).
+**Runtime**: ~7 minutes
 
 **Verify**:
 ```powershell
@@ -307,8 +299,6 @@ az managedcleanroom collaboration add-collaborator `
     --resource-group $collabRg `
     --user-identifier $collaboratorEmail
 ```
-
-**Expected**: 202 Accepted for each.
 
 **Verify**:
 ```powershell
@@ -380,37 +370,46 @@ Should show `"status": "Active"` once all invitations are accepted.
 
 **Verify**: `generated/$personaRg/names.generated.ps1` and `resources.generated.json` exist.
 
-### 4.2 Download Sample Data
+### 4.2 Generate Sample Data
 
-Downloads Twitter CSV data from the `Azure-Samples/Synapse` GitHub repo into the local data directory.
+Generates synthetic CSV data locally (~8 MB per persona) for the audience overlap demo.
 
 ```powershell
-. "./scripts/common/get-input-data.ps1"
-$dataDir = "./generated/datasource/$persona"
-
-if ($persona -eq "woodgrove") {
-    Get-ConsumerData -dataDir $dataDir -format csv -schemaFields "date:date,time:string,author:string,mentions:string"
-} else {
-    Get-PublisherData -dataDir $dataDir -format csv -schemaFields "date:date,time:string,author:string,mentions:string"
-}
+./demos/generate-data.ps1 -persona $persona
 ```
+
+- **Northwind**: `audience_id`, `hashed_email`, `annual_income`, `region` (100k rows)
+- **Woodgrove**: `user_id`, `hashed_email`, `purchase_history` (100k rows)
+- 20% of `hashed_email` values overlap between both datasets.
+
+> In a real scenario you would use your own data — skip this step and
+> point `-dataDir` at your existing files in Step 4.3.
 
 **Verify**: `generated/datasource/$persona/csv/` contains `.csv` files.
 
-### 4.3 Upload Data
+### 4.3 Set Dataset Names
 
-#### SSE Mode
+Increments the iteration counter and derives the dataset suffix and query name.
+Run this block every time — first run and subsequent re-publishes alike.
 
 ```powershell
-./scripts/05-prepare-data-sse.ps1 -resourceGroup $personaRg -persona $persona `
-    -dataDir "./generated/datasource/$persona" `
-    -datasetSuffix "$suffix"
+$iteration++
+$suffix = if ($EncryptionMode -eq "CPK") { "-cpk-v$iteration" } else { "-v$iteration" }
+$queryName = "query1$suffix"
+Write-Host "Iteration: $iteration | Suffix: '$suffix' | Query: '$queryName'"
+Write-Host "  Input dataset:  $persona-input-csv$suffix"
+Write-Host "  Output dataset: woodgrove-output-csv$suffix"
 ```
 
-#### CPK Mode
+> **Repeat publish**: Run this block again (increments to v2, v3, ...), then continue with
+> Steps 4.4 → 06 → 08 → 09 → 10. All downstream commands pick up the new `$suffix`.
+
+### 4.4 Upload Data
 
 ```powershell
-./scripts/05-prepare-data-cpk.ps1 -resourceGroup $personaRg -persona $persona `
+$variant = if ($EncryptionMode -eq "CPK") { "cpk" } else { "sse" }
+./scripts/05-prepare-data.ps1 -resourceGroup $personaRg `
+    -variant $variant -persona $persona `
     -dataDir "./generated/datasource/$persona/csv" `
     -datasetSuffix "$suffix"
 ```
@@ -443,13 +442,31 @@ if ($oidcStorageAccount) { $identityParams["OidcStorageAccount"] = $oidcStorageA
 ./scripts/06-setup-identity.ps1 @identityParams
 ```
 
-> **MSFT tenant**: Uses the pre-provisioned whitelisted SA (`cleanroomoidc`). If this SA
-> is in a different tenant than your `az login` session, the upload will fail with
-> "Issuer validation failed". Open a separate terminal, `az login --tenant <msft-tenant-id>`,
-> and run the OIDC upload from there.
+> **MSFT tenant (same tenant)**: Uses the pre-provisioned whitelisted SA (`cleanroomoidc`).
+> The first collaborator uploads OIDC docs; subsequent collaborators in the same tenant can
+> either pass `-OidcStorageAccount` (idempotent overwrite) or use `-IssuerUrl` to skip the upload.
+
+> **Cross-tenant / reuse existing issuer**: If another collaborator already set up the OIDC
+> issuer, pass `-IssuerUrl` to skip the upload and just register the URL with CGS for your
+> tenant. The OIDC discovery document is public — no cross-tenant storage access needed.
 >
-> **All other tenants**: Omit `-OidcStorageAccount`. The script automatically creates a new
-> storage account with static website enabled in the collaborator's resource group.
+> ```powershell
+> # Collaborator B (different tenant or subscription — reuses A's issuer URL)
+> $identityParams = @{
+>     resourceGroup    = $personaRg
+>     persona          = $persona
+>     collaborationId  = $collabId
+>     frontendEndpoint = $frontend
+>     TokenFile        = $personaTokenFile
+>     ApiMode          = $ApiMode
+>     IssuerUrl        = "<issuer-url-from-collaborator-A>"   # e.g., https://cleanroomoidc.z22.web.core.windows.net/<collab-id>
+> }
+> ./scripts/06-setup-identity.ps1 @identityParams
+> ```
+
+> **New tenant (no shared SA)**: Omit both `-OidcStorageAccount` and `-IssuerUrl`. The script
+> automatically creates a new storage account with static website enabled in the collaborator's
+> resource group.
 
 **Verify**:
 ```powershell
@@ -492,40 +509,12 @@ az identity federated-credential list `
 >
 > - Woodgrove publishes: 1 input dataset (read) + 1 output dataset (write)
 > - Northwind publishes: 1 input dataset (read) only
-
-### 6.0 Update Naming (run before every publish)
-
-Re-derive names from the current `$iteration` value. On repeat publishes, increment first.
-
-```powershell
-# Increment iteration (skip this line on the very first publish)
-# $iteration++
-
-# Derive suffix and query name
-$suffix = if ($EncryptionMode -eq "CPK") { "-cpk-v$iteration" } else { "-v$iteration" }
-$queryName = "query1$suffix"
-Write-Host "Iteration: $iteration | Suffix: '$suffix' | Query: '$queryName'"
-Write-Host "  Input dataset:  $persona-input-csv$suffix"
-Write-Host "  Output dataset: woodgrove-output-csv$suffix"
-```
-
-> **Repeat publish**: Uncomment `$iteration++`, run the block, then continue with
-> Steps 4.3 → 06 → 08 → 09 → 10. All downstream commands pick up the new `$suffix`.
-
-### SSE Mode
+>
+> The script auto-detects SSE/CPK mode from the datastore metadata generated in Step 4.4.
+> For CPK, it also creates per-dataset KEKs and wraps DEKs (Phase B).
 
 ```powershell
-./scripts/08-publish-dataset-sse.ps1 -collaborationId $collabId `
-    -resourceGroup $personaRg -persona $persona `
-    -frontendEndpoint $frontend `
-    -TokenFile $personaTokenFile `
-    -ApiMode $ApiMode
-```
-
-### CPK Mode
-
-```powershell
-./scripts/08-publish-dataset-cpk.ps1 -collaborationId $collabId `
+./scripts/08-publish-dataset.ps1 -collaborationId $collabId `
     -resourceGroup $personaRg -persona $persona `
     -frontendEndpoint $frontend `
     -TokenFile $personaTokenFile `
@@ -550,45 +539,13 @@ Should show `"state": "Accepted"`.
 
 ---
 
-## Step 07: CPK Key Management `[EACH COLLABORATOR]` _(CPK only)_
-
-> **Skip this step for SSE mode.**
->
-> Verify that the key management performed in Step 06 completed correctly.
-
-```powershell
-. "generated/$personaRg/names.generated.ps1"
-
-$datasetName = "$persona-input-csv$suffix"   # e.g., "woodgrove-input-csv-cpk-v1"
-$kekName = "$datasetName-kek"
-
-# Check KEK
-az keyvault key show --vault-name $KEYVAULT_NAME --name $kekName `
-    --query '{exportable:attributes.exportable, keyType:key.kty, ops:key.keyOps}' -o json
-# Expected: exportable: true, keyType: "RSA-HSM", ops: ["encrypt", "wrapKey"]
-
-# Check wrapped DEK secret
-az keyvault secret show --vault-name $KEYVAULT_NAME `
-    --name "wrapped-$datasetName-dek-$kekName" `
-    --query '{name:name, id:id}' -o json
-
-# Check published dataset has kek/dek references
-$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
-$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
-az managedcleanroom frontend analytics dataset show `
-    --collaboration-id $collabId --document-id $datasetName -o json
-# Should include kek.kid, kek.maaUrl, dek.secretId
-```
-
-> If any verification fails, see [Appendix C: CPK Troubleshooting](#cpk-troubleshooting).
-
----
-
-## Step 08: Publish Query `[WOODGROVE]`
+## Step 07: Publish Query `[WOODGROVE]`
 
 > **Terminal: T2 (Woodgrove)** — Woodgrove proposes the SQL query.
 >
-> `$suffix` and `$queryName` were set in Step 1.4 based on `$EncryptionMode`.
+> `$suffix` and `$queryName` were set in Step 4.3 based on `$EncryptionMode`.
+> Each collaborator has their own `$suffix` — make sure to use the correct
+> dataset name for each collaborator when publishing queries.
 
 ### Single-collaborator query (Woodgrove data only)
 
@@ -606,11 +563,23 @@ az managedcleanroom frontend analytics dataset show `
 
 ### Multi-collaborator query (both datasets) — _multi-collaborator only_
 
+> **IMPORTANT**: Northwind's dataset name uses Northwind's suffix, which may differ
+> from Woodgrove's. Get the exact dataset name from Northwind, or list published
+> datasets to find it:
+> ```powershell
+> az managedcleanroom frontend analytics dataset list `
+>     --collaboration-id $collabId -o json | ConvertFrom-Json |
+>     Select-Object -ExpandProperty datasets |
+>     Where-Object { $_.id -match "northwind" } |
+>     ForEach-Object { Write-Host $_.id }
+> ```
+
 ```powershell
+$northwindDataset = "<northwind-input-dataset-name>"   # e.g., "northwind-input-csv-cpk-v1"
 ./scripts/09-publish-query.ps1 -collaborationId $collabId `
     -queryName "query2$suffix" `
-    -queryDir "./demos/query/woodgrove/query1" `
-    -publisherInputDataset "northwind-input-csv$suffix" `
+    -queryDir "./demos/query/woodgrove/query2" `
+    -publisherInputDataset $northwindDataset `
     -consumerInputDataset "woodgrove-input-csv$suffix" `
     -outputDataset "woodgrove-output-csv$suffix" `
     -frontendEndpoint $frontend `
@@ -621,13 +590,20 @@ az managedcleanroom frontend analytics dataset show `
 The query has 3 segments (in `demos/query/woodgrove/query1/`):
 - **Segment 1** (seq=1): `CREATE OR REPLACE TEMP VIEW publisher_view AS SELECT * FROM publisher_data`
 - **Segment 2** (seq=1): `CREATE OR REPLACE TEMP VIEW consumer_view AS SELECT * FROM consumer_data`
-- **Segment 3** (seq=2): `SELECT author, COUNT(*) ... FROM (... UNION ALL ...) WHERE mentions LIKE '%MikeDoesBigData%' GROUP BY author`
+- **Segment 3** (seq=2): `SELECT DISTINCT consumer_view.user_id ... WHERE consumer_view.purchase_history IN ('Sofa', 'Bed', ...)`
+
+> **Single-collaborator**: Both views point to the same woodgrove dataset (self-join). The
+> query filters by `purchase_history` — a column that exists in both views.
+>
+> **Multi-collaborator** (query2, in `demos/query/woodgrove/query2/`): Uses a cross-dataset
+> overlap JOIN on `hashed_email` with filters on northwind-only columns (`annual_income`,
+> `region`).
 
 **Expected**: 204 No Content.
 
 ---
 
-## Step 09: Approve Query `[EACH COLLABORATOR]`
+## Step 08: Approve Query `[EACH COLLABORATOR]`
 
 > **Single-collaborator**: Only Woodgrove votes (one vote → `Accepted`).
 >
@@ -641,23 +617,36 @@ The query has 3 segments (in `demos/query/woodgrove/query1/`):
 ```
 
 For `query2` _(multi-collaborator only)_ — **each** collaborator runs:
+
+> Northwind must use the exact query name published by Woodgrove. Get it from Woodgrove
+> or list published queries:
+> ```powershell
+> az managedcleanroom frontend analytics query list `
+>     --collaboration-id $collabId -o json
+> ```
+
 ```powershell
-./scripts/10-vote-query.ps1 -collaborationId $collabId -queryName "query2$suffix" `
+$query2Name = "<query2-name-from-woodgrove>"   # e.g., "query2-cpk-v1"
+./scripts/10-vote-query.ps1 -collaborationId $collabId -queryName $query2Name `
     -frontendEndpoint $frontend `
     -TokenFile $personaTokenFile `
     -ApiMode $ApiMode
 ```
 
-> **Consent ordering** (multi-collaborator): Consent can only be enabled on an `Accepted`
-> query. The query stays `Proposed` until all votes are in. The script enables consent
-> automatically after voting. If the first voter's consent fails (query still `Proposed`),
-> re-run after the last voter votes.
+> **Note**: All documents (datasets and queries) have execution consent enabled by default.
+> To revoke or re-enable consent later, use:
+> ```powershell
+> az managedcleanroom frontend consent set `
+>     --collaboration-id $collabId `
+>     --document-id "<document-name>" `
+>     --consent-action disable   # or "enable"
+> ```
 
 **Verify**: Query shows `"state": "Accepted"` with `proposalId` populated.
 
 ---
 
-## Step 10: Execute Query `[WOODGROVE]`
+## Step 09: Execute Query `[WOODGROVE]`
 
 > **Terminal: T2 (Woodgrove)**
 
@@ -678,11 +667,11 @@ $jobId = "cl-spark-<uuid>"
 
 ---
 
-## Step 11: Monitor Query `[ANY]`
+## Step 10: Monitor Query `[ANY]`
 
 > Run from any collaborator terminal.
 
-### 11.1 Real-Time Status
+### 10.1 Real-Time Status
 
 ```powershell
 ./scripts/13-run-status.ps1 -collaborationId $collabId `
@@ -703,7 +692,7 @@ $jobId = "cl-spark-<uuid>"
 
 > **`PENDING_RERUN`** is normal — transitions to `SUBMITTED` → `RUNNING` automatically.
 
-### 11.2 Audit Events
+### 10.2 Audit Events
 
 ```powershell
 ./scripts/15-audit-events.ps1 -collaborationId $collabId `
@@ -714,11 +703,11 @@ $jobId = "cl-spark-<uuid>"
 
 ---
 
-## Step 12: Results & Audit `[WOODGROVE]`
+## Step 11: Results & Audit `[WOODGROVE]`
 
 > **Terminal: T2 (Woodgrove)** — Woodgrove owns the output dataset.
 
-### 12.1 Run History
+### 11.1 Run History
 
 ```powershell
 ./scripts/14-run-history.ps1 -collaborationId $collabId `
@@ -734,8 +723,8 @@ $jobId = "cl-spark-<uuid>"
   "queryId": "query1",
   "latestRun": {
     "isSuccessful": true,
-    "stats": { "rowsRead": 13872, "rowsWritten": 697 },
-    "durationSeconds": 1039
+    "stats": { "rowsRead": ..., "rowsWritten": ... },
+    "durationSeconds": ...
   }
 }
 ```
@@ -743,16 +732,16 @@ $jobId = "cl-spark-<uuid>"
 > Returns 404 if no terminal runs yet. **Quirk**: try `--document-id Analytics` if
 > `runhistory list` returns empty for a completed run.
 
-### 12.2 Download Output (SSE)
+### 11.2 Download Output (SSE)
 
 ```powershell
 . "generated/$personaRg/names.generated.ps1"
 
-# Find the output CSV blob for the latest run (uses $jobId from Step 10)
+# Find the output CSV blob for the latest run (uses $jobId from Step 09)
 # Strip the "cl-spark-" prefix to get the run UUID used in the blob path
 $runUuid = $jobId -replace '^cl-spark-', ''
 $blobs = az storage blob list --account-name $STORAGE_ACCOUNT_NAME `
-    --container-name woodgrove-output `
+    --container-name "woodgrove-output$suffix" `
     --prefix "Analytics/" --auth-mode login -o json | ConvertFrom-Json
 $csvBlob = ($blobs | Where-Object {
     $_.name -match '\.csv$' -and $_.name -notmatch '\.crc$' -and $_.name -match $runUuid
@@ -762,7 +751,7 @@ Write-Host "Output blob: $csvBlob"
 # Download it
 $outputFile = Join-Path "." "output.csv"
 az storage blob download --account-name $STORAGE_ACCOUNT_NAME `
-    --container-name woodgrove-output `
+    --container-name "woodgrove-output$suffix" `
     --name $csvBlob `
     --file $outputFile --auth-mode login
 
@@ -777,7 +766,7 @@ Get-Content $outputFile
 >     Sort-Object -Property @{E={$_.properties.lastModified}} -Descending | Select-Object -First 1).name
 > ```
 
-### 12.3 Download Output (CPK)
+### 11.3 Download Output (CPK)
 
 ```powershell
 . "generated/$personaRg/names.generated.ps1"
@@ -789,7 +778,8 @@ Get-Content $outputFile
     -ApiMode $ApiMode `
     -DownloadCpkOutput `
     -OutputDekFile "generated/datastores/keys/woodgrove-output-csv$suffix-dek.bin" `
-    -OutputStorageAccount $STORAGE_ACCOUNT_NAME
+    -OutputStorageAccount $STORAGE_ACCOUNT_NAME `
+    -OutputContainer "woodgrove-output$suffix"
 ```
 
 > The `--include-pattern "*.csv;*.crc;*_SUCCESS*"` filter is required for HNS-enabled
@@ -990,13 +980,13 @@ Runtime:  SKR release → KEK private → unwrap DEK → CPK header → Storage 
 
 ### CPK Key Management Details
 
-**KEK creation** (done by `08-publish-dataset-cpk.ps1`):
-- Generated locally as RSA-2048 using Python `cryptography` lib
+**KEK creation** (done by `08-publish-dataset.ps1`):
+- Generated locally as RSA-2048 using .NET `System.Security.Cryptography.RSA`
 - Imported via `az keyvault key import` (NOT `key create`)
 - `--exportable true --protection hsm --immutable false`
 - SKR release policy attached (fetched from published dataset's `skr-policy` endpoint)
 
-**DEK wrapping** (done by `08-publish-dataset-cpk.ps1`):
+**DEK wrapping** (done by `08-publish-dataset.ps1`):
 - Client-side RSA-OAEP with SHA-256 (both MGF1 and hash)
 - NOT via `az keyvault key encrypt` (server-side wrapping doesn't work for CPK)
 

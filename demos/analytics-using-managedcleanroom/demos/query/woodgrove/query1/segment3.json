@@ -1,5 +1,5 @@
 {
-  "data": "SELECT author, COUNT(*) AS Number_Of_Mentions, SUM(mentions) AS Restricted_Sum FROM (SELECT * FROM publisher_view UNION ALL SELECT * FROM consumer_view) AS combine_data WHERE mentions LIKE '%MikeDoesBigData%' GROUP BY author ORDER BY Number_Of_Mentions DESC",
+  "data": "SELECT DISTINCT consumer_view.user_id FROM consumer_view INNER JOIN publisher_view ON consumer_view.hashed_email = publisher_view.hashed_email WHERE consumer_view.purchase_history IN ('Sofa', 'Bed', 'Wardrobe', 'Gaming Chair', 'Recliner')",
   "executionSequence": 2,
   "preConditions": "",
   "postFilters": ""

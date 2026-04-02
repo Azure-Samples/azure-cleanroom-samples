@@ -56,7 +56,12 @@ param(
     # For MSFT-tenant collaborations, use -OidcStorageAccount "cleanroomoidc"
     # to upload OIDC documents to the whitelisted storage account instead of
     # creating a new one in the resource group.
-    [string]$OidcStorageAccount
+    [string]$OidcStorageAccount,
+
+    # If another collaborator already set up the OIDC issuer, pass their issuer URL
+    # here to skip the upload. The script still registers the URL with CGS for the
+    # caller's tenant (CGS stores issuer URLs per-tenant) and generates identity metadata.
+    [string]$IssuerUrl
 )
 
 # Configure Private CleanRoom cloud and verify local user auth
@@ -73,20 +78,59 @@ if (-not (Test-Path $namesFile)) {
 }
 . $namesFile
 
-# Step 1: Set up OIDC issuer (this script already uses standard Azure CLI only).
-Write-Host "=== Step 1: Setting up OIDC issuer ===" -ForegroundColor Cyan
-$oidcArgs = @{
-    resourceGroup    = $resourceGroup
-    collaborationId  = $collaborationId
-    frontendEndpoint = $frontendEndpoint
-    outDir           = $outDir
-    TokenFile        = $TokenFile
-    ApiMode          = $ApiMode
+# Step 1: Set up OIDC issuer (skip upload if IssuerUrl already provided).
+if ($IssuerUrl) {
+    Write-Host "=== Step 1: Using provided issuer URL (skipping OIDC upload) ===" -ForegroundColor Cyan
+    Write-Host "Issuer URL: $IssuerUrl" -ForegroundColor Yellow
+    $issuerUrlFile = Join-Path $outDir $resourceGroup "issuer-url.txt"
+    New-Item -ItemType Directory -Path (Split-Path $issuerUrlFile) -Force | Out-Null
+    $IssuerUrl | Out-File -FilePath $issuerUrlFile -Encoding utf8
+
+    # Still register the issuer URL with CGS for THIS caller's tenant.
+    # CGS stores issuer URLs per-tenant — each tenant must register even if the URL is the same.
+    Write-Host "Registering issuer URL with CGS for this tenant..." -ForegroundColor Cyan
+    . "$PSScriptRoot/common/frontend-helpers.ps1"
+    $feBase = $frontendEndpoint.TrimEnd('/')
+    if ($feBase.EndsWith('/collaborations')) {
+        $feBase = $feBase.Substring(0, $feBase.Length - '/collaborations'.Length)
+    }
+
+    if ($ApiMode -eq "cli") {
+        $token = Get-FrontendToken -TokenFile $TokenFile
+        $env:MANAGEDCLEANROOM_ACCESS_TOKEN = $token
+        $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
+        az managedcleanroom frontend configure --endpoint $feBase 2>&1 | Out-Null
+        az managedcleanroom frontend oidc set-issuer-url `
+            --collaboration-id $collaborationId `
+            --url $IssuerUrl
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to register issuer URL via CLI"
+        }
+    } else {
+        $token = Get-FrontendToken -TokenFile $TokenFile
+        $headers = @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" }
+        $setIssuerBody = @{ url = $IssuerUrl } | ConvertTo-Json
+        Invoke-RestMethod `
+            -Uri "$feBase/collaborations/$collaborationId/oidc/setIssuerUrl?api-version=2026-03-01-preview" `
+            -Headers $headers -Method Post -Body $setIssuerBody `
+            -ContentType "application/json" -SkipCertificateCheck
+    }
+    Write-Host "Issuer URL registered with CGS." -ForegroundColor Green
+} else {
+    Write-Host "=== Step 1: Setting up OIDC issuer ===" -ForegroundColor Cyan
+    $oidcArgs = @{
+        resourceGroup    = $resourceGroup
+        collaborationId  = $collaborationId
+        frontendEndpoint = $frontendEndpoint
+        outDir           = $outDir
+        TokenFile        = $TokenFile
+        ApiMode          = $ApiMode
+    }
+    if ($OidcStorageAccount) {
+        $oidcArgs["OidcStorageAccount"] = $OidcStorageAccount
+    }
+    & "$PSScriptRoot/common/setup-oidc-issuer.ps1" @oidcArgs
 }
-if ($OidcStorageAccount) {
-    $oidcArgs["OidcStorageAccount"] = $OidcStorageAccount
-}
-& "$PSScriptRoot/common/setup-oidc-issuer.ps1" @oidcArgs
 
 # Step 2: Read issuer URL.
 Write-Host "`n=== Step 2: Reading issuer URL ===" -ForegroundColor Cyan

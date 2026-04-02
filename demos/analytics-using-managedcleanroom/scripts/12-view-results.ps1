@@ -34,10 +34,8 @@
     Storage account name for output (required if -DownloadCpkOutput is set).
 
 .PARAMETER OutputContainer
-    Output container name (default: woodgrove-output).
-
-.PARAMETER OutputLocalDir
-    Local directory to download output to (default: ./generated/output).
+    Output container name (default: woodgrove-output). For CPK with iterations,
+    use the suffixed name (e.g., woodgrove-output-cpk-v1).
 #>
 param(
     [Parameter(Mandatory)]

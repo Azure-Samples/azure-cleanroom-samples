@@ -4,8 +4,10 @@
 
 .DESCRIPTION
     Run by: Woodgrove (consumer).
-    Publishes a query by reading SQL segment files and calling the frontend
-    REST API. Supports both REST API and az managedcleanroom CLI modes via -ApiMode parameter.
+    Publishes a query by reading SQL segment files (segment*.txt or segment*.json)
+    and calling the frontend API. Auto-detects file format from directory contents.
+
+    Supports both REST API and az managedcleanroom CLI modes via -ApiMode parameter.
 
 .PARAMETER collaborationId
     The collaboration ARM resource ID.
@@ -30,9 +32,6 @@
 
 .PARAMETER outDir
     Output directory for generated metadata (default: ./generated).
-
-.PARAMETER persona
-    Persona (northwind or woodgrove) for naming/logging.
 #>
 param(
     [Parameter(Mandatory)]
@@ -81,56 +80,52 @@ if (-not (Test-Path $queryDir)) {
     exit 1
 }
 
-$segment1File = Join-Path $queryDir "segment1.txt"
-$segment2File = Join-Path $queryDir "segment2.txt"
-$segment3File = Join-Path $queryDir "segment3.txt"
+# Auto-detect segment file format: prefer JSON, fall back to TXT
+$jsonSegments = Get-ChildItem -Path $queryDir -Filter "segment*.json" -ErrorAction SilentlyContinue | Sort-Object Name
+$txtSegments  = Get-ChildItem -Path $queryDir -Filter "segment*.txt" -ErrorAction SilentlyContinue | Sort-Object Name
 
-if (-not (Test-Path $segment1File) -or -not (Test-Path $segment2File) -or -not (Test-Path $segment3File)) {
-    Write-Host "ERROR: Missing segment files in '$queryDir'." -ForegroundColor Red
+$queryData = @()
+
+if ($jsonSegments.Count -gt 0) {
+    Write-Host "=== Publishing query '$queryName' (JSON segments) ===" -ForegroundColor Cyan
+    Write-Host "Found $($jsonSegments.Count) segment files:" -ForegroundColor Yellow
+    $jsonSegments | ForEach-Object { Write-Host "  - $($_.Name)" -ForegroundColor Gray }
+
+    foreach ($segFile in $jsonSegments) {
+        $seg = Get-Content $segFile.FullName -Raw | ConvertFrom-Json
+        $queryData += @{
+            data              = $seg.data
+            executionSequence = $seg.executionSequence
+            preConditions     = if ($seg.preConditions) { $seg.preConditions } else { "" }
+            postFilters       = if ($seg.postFilters) { $seg.postFilters } else { "" }
+        }
+    }
+} elseif ($txtSegments.Count -ge 3) {
+    Write-Host "=== Publishing query '$queryName' (TXT segments) ===" -ForegroundColor Cyan
+
+    $segment1Sql = (Get-Content (Join-Path $queryDir "segment1.txt") -Raw).Trim()
+    $segment2Sql = (Get-Content (Join-Path $queryDir "segment2.txt") -Raw).Trim()
+    $segment3Sql = (Get-Content (Join-Path $queryDir "segment3.txt") -Raw).Trim()
+
+    $queryData = @(
+        @{ data = $segment1Sql; executionSequence = 1; preConditions = ""; postFilters = "" },
+        @{ data = $segment2Sql; executionSequence = 1; preConditions = ""; postFilters = "" },
+        @{ data = $segment3Sql; executionSequence = 2; preConditions = ""; postFilters = "" }
+    )
+} else {
+    Write-Host "ERROR: No segment*.json or segment*.txt files found in '$queryDir'." -ForegroundColor Red
     exit 1
 }
-
-Write-Host "=== Publishing query '$queryName' ===" -ForegroundColor Cyan
-
-$segment1Sql = (Get-Content $segment1File -Raw).Trim()
-$segment2Sql = (Get-Content $segment2File -Raw).Trim()
-$segment3Sql = (Get-Content $segment3File -Raw).Trim()
 
 # Check if already published
 $existingQuery = Get-FrontendQuery -Context $feCtx -CollaborationId $collaborationId -DocumentId $queryName -TokenFile $TokenFile
 if ($existingQuery) {
     Write-Host "Query '$queryName' already published (skipped)." -ForegroundColor Yellow
 } else {
-    # Build query publish body
-    # Body structure verified from CLI source (_frontend_custom.py, lines 654-658):
-    #   inputDatasets (comma-separated "ds:view" pairs), outputDataset ("ds:view"),
-    #   queryData (array of {data, executionSequence, preConditions, postFilters})
-    #
-    # Execution sequences from the demo: segment1=1, segment2=1, segment3=2
-    # (segments 1 and 2 run in parallel, segment 3 runs after both complete)
     $queryBody = @{
         inputDatasets = "${publisherInputDataset}:publisher_data,${consumerInputDataset}:consumer_data"
         outputDataset = "${outputDataset}:output"
-        queryData     = @(
-            @{
-                data              = $segment1Sql
-                executionSequence = 1
-                preConditions     = ""
-                postFilters       = ""
-            },
-            @{
-                data              = $segment2Sql
-                executionSequence = 1
-                preConditions     = ""
-                postFilters       = ""
-            },
-            @{
-                data              = $segment3Sql
-                executionSequence = 2
-                preConditions     = ""
-                postFilters       = ""
-            }
-        )
+        queryData     = $queryData
     }
 
     Publish-FrontendQuery -Context $feCtx `
@@ -148,5 +143,3 @@ if ($queryInfo) {
 }
 
 Write-Host "`nAll collaborators must now vote to approve this query before execution." -ForegroundColor Yellow
-Write-Host "NOTE: Execution consent can only be enabled AFTER the query is accepted (voted on)." -ForegroundColor Yellow
-Write-Host "Run 10-vote-query.ps1 next — it will vote AND enable consent." -ForegroundColor Yellow

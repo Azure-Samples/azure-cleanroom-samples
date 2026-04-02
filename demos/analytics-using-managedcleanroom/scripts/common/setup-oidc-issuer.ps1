@@ -296,6 +296,40 @@ if ($ApiMode -eq "cli") {
 }
 Write-Host "Issuer URL registered with CGS." -ForegroundColor Green
 
+# -- Verify: Fetch OIDC issuer info after registration --------------------------
+Write-Host "`nVerifying OIDC issuer info..." -ForegroundColor Cyan
+try {
+    if ($ApiMode -eq "cli") {
+        $token = Get-FrontendToken -TokenFile $TokenFile
+        $env:MANAGEDCLEANROOM_ACCESS_TOKEN = $token
+        $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
+        az managedcleanroom frontend configure --endpoint $feBase 2>&1 | Out-Null
+
+        $PSNativeCommandUseErrorActionPreference = $false
+        $infoRaw = az managedcleanroom frontend oidc issuerinfo show `
+            --collaboration-id $collaborationId 2>&1
+        $PSNativeCommandUseErrorActionPreference = $true
+        $infoJson = $infoRaw | Where-Object { $_ -is [string] }
+        if ($LASTEXITCODE -eq 0 -and $infoJson) {
+            $info = $infoJson | ConvertFrom-Json
+            Write-Host "OIDC issuer info (after set):" -ForegroundColor Green
+            $info | ConvertTo-Json -Depth 5
+        }
+    } else {
+        $token = Get-FrontendToken -TokenFile $TokenFile
+        $headers = @{
+            Authorization  = "Bearer $token"
+            "Content-Type" = "application/json"
+        }
+        $infoUrl = "$feBase/collaborations/$collaborationId/oidc/issuerinfo?api-version=$apiVersion"
+        $info = Invoke-RestMethod -Uri $infoUrl -Headers $headers -Method Get -SkipCertificateCheck
+        Write-Host "OIDC issuer info (after set):" -ForegroundColor Green
+        $info | ConvertTo-Json -Depth 5
+    }
+} catch {
+    Write-Warning "Failed to fetch OIDC issuer info after set: $_"
+}
+
 # -- Save issuer URL ------------------------------------------------------------
 $issuerUrlPath = Join-Path $outputDir "issuer-url.txt"
 $issuerUrl | Out-File -FilePath $issuerUrlPath -Encoding utf8

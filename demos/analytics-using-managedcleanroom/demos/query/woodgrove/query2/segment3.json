@@ -1,4 +1,6 @@
 {
-  "data": "SELECT author, COUNT(*) AS Total_Tweets, COUNT(DISTINCT CASE WHEN mentions IS NOT NULL AND mentions != '' THEN mentions END) AS Unique_Mentions FROM (SELECT * FROM publisher_view UNION ALL SELECT * FROM consumer_view) AS combined_data GROUP BY author ORDER BY Total_Tweets DESC LIMIT 10",
-  "executionSequence": 2
+  "data": "SELECT consumer_view.user_id FROM consumer_view INNER JOIN publisher_view ON consumer_view.hashed_email = publisher_view.hashed_email WHERE publisher_view.annual_income > 100000 AND publisher_view.region IN ('IN', 'US', 'UK')",
+  "executionSequence": 2,
+  "preConditions": "",
+  "postFilters": ""
 }
