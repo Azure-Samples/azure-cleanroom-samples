@@ -1,4 +1,6 @@
 {
   "data": "SELECT consumer_view.user_id FROM consumer_view INNER JOIN publisher_view ON consumer_view.hashed_email = publisher_view.hashed_email WHERE publisher_view.annual_income > 100000 AND publisher_view.region IN ('IN', 'US', 'UK')",
-  "executionSequence": 2
+  "executionSequence": 2,
+  "preConditions": "",
+  "postFilters": ""
 }

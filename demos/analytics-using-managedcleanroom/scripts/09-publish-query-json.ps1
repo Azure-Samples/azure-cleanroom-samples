@@ -125,8 +125,3 @@ if ($queryInfo) {
 }
 
 Write-Host "`nAll collaborators must now vote to approve this query before execution." -ForegroundColor Yellow
-
-# -- Enable execution consent on query -------------------------------------------
-Write-Host "`n=== Enabling execution consent on query ===" -ForegroundColor Cyan
-Set-FrontendConsent -Context $feCtx -CollaborationId $collaborationId -DocumentId $queryName -Action "enable"
-Write-Host "Execution consent enabled for query '$queryName'." -ForegroundColor Green

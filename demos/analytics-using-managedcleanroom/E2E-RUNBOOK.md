@@ -14,12 +14,11 @@ Supports **SSE** and **CPK** encryption modes, with **CLI** or **REST API** oper
 - [Step 04: Resource Provisioning](#step-04-resource-provisioning) `[EACH COLLABORATOR]`
 - [Step 05: OIDC Identity & Federated Credentials](#step-05-oidc-identity--federated-credentials) `[EACH COLLABORATOR]`
 - [Step 06: Publish Datasets](#step-06-publish-datasets) `[EACH COLLABORATOR]`
-- [Step 07: CPK Key Management](#step-07-cpk-key-management) `[EACH COLLABORATOR]` _(CPK only)_
-- [Step 08: Publish Query](#step-08-publish-query) `[WOODGROVE]`
-- [Step 09: Approve Query](#step-09-approve-query) `[EACH COLLABORATOR]`
-- [Step 10: Execute Query](#step-10-execute-query) `[WOODGROVE]`
-- [Step 11: Monitor Query](#step-11-monitor-query) `[ANY]`
-- [Step 12: Results & Audit](#step-12-results--audit) `[WOODGROVE]`
+- [Step 07: Publish Query](#step-07-publish-query) `[WOODGROVE]`
+- [Step 08: Approve Query](#step-08-approve-query) `[EACH COLLABORATOR]`
+- [Step 09: Execute Query](#step-09-execute-query) `[WOODGROVE]`
+- [Step 10: Monitor Query](#step-10-monitor-query) `[ANY]`
+- [Step 11: Results & Audit](#step-11-results--audit) `[WOODGROVE]`
 - [Appendix A: Federated Credential Subject Reference](#appendix-a-federated-credential-subject-reference)
 - [Appendix B: Troubleshooting](#appendix-b-troubleshooting)
 - [Appendix C: CPK Deep Dive](#appendix-c-cpk-deep-dive)
@@ -409,18 +408,10 @@ Write-Host "  Output dataset: woodgrove-output-csv$suffix"
 
 ### 4.4 Upload Data
 
-#### SSE Mode
-
 ```powershell
-./scripts/05-prepare-data-sse.ps1 -resourceGroup $personaRg -persona $persona `
-    -dataDir "./generated/datasource/$persona" `
-    -datasetSuffix "$suffix"
-```
-
-#### CPK Mode
-
-```powershell
-./scripts/05-prepare-data-cpk.ps1 -resourceGroup $personaRg -persona $persona `
+$variant = if ($EncryptionMode -eq "CPK") { "cpk" } else { "sse" }
+./scripts/05-prepare-data.ps1 -resourceGroup $personaRg `
+    -variant $variant -persona $persona `
     -dataDir "./generated/datasource/$persona/csv" `
     -datasetSuffix "$suffix"
 ```
@@ -502,21 +493,12 @@ az identity federated-credential list `
 >
 > - Woodgrove publishes: 1 input dataset (read) + 1 output dataset (write)
 > - Northwind publishes: 1 input dataset (read) only
-
-### SSE Mode
-
-```powershell
-./scripts/08-publish-dataset-sse.ps1 -collaborationId $collabId `
-    -resourceGroup $personaRg -persona $persona `
-    -frontendEndpoint $frontend `
-    -TokenFile $personaTokenFile `
-    -ApiMode $ApiMode
-```
-
-### CPK Mode
+>
+> The script auto-detects SSE/CPK mode from the datastore metadata generated in Step 4.4.
+> For CPK, it also creates per-dataset KEKs and wraps DEKs (Phase B).
 
 ```powershell
-./scripts/08-publish-dataset-cpk.ps1 -collaborationId $collabId `
+./scripts/08-publish-dataset.ps1 -collaborationId $collabId `
     -resourceGroup $personaRg -persona $persona `
     -frontendEndpoint $frontend `
     -TokenFile $personaTokenFile `
@@ -541,41 +523,7 @@ Should show `"state": "Accepted"`.
 
 ---
 
-## Step 07: CPK Key Management `[EACH COLLABORATOR]` _(CPK only)_
-
-> **Skip this step for SSE mode.**
->
-> Verify that the key management performed in Step 06 completed correctly.
-
-```powershell
-. "generated/$personaRg/names.generated.ps1"
-
-$datasetName = "$persona-input-csv$suffix"   # e.g., "woodgrove-input-csv-cpk-v1"
-$kekName = "$datasetName-kek"
-
-# Check KEK
-az keyvault key show --vault-name $KEYVAULT_NAME --name $kekName `
-    --query '{exportable:attributes.exportable, keyType:key.kty, ops:key.keyOps}' -o json
-# Expected: exportable: true, keyType: "RSA-HSM", ops: ["encrypt", "wrapKey"]
-
-# Check wrapped DEK secret
-az keyvault secret show --vault-name $KEYVAULT_NAME `
-    --name "wrapped-$datasetName-dek-$kekName" `
-    --query '{name:name, id:id}' -o json
-
-# Check published dataset has kek/dek references
-$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
-$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
-az managedcleanroom frontend analytics dataset show `
-    --collaboration-id $collabId --document-id $datasetName -o json
-# Should include kek.kid, kek.maaUrl, dek.secretId
-```
-
-> If any verification fails, see [Appendix C: CPK Troubleshooting](#cpk-troubleshooting).
-
----
-
-## Step 08: Publish Query `[WOODGROVE]`
+## Step 07: Publish Query `[WOODGROVE]`
 
 > **Terminal: T2 (Woodgrove)** — Woodgrove proposes the SQL query.
 >
@@ -625,7 +573,7 @@ The query has 3 segments (in `demos/query/woodgrove/query1/`):
 
 ---
 
-## Step 09: Approve Query `[EACH COLLABORATOR]`
+## Step 08: Approve Query `[EACH COLLABORATOR]`
 
 > **Single-collaborator**: Only Woodgrove votes (one vote → `Accepted`).
 >
@@ -659,7 +607,7 @@ For `query2` _(multi-collaborator only)_ — **each** collaborator runs:
 
 ---
 
-## Step 10: Execute Query `[WOODGROVE]`
+## Step 09: Execute Query `[WOODGROVE]`
 
 > **Terminal: T2 (Woodgrove)**
 
@@ -680,11 +628,11 @@ $jobId = "cl-spark-<uuid>"
 
 ---
 
-## Step 11: Monitor Query `[ANY]`
+## Step 10: Monitor Query `[ANY]`
 
 > Run from any collaborator terminal.
 
-### 11.1 Real-Time Status
+### 10.1 Real-Time Status
 
 ```powershell
 ./scripts/13-run-status.ps1 -collaborationId $collabId `
@@ -705,7 +653,7 @@ $jobId = "cl-spark-<uuid>"
 
 > **`PENDING_RERUN`** is normal — transitions to `SUBMITTED` → `RUNNING` automatically.
 
-### 11.2 Audit Events
+### 10.2 Audit Events
 
 ```powershell
 ./scripts/15-audit-events.ps1 -collaborationId $collabId `
@@ -716,11 +664,11 @@ $jobId = "cl-spark-<uuid>"
 
 ---
 
-## Step 12: Results & Audit `[WOODGROVE]`
+## Step 11: Results & Audit `[WOODGROVE]`
 
 > **Terminal: T2 (Woodgrove)** — Woodgrove owns the output dataset.
 
-### 12.1 Run History
+### 11.1 Run History
 
 ```powershell
 ./scripts/14-run-history.ps1 -collaborationId $collabId `
@@ -745,12 +693,12 @@ $jobId = "cl-spark-<uuid>"
 > Returns 404 if no terminal runs yet. **Quirk**: try `--document-id Analytics` if
 > `runhistory list` returns empty for a completed run.
 
-### 12.2 Download Output (SSE)
+### 11.2 Download Output (SSE)
 
 ```powershell
 . "generated/$personaRg/names.generated.ps1"
 
-# Find the output CSV blob for the latest run (uses $jobId from Step 10)
+# Find the output CSV blob for the latest run (uses $jobId from Step 09)
 # Strip the "cl-spark-" prefix to get the run UUID used in the blob path
 $runUuid = $jobId -replace '^cl-spark-', ''
 $blobs = az storage blob list --account-name $STORAGE_ACCOUNT_NAME `
@@ -779,7 +727,7 @@ Get-Content $outputFile
 >     Sort-Object -Property @{E={$_.properties.lastModified}} -Descending | Select-Object -First 1).name
 > ```
 
-### 12.3 Download Output (CPK)
+### 11.3 Download Output (CPK)
 
 ```powershell
 . "generated/$personaRg/names.generated.ps1"
@@ -992,13 +940,13 @@ Runtime:  SKR release → KEK private → unwrap DEK → CPK header → Storage 
 
 ### CPK Key Management Details
 
-**KEK creation** (done by `08-publish-dataset-cpk.ps1`):
+**KEK creation** (done by `08-publish-dataset.ps1`):
 - Generated locally as RSA-2048 using Python `cryptography` lib
 - Imported via `az keyvault key import` (NOT `key create`)
 - `--exportable true --protection hsm --immutable false`
 - SKR release policy attached (fetched from published dataset's `skr-policy` endpoint)
 
-**DEK wrapping** (done by `08-publish-dataset-cpk.ps1`):
+**DEK wrapping** (done by `08-publish-dataset.ps1`):
 - Client-side RSA-OAEP with SHA-256 (both MGF1 and hash)
 - NOT via `az keyvault key encrypt` (server-side wrapping doesn't work for CPK)
 
