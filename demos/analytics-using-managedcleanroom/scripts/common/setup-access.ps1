@@ -28,14 +28,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
-# Runs an az command, returning $null instead of throwing if it fails.
-function Invoke-AzSafe {
-    param([string[]]$Arguments)
-    $PSNativeCommandUseErrorActionPreference = $false
-    $result = & az @Arguments 2>$null
-    if ($LASTEXITCODE -eq 0) { return $result }
-    return $null
-}
+. "$PSScriptRoot/utils.ps1"
 
 # -- Load generated resource names -----------------------------------------------
 $namesFile = Join-Path $outDir $resourceGroup "names.generated.ps1"

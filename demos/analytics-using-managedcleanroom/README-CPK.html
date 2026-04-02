@@ -23,75 +23,45 @@ blockquote.markdown-alert-caution { border-color: #cf222e; background: #ffebe9; 
 </style>
 </head>
 <body>
-<h1>Big Data Analytics — CPK (Customer-Provided Key) — Native CLI Variant <!-- omit from toc --></h1>
-<p>This walkthrough demonstrates multi-party big data analytics using a <strong>Managed Clean Room</strong> with <strong>Customer-Provided Key (CPK)</strong> encryption. You encrypt data with your own keys (DEK/KEK stored in Azure Key Vault) before uploading, providing the strongest data control.</p>
-<blockquote class="markdown-alert markdown-alert-important"><p><strong>IMPORTANT</strong>
-<strong>This variant has zero <code>az cleanroom</code> dependency.</strong> Every step uses standard Azure CLI or the public <code>az managedcleanroom</code> extension. Step 8 (Publish datasets) constructs the DatasetSpecification JSON natively in PowerShell — including CPK encryption secret references (DEK/KEK). The JSON structure was derived from the cleanroom extension source code (<code>CleanRoomSpecification</code> model in cleanroom v5.0.0). See the <a href="#architecture">Architecture</a> section for details.</p>
-</blockquote>
-<blockquote class="markdown-alert markdown-alert-warning"><p><strong>WARNING</strong>
-<strong>CLI help is insufficient for building automation.</strong> The <code>az managedcleanroom</code> CLI help (<code>--help</code>) documents input parameters but does not describe output schemas, error codes, or response fields. For example, <code>collaboration show</code> returns JSON but the field names (e.g., where the frontend endpoint URL lives) are undocumented. <code>add-collaborator</code> has no documented error codes to distinguish &quot;already added&quot; from a real failure. Building idempotent scripts required trial-and-error and error-text matching.</p>
-<p>🔴 <strong>ACCR team: Please enrich <code>--help</code> output with response schemas, error codes, and examples.</strong></p>
-</blockquote>
-<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong>
-<strong>Internal references used to validate this walkthrough:</strong></p>
-<ul>
-<li><strong>POC architecture docs:</strong> <a href="https://github.com/azure-core/azure-cleanroom"><code>azure-core/azure-cleanroom</code></a> repo → <a href="https://github.com/azure-core/azure-cleanroom/tree/develop/poc/managed-cleanroom"><code>poc/managed-cleanroom/</code></a> on the <code>develop</code> branch — design docs, sequence diagrams, security model</li>
-<li><strong>Frontend service source code:</strong> <a href="https://github.com/azure-core/azure-cleanroom"><code>azure-core/azure-cleanroom</code></a> repo → <a href="https://github.com/azure-core/azure-cleanroom/tree/user/ashank/frontendAuth/src/workloads/frontend"><code>src/workloads/frontend/</code></a> on the <code>user/ashank/frontendAuth</code> branch — C# models, OpenAPI schema, controllers</li>
-<li><strong><code>az managedcleanroom</code> CLI extension source:</strong> <a href="https://github.com/Azure/azure-cli-extensions"><code>Azure/azure-cli-extensions</code></a> repo → <a href="https://github.com/Azure/azure-cli-extensions/tree/main/src/managedcleanroom"><code>src/managedcleanroom/</code></a> on <code>main</code> — Python CLI commands for collaboration lifecycle, publishing, voting, execution</li>
-<li><strong><code>az cleanroom</code> CLI extension source (reference only):</strong> <a href="https://github.com/azure-core/azure-cleanroom"><code>azure-core/azure-cleanroom</code></a> repo → <a href="https://github.com/azure-core/azure-cleanroom/tree/user/ashank/frontendAuth/src/tools/azure-cli-extension/cleanroom"><code>src/tools/azure-cli-extension/cleanroom/</code></a> on the <code>user/ashank/frontendAuth</code> branch — used to derive the DatasetSpecification JSON structure (<code>CleanRoomSpecification</code> model, <code>AccessPoint</code>, <code>PrivacyProxySettings</code>, <code>EncryptionSecrets</code>)</li>
-</ul>
-</blockquote>
-<blockquote>
-<p><strong>New to clean rooms?</strong> The SSE (Server-Side Encryption) native variant is simpler and covers the same workflow. Consider starting there if this is your first clean room deployment.</p>
-</blockquote>
+<h1>Big Data Analytics &mdash; CPK (Customer-Provided Key) <!-- omit from toc --></h1>
+<p>This sample illustrates how
+<a href="https://learn.microsoft.com/en-us/azure/confidential-computing/confidential-clean-rooms">Azure Confidential Clean Rooms</a>
+can be used to set up a fully managed clean room for confidential Spark SQL
+analytics with <strong>Customer-Provided Key (CPK)</strong> encryption. You encrypt data with
+your own keys (DEK/KEK stored in Azure Key Vault Premium) before uploading,
+and the keys are securely released only to the confidential environment.</p>
+<p>If you prefer a simpler setup where Azure Storage handles encryption of data at
+rest, use the <a href="README-SSE.md">SSE variant</a> instead.</p>
 <h2>Table of Contents <!-- omit from toc --></h2>
 <ul>
-<li><p><a href="#overview">Overview</a></p>
-</li>
-<li><p><a href="#prerequisites">Prerequisites</a></p>
-</li>
-<li><p><a href="#personas">Personas</a></p>
-</li>
-<li><p><a href="#architecture">Architecture</a></p>
-</li>
-<li><p><a href="#how-cpk-differs-from-sse">How CPK Differs from SSE</a></p>
-</li>
-<li><p><a href="#step-0-prerequisites-setup-all-parties">Step 0: Prerequisites setup (all parties)</a></p>
-</li>
-<li><p><a href="#step-1-create-the-collaboration-owner">Step 1: Create the collaboration (Owner)</a></p>
-</li>
-<li><p><a href="#step-2-accept-invitation-each-collaborator">Step 2: Accept invitation (each collaborator)</a></p>
-</li>
-<li><p><a href="#step-3-generate-demo-data">Step 3: Generate demo data</a></p>
-</li>
-<li><p><a href="#step-4-prepare-azure-resources-each-collaborator">Step 4: Prepare Azure resources (each collaborator)</a></p>
-</li>
-<li><p><a href="#step-5-prepare-data-with-encryption-each-collaborator">Step 5: Prepare data with encryption (each collaborator)</a></p>
-</li>
-<li><p><a href="#step-6-set-up-identity--oidc-each-collaborator">Step 6: Set up identity &amp; OIDC (each collaborator)</a></p>
-</li>
-<li><p><a href="#step-7-grant-clean-room-access-each-collaborator">Step 7: Grant clean room access (each collaborator)</a></p>
-</li>
-<li><p><a href="#step-8-publish-datasets-each-collaborator">Step 8: Publish datasets (each collaborator)</a></p>
-</li>
-<li><p><a href="#step-9-publish-query-woodgrove">Step 9: Publish query (Woodgrove)</a></p>
-</li>
-<li><p><a href="#step-10-vote-on-query-each-collaborator">Step 10: Vote on query (each collaborator)</a></p>
-</li>
-<li><p><a href="#step-11-run-query-woodgrove">Step 11: Run query (Woodgrove)</a></p>
-</li>
-<li><p><a href="#step-12-view-results">Step 12: View results</a></p>
-</li>
-<li><p><a href="#advanced-topics">Advanced Topics</a></p>
-<ul>
-<li><a href="#date-range-filtering">Date range filtering</a></li>
-<li><a href="#privacy-controls">Privacy controls</a></li>
-<li><a href="#audit-events">Audit events</a></li>
+<li><a href="#scenario">Scenario</a></li>
+<li><a href="#overview">Overview</a></li>
+<li><a href="#prerequisites">Prerequisites</a></li>
+<li><a href="#step-0-prerequisites-setup-northwind-woodgrove">Walkthrough</a><ul>
+<li><a href="#step-0-prerequisites-setup-northwind-woodgrove">Step 0 &mdash; Prerequisites setup</a></li>
+<li><a href="#step-1-create-the-collaboration-woodgrove">Step 1 &mdash; Create the collaboration</a></li>
+<li><a href="#step-2-accept-invitation-northwind">Step 2 &mdash; Accept invitation</a></li>
+<li><a href="#step-3-prepare-azure-resources-northwind-woodgrove">Step 3 &mdash; Prepare Azure resources</a></li>
+<li><a href="#step-4-prepare-data-northwind-woodgrove">Step 4 &mdash; Prepare data</a></li>
+<li><a href="#step-5-set-up-identity--oidc-northwind-woodgrove">Step 5 &mdash; Set up identity &amp; OIDC</a></li>
+<li><a href="#step-6-grant-clean-room-access-northwind-woodgrove">Step 6 &mdash; Grant clean room access</a></li>
+<li><a href="#step-7-publish-datasets-northwind-woodgrove">Step 7 &mdash; Publish datasets</a></li>
+<li><a href="#step-8-publish-query-woodgrove">Step 8 &mdash; Publish the query</a></li>
+<li><a href="#step-9-vote-on-query-northwind-woodgrove">Step 9 &mdash; Approve the query</a></li>
+<li><a href="#step-10-run-query-woodgrove">Step 10 &mdash; Run the query</a></li>
+<li><a href="#step-11-view-results">Step 11 &mdash; View results</a></li>
 </ul>
 </li>
-<li><p><a href="#appendix-cli-commands-per-step">Appendix: CLI commands per step</a></p>
-</li>
+<li><a href="#advanced-topics">Advanced Topics</a></li>
+<li><a href="#appendix--cli-commands-per-step">Appendix &mdash; CLI commands per step</a></li>
 </ul>
+<h2>Scenario</h2>
+<p>Woodgrove is an advertiser that wants to generate target audience segments by
+performing an overlap analysis with a media publisher, Northwind. Both parties
+contribute sensitive datasets to an Azure Confidential Clean Room where a Spark
+SQL query joins the data, computes the overlap, and writes the results &mdash;
+all without either party exposing raw data to the other.</p>
+<p>This is only a sample scenario. You can try any scenario of your choice by providing your own data and query.</p>
 <h2>Overview</h2>
 <table>
 <thead>
@@ -101,904 +71,578 @@ blockquote.markdown-alert-caution { border-color: #cf222e; background: #ffebe9; 
 </tr>
 </thead>
 <tbody><tr>
-<td>Encryption</td>
-<td>CPK — Data Encryption Key (DEK) wraps data, Key Encryption Key (KEK) wraps DEK</td>
+<td><strong>Encryption</strong></td>
+<td>CPK &mdash; DEK wraps data, KEK wraps DEK (Key Vault Premium)</td>
 </tr>
 <tr>
-<td>Key storage</td>
-<td>Azure Key Vault (Premium SKU)</td>
+<td><strong>Parties</strong></td>
+<td>Woodgrove (owner), Northwind (publisher)</td>
 </tr>
 <tr>
-<td>Personas</td>
-<td>Northwind (publisher), Woodgrove (consumer/query runner)</td>
+<td><strong>Data format</strong></td>
+<td>CSV (Parquet and JSON are also supported)</td>
 </tr>
 <tr>
-<td>Data format</td>
-<td>CSV</td>
-</tr>
-<tr>
-<td>Query engine</td>
+<td><strong>Query engine</strong></td>
 <td>Confidential Spark SQL</td>
 </tr>
+</tbody></table>
+<h3>Parties involved</h3>
+<table>
+<thead>
 <tr>
-<td>Data schema</td>
-<td><code>date:date, time:string, author:string, mentions:string</code></td>
+<th align="left">Party</th>
+<th align="left">Role</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left"><strong>Woodgrove</strong></td>
+<td align="left">Clean room <strong>owner</strong> &mdash; creates the collaboration, invites Northwind, publishes the query, runs it, and retrieves results. Also contributes sensitive first-party data of its users.</td>
 </tr>
 <tr>
-<td>Output schema</td>
-<td><code>author:string, Number_Of_Mentions:long, Restricted_Sum:number</code></td>
+<td align="left"><strong>Northwind</strong></td>
+<td align="left">Data <strong>publisher</strong> &mdash; accepts the invitation and contributes sensitive subscriber data which can be matched with data coming in from Woodgrove (advertiser) to identify common users.</td>
+</tr>
+</tbody></table>
+<p><strong>Which party runs which step?</strong></p>
+<table>
+<thead>
+<tr>
+<th align="left">Step</th>
+<th align="center">Woodgrove</th>
+<th align="center">Northwind</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="left">0 &ndash; Prerequisites</td>
+<td align="center">&#10003;</td>
+<td align="center">&#10003;</td>
+</tr>
+<tr>
+<td align="left">1 &ndash; Create collaboration</td>
+<td align="center">&#10003;</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td align="left">2 &ndash; Accept invitation</td>
+<td align="center"></td>
+<td align="center">&#10003;</td>
+</tr>
+<tr>
+<td align="left">3 &ndash; Prepare resources</td>
+<td align="center">&#10003;</td>
+<td align="center">&#10003;</td>
+</tr>
+<tr>
+<td align="left">4 &ndash; Prepare data</td>
+<td align="center">&#10003;</td>
+<td align="center">&#10003;</td>
+</tr>
+<tr>
+<td align="left">5 &ndash; OIDC issuer</td>
+<td align="center">&#10003;</td>
+<td align="center">&#10003;</td>
+</tr>
+<tr>
+<td align="left">6 &ndash; Grant access</td>
+<td align="center">&#10003;</td>
+<td align="center">&#10003;</td>
+</tr>
+<tr>
+<td align="left">7 &ndash; Publish datasets</td>
+<td align="center">&#10003;</td>
+<td align="center">&#10003;</td>
+</tr>
+<tr>
+<td align="left">8 &ndash; Publish query</td>
+<td align="center">&#10003;</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td align="left">9 &ndash; Approve query</td>
+<td align="center">&#10003;</td>
+<td align="center">&#10003;</td>
+</tr>
+<tr>
+<td align="left">10 &ndash; Run query</td>
+<td align="center">&#10003;</td>
+<td align="center"></td>
+</tr>
+<tr>
+<td align="left">11 &ndash; View results</td>
+<td align="center">&#10003;</td>
+<td align="center">&#10003;</td>
 </tr>
 </tbody></table>
 <hr>
 <h2>Prerequisites</h2>
-<ul>
-<li><strong>Azure CLI</strong> 2.75.0+ (<a href="https://learn.microsoft.com/en-us/cli/azure/install-azure-cli">install</a>)</li>
-<li><strong>PowerShell</strong> 7.x+ (<a href="https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell">install</a>)</li>
+<ol>
+<li><strong>Azure CLI 2.75+</strong> &mdash; <a href="https://learn.microsoft.com/en-us/cli/azure/install-azure-cli">install</a></li>
+<li><strong>Managed Clean Room extension</strong>:<pre><code class="language-powershell">az extension add --name managedcleanroom --upgrade
+</code></pre>
+</li>
+<li><strong>PowerShell 7.x+</strong> &mdash; <a href="https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell">install</a></li>
 <li><strong>Azure subscription</strong> with permissions to create storage accounts, Key Vaults (Premium SKU), managed identities, and resource groups</li>
-<li><strong>Microsoft account</strong> (work, school, or personal) for authentication</li>
-</ul>
-<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong>
-You do <strong>not</strong> need to create new Microsoft accounts — any existing account will work. For testing, you can use two of your own email addresses.</p>
-</blockquote>
-<h2>Personas</h2>
-<table>
-<thead>
-<tr>
-<th>Persona</th>
-<th>Role</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>Clean Room Owner</strong></td>
-<td>Collaboration creator</td>
-<td>Creates the collaboration, invites collaborators, enables workload. Needs an Azure subscription. Can also be one of the collaborators (e.g., Woodgrove).</td>
-</tr>
-<tr>
-<td><strong>Northwind</strong></td>
-<td>Data publisher</td>
-<td>Contributes sensitive datasets. Needs an Azure subscription for their own storage.</td>
-</tr>
-<tr>
-<td><strong>Woodgrove</strong></td>
-<td>Data consumer &amp; query runner</td>
-<td>Contributes datasets, publishes and runs queries, views results. Needs an Azure subscription.</td>
-</tr>
-</tbody></table>
-<h2>Architecture</h2>
-<p>This variant uses <strong>zero <code>az cleanroom</code></strong> — the DatasetSpecification JSON (including CPK encryption secrets) is constructed natively in PowerShell:</p>
-<pre><code>Your Environment                              Azure Managed Service
-┌──────────────────────────────┐              ┌──────────────────────────────┐
-│                              │              │                              │
-│  Standard Azure CLI          │              │  az managedcleanroom         │
-│  ├─ az storage (upload data) │              │  ├─ collaboration create     │
-│  ├─ az keyvault (DEK/KEK)    │              │  ├─ frontend login           │
-│  ├─ az identity (OIDC setup) │              │  ├─ frontend API:            │
-│  └─ PowerShell (encryption)  │              │  │  ├─ dataset publish       │
-│                              │              │  │  ├─ query publish         │
-│  PowerShell (native JSON)    │  JSON body   │  │  ├─ vote accept           │
-│  ├─ DatasetSpecification     │ ──────────►  │  │  ├─ query run             │
-│  │  (with EncryptionSecrets) │              │  │  └─ results/audit         │
-│  └─ QuerySpecification       │              │  │                            │
-│                              │              │  └─ OIDC issuer              │
-│  Your Storage Account        │              │                              │
-│  Your Key Vault (Premium)    │              │                              │
-│  Your Managed Identity       │              │                              │
-└──────────────────────────────┘              └──────────────────────────────┘
-</code></pre>
-<ul>
-<li><strong>Standard Azure CLI + PowerShell</strong> handles data encryption (<code>AES-256-CBC</code>), upload (<code>az storage blob upload-batch</code>), Key Vault key management (<code>az keyvault key create</code>, <code>az keyvault secret set</code>), identity setup (<code>az identity show</code>), and OIDC configuration.</li>
-<li><strong>PowerShell</strong> constructs the DatasetSpecification and QuerySpecification JSON bodies natively. For CPK, the DatasetSpecification includes <code>EncryptionSecrets</code> blocks with DEK/KEK references pointing to Key Vault. The structure was derived from the cleanroom extension source code (<code>CleanRoomSpecification</code> → <code>AccessPoint</code> → <code>PrivacyProxySettings</code> → <code>EncryptionSecrets</code> model in cleanroom v5.0.0).</li>
-<li><strong><code>az managedcleanroom</code></strong> talks to Microsoft&#39;s managed service for collaboration lifecycle, publishing, voting, execution, and results.</li>
-</ul>
-<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong>
-🔴 <strong>ACCR team enhancement request:</strong> If <code>az managedcleanroom frontend analytics dataset publish</code> accepted high-level parameters (<code>--storage-account</code>, <code>--encryption-mode CPK</code>, <code>--key-vault</code>, <code>--schema-format csv</code>, <code>--schema-fields &quot;...&quot;</code>, <code>--access-mode read</code>), even the native JSON construction would be unnecessary. This would simplify the workflow further.</p>
-</blockquote>
-<h3>End-to-End Flow</h3>
-<pre><code>  Owner (Woodgrove)              Northwind                        Woodgrove
-  ─────────────────              ─────────                        ─────────
-         │                            │                                │
-  0. Install CLIs              0. Install CLIs                  0. Install CLIs
-  1. Create collaboration
-     ├─ add-collaborator ────────► email invitation
-     ├─ add-collaborator ──────────────────────────────────────► email invitation
-     └─ enable-workload
-         │                     │                                │
-         │               2. Accept invitation              2. Accept invitation
-         │                     │                                │
-         ▼                     ▼                                ▼
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │                    Managed Clean Room RP (ARM)                         │
-  │  ┌───────────────────────────────────────────────────────────────┐     │
-  │  │  Frontend Service (Analytics API)                             │     │
-  │  │  ├─ POST /dataset publish     ◄── datasets from both parties │     │
-  │  │  ├─ POST /query publish       ◄── query from Woodgrove       │     │
-  │  │  ├─ POST /consent set         ◄── consent from each owner    │     │
-  │  │  ├─ POST /vote accept         ◄── votes from both parties    │     │
-  │  │  ├─ POST /query run           ◄── execution from Woodgrove   │     │
-  │  │  ├─ GET  /query runresult     ◄── polling from Woodgrove     │     │
-  │  │  └─ GET  /oidc/keys           ◄── JWKS for OIDC setup        │     │
-  │  └───────────────────────────────────────────────────────────────┘     │
-  │  ┌───────────────────────────────────────────────────────────────┐     │
-  │  │  Consortium (CCF / CGS)                                       │     │
-  │  │  Stores: datasets, queries, votes, consent, OIDC issuer       │     │
-  │  └───────────────────────────────────────────────────────────────┘     │
-  └─────────────────────────────────────────────────────────────────────────┘
-         │                     │                                │
-         │               ── each party does ──                  │
-         │               3. Generate demo data                  │
-         │               4. Prepare Azure resources             │
-         │                  (incl. Key Vault Premium)           │
-         │               5. Encrypt data (AES-256-CBC)          │
-         │                  + upload + store DEK/KEK            │
-         │               6. OIDC + identity setup               │
-         │                     │                                │
-         │                     ▼                                ▼
-  ┌────────────────────┐  ┌────────────────────┐  ┌─────────────────────────┐
-  │ Northwind&#39;s Azure  │  │ Woodgrove&#39;s Azure  │  │ Clean Room (TEE)        │
-  │ ├─ Storage Account │  │ ├─ Storage Account │  │                         │
-  │ │  └─ encrypted CSV│  │ │  ├─ encrypted CSV│  │ 1. Hardware attestation │
-  │ ├─ Key Vault (HSM) │  │ │  └─ output       │  │ 2. OIDC token from CCF  │
-  │ │  ├─ KEK (RSA key)│  │ ├─ Key Vault (HSM) │  │ 3. Azure AD validates   │
-  │ │  └─ DEK (secret) │  │ │  ├─ KEK (RSA key)│  │ 4. Unwrap KEK → DEK     │
-  │ ├─ Managed Identity│  │ │  └─ DEK (secret) │  │ 5. Decrypt data in mem  │
-  │ └─ OIDC Storage    │  │ ├─ Managed Identity│  │ 6. Run Spark SQL        │
-  └────────────────────┘  │ └─ OIDC Storage    │  │ 7. Write results        │
-                          └────────────────────┘  └─────────────────────────┘
-                                                               ▲
-  7. Grant access (RBAC: Storage + KV Crypto                   │
-     + KV Secrets + federated credential)                      │
-  8. Publish datasets ─────────► Frontend                      │
-     + consent enable            (incl. DEK/KEK secret refs)   │
-  9. Publish query ─────────────► Frontend                     │
-     + consent enable                                          │
- 10. Vote accept ───────────────► Frontend                     │
-                                                               │
- 11. Run query ──────────────────► Frontend ──────► Clean Room
- 12. View results ◄──────────────── Frontend ◄────── Clean Room
-</code></pre>
-<p><strong>How OIDC connects the clean room to your data (Steps 6, 7, and query execution):</strong></p>
-<p>The clean room has no credentials of its own. Instead, each collaborator&#39;s <strong>managed identity</strong> is configured to trust tokens signed by the clean room&#39;s CCF instance. At runtime, the clean room proves its identity via hardware attestation, gets a signed JWT from CCF, and exchanges it for an Azure AD token that can access your storage and Key Vault.</p>
-<pre><code>  SETUP (you do this once)                          RUNTIME (Step 11: query execution)
-  ────────────────────────                          ──────────────────────────────────
-
-  Step 6: Create OIDC issuer                        Clean Room boots in TEE
-  ┌──────────────────────────┐                      ┌──────────────────────────┐
-  │ 1. Fetch JWKS (public    │                      │ 1. Intel SGX/SEV hardware│
-  │    keys) from CCF:       │                      │    generates attestation │
-  │    GET {frontend}/       │                      │    report: &quot;I am genuine │
-  │    collaborations/{id}/  │                      │    TEE running approved  │
-  │    oidc/keys             │                      │    code&quot;                 │
-  │                          │                      │                          │
-  │ 2. Create Azure Storage  │                      │ 2. Presents attestation  │
-  │    static website and    │                      │    to CCF (consortium)   │
-  │    upload JWKS + OpenID  │                      └────────────┬─────────────┘
-  │    discovery document    │                                   │
-  │                          │                                   ▼
-  │    This creates a PUBLIC │                      ┌──────────────────────────┐
-  │    URL that Azure AD can │                      │ 3. Sidecar calls CCF:    │
-  │    reach to verify JWTs: │                      │    GET /token?tid={..}&amp;  │
-  │                          │                      │    sub={..}&amp;aud={..}     │
-  │    https://oidcXXX...    │                      │                          │
-  │      .z13.web.core.      │                      │ 4. CCF validates         │
-  │      windows.net/        │                      │    attestation, then     │
-  │      oidc-XXXX           │                      │    reads back the issuer │
-  │    ▲                     │                      │    URL YOU registered ───┤
-  │    │ THIS is the         │                      │    in Step 6 from its    │
-  │    │ &quot;issuer URL&quot;        │                      │    KV store. Sets it as  │
-  │    │                     │                      │    the JWT &quot;iss&quot; claim.  │
-  │ 3. Register this URL     │                      │                          │
-  │    with CGS via REST     │                      │    Priority:             │
-  │    POST setIssuerUrl.    │                      │    a. explicit iss param │
-  │    ┌─────────────────┐   │                      │    b. per-tenant URL ◄───┤
-  │    │ CCF stores it   │   │                      │       (this is ours)     │
-  │    │ in its KV store │   │                      │    c. global gov URL     │
-  │    │ keyed by your   │───┼──────────────────────│                          │
-  │    │ tenant ID       │   │  same URL comes back │ 5. CCF signs JWT:        │
-  │    └─────────────────┘   │  at runtime as the   │    iss: https://oidcXXX. │
-  │                          │  &quot;iss&quot; claim          │      z13.web.core...    │
-  └──────────────────────────┘                      │    sub: {contractId}-    │
-                                                    │         {ownerId}        │
-  Step 7: Grant access &amp;                            │    aud: api://AzureAD    │
-  link YOUR identity                                │         TokenExchange    │
-  ┌──────────────────────────┐                      └────────────┬─────────────┘
-  │                          │                                   │
-  │ 1. RBAC: assign roles    │                                   ▼
-  │    on your storage &amp; KV  │                      ┌──────────────────────────┐
-  │    to your managed       │                      │ 6. Sidecar calls Azure   │
-  │    identity              │                      │    AD token endpoint:    │
-  │    (az role assignment   │                      │    - client_id = YOUR    │
-  │     create)              │                      │      managed identity&#39;s  │
-  │                          │                      │      client ID (embedded │
-  │ 2. Federated credential: │                      │      in dataset spec     │
-  │    az identity           │                      │      from Step 6 → 8)   │
-  │    federated-credential  │                      │    - assertion = the JWT  │
-  │    create \              │                      │      from step 5 above   │
-  │      --issuer $issuerUrl │                      │                          │
-  │      --subject $subject  │                      │ 7. Azure AD looks up     │
-  │      --audiences &quot;api:// │                      │    that managed identity │
-  │       AzureADTokenExchg&quot; │                      │    and checks its        │
-  │                          │                      │    federated credentials:│
-  │    Where:                │                      │    a. Finds one with     │
-  │    issuer = from Step 6  │                      │       matching issuer +  │
-  │      (issuer-url.txt)    │                      │       subject + audience │
-  │                          │                      │    b. Fetches JWKS from  │
-  │    subject = must match  │◄─────────────────────│       the issuer URL ────┤
-  │      what CCF puts as    │  Azure AD fetches    │       (your static      │
-  │      &quot;sub&quot; in the JWT    │  /.well-known/       │        website)          │
-  │    ▲                     │  openid-configuration│    c. Verifies JWT       │
-  │    │ ⚠️ GAP: ideally     │  then /openid/v1/jwks│       signature with     │
-  │    │ retrieved from the  │  from this URL       │       JWKS public key    │
-  │    │ service via &quot;Get    │                      │    d. Checks subject &amp;   │
-  │    │ Clean Room Details&quot; │                      │       audience match ◄───┤
-  │    │ but no CLI exposes  │                      │       sub in JWT must    │
-  │    │ it yet. Script      │                      │       equal --subject    │
-  │    │ computes it locally │                      │       in federated cred  │
-  │    │ as {contractId}-    │                      │    e. Issues Azure AD    │
-  │    │    {userId}         │                      │       access token AS    │
-  │    │                     │                      │       your managed       │
-  │    │                     │                      │       identity           │
-  └──────────────────────────┘                      └────────────┬─────────────┘
-                                                                 │
-                                                                 ▼
-                                                    ┌──────────────────────────┐
-                                                    │ 8. Clean room now has    │
-  Four things must match:                           │    an Azure AD token     │
-  ┌──────────────────────────┐                      │    that IS your managed  │
-  │ 1. issuer URL registered │                      │    identity. Uses it to: │
-  │    with CGS (Step 6)     │                      │                          │
-  │    = &quot;iss&quot; in the JWT    │                      │    ├─ Read your storage  │
-  │    = --issuer in fed cred│                      │    │  (RBAC: Blob Data   │
-  │                          │                      │    │   Contributor)       │
-  │ 2. subject you set in    │                      │    ├─ Unwrap KEK from    │
-  │    fed cred (Step 7)     │                      │    │  Key Vault (RBAC:   │
-  │    = &quot;sub&quot; in the JWT    │                      │    │  Crypto Officer)     │
-  │    (CCF computes this as │                      │    ├─ Read DEK secret    │
-  │     {contractId}-        │                      │    │  (RBAC: Secrets     │
-  │     {ownerId} internally)│                      │    │   User)             │
-  │                          │                      │    └─ Decrypt data in    │
-  │ 3. audience in fed cred  │                      │       TEE memory         │
-  │    = &quot;aud&quot; in the JWT    │                      └──────────────────────────┘
-  │    = api://AzureAD       │
-  │      TokenExchange       │
-  │                          │
-  │ 4. JWKS public keys at   │
-  │    the issuer URL must   │
-  │    match CCF&#39;s signing   │
-  │    private key           │
-  └──────────────────────────┘
-</code></pre>
-<h2>How CPK Differs from SSE</h2>
-<table>
-<thead>
-<tr>
-<th>Aspect</th>
-<th>SSE</th>
-<th>CPK (this scenario)</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Who encrypts</td>
-<td>Azure Storage (automatic)</td>
-<td>You (client-side, before upload)</td>
-</tr>
-<tr>
-<td>Key Vault</td>
-<td>Not needed for encryption</td>
-<td>Required — stores KEK + wrapped DEK</td>
-</tr>
-<tr>
-<td>Secret stores</td>
-<td>Not needed</td>
-<td>DEK store + KEK store (registered at Step 8)</td>
-</tr>
-<tr>
-<td>Data prep (Step 5)</td>
-<td>Plain upload via <code>az storage blob upload-batch</code></td>
-<td>PowerShell AES-256-CBC encryption + upload</td>
-</tr>
-<tr>
-<td>Dataset publish (Step 8)</td>
-<td><code>--encryption-mode SSE</code></td>
-<td><code>--encryption-mode CPK</code> + secret store params</td>
-</tr>
-<tr>
-<td>Grant access RBAC (Step 7)</td>
-<td>Storage only</td>
-<td>Storage + Key Vault (Crypto Officer + Secrets User)</td>
-</tr>
-<tr>
-<td>Clean room decryption</td>
-<td>Reads data directly</td>
-<td>Unwraps KEK → gets DEK → decrypts data in TEE memory</td>
-</tr>
-</tbody></table>
-<pre><code>CPK Data Flow:
-You ──encrypt with DEK──► Azure Blob Storage (double encrypted: your key + Azure SSE)
-       DEK wrapped by KEK in Key Vault
-
-Clean Room (in TEE):
-  1. Presents OIDC token (from hardware attestation)
-  2. Azure AD validates → grants managed identity
-  3. Reads wrapped DEK from Key Vault
-  4. Unwraps DEK using KEK
-  5. Decrypts data in encrypted memory
-  6. Processes query (data never written to disk unencrypted)
-</code></pre>
+</ol>
 <hr>
-<h2>Step 0: Prerequisites setup (all parties)</h2>
-<p>Install CLI extensions, log in, and set your configuration variables:</p>
-<pre><code class="language-powershell"># 1. Install managed cleanroom extension (public)
-az extension add --name managedcleanroom
-
-# 2. az cleanroom extension — NOT required.
-#    Step 8 now constructs the DatasetSpecification JSON natively in PowerShell,
-#    so the cleanroom CLI extension is no longer needed.
-# curl -LO https://github.com/Azure/azure-cleanroom/releases/latest/download/cleanroom-5.0.0-py2.py3-none-any.whl
-# az extension add --source ./cleanroom-5.0.0-py2.py3-none-any.whl --allow-preview true -y
-
-# 3. Login to Azure
-az login
-
-# 4. If your account has access to multiple tenants, select the correct one
-az login --tenant &quot;&lt;tenant-id&gt;&quot;
-
-# 5. Set the target subscription (optional, if you have multiple)
-az account set --subscription &quot;&lt;subscription-name-or-id&gt;&quot;
-
-# 6. Verify you are in the correct tenant and subscription
-az account show --query &quot;{tenant:tenantId, subscription:name}&quot; -o table
+<h2>Step 0: Prerequisites setup (northwind, woodgrove)</h2>
+<p>Open <strong>two separate PowerShell sessions</strong> &mdash; one for each collaborator.
+Install CLI extensions, log in, and set your configuration variables:</p>
+<pre><code class="language-powershell"># Login to Azure
+az login --use-device-code
 </code></pre>
-<p>Now set the configuration variables for this walkthrough. Change the values to match your environment:</p>
-<pre><code class="language-powershell"># Collaboration
-$COLLABORATION_NAME = &quot;jstwitter-cpk-analytics&quot;
-$LOCATION           = &quot;eastus2euap&quot;
+<p>Now set the session variables. <strong>Each terminal sets its own persona</strong>
+&mdash; adjust the values to match your environment:</p>
+<pre><code class="language-powershell"># ── Choose your persona ──────────────────────────────────────────────
+$Persona = &quot;woodgrove&quot;           # &quot;northwind&quot; in the other session
 
-# Owner (creates the collaboration)
-$OWNER_RESOURCE_GROUP = &quot;jscleanroom-cpk-rg&quot;
+# ── Azure target ─────────────────────────────────────────────────────
+$Location      = &quot;westeurope&quot;
+$ResourceGroup = &quot;rg-accr-$Persona&quot;
 
-# Collaboration ARM resource ID (constructed from above; used by frontend commands)
-$SUBSCRIPTION_ID  = (az account show --query id -o tsv)
-$COLLABORATION_ID = &quot;/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$OWNER_RESOURCE_GROUP/providers/Microsoft.CleanRoom/collaborations/$COLLABORATION_NAME&quot;
+# ── Derived names (unique per persona) ───────────────────────────────
+$Suffix             = -join ((48..57) + (97..122) | Get-Random -Count 8 | ForEach-Object { [char]$_ })
+$StorageAccount     = &quot;accr$($Persona.Substring(0,4))$Suffix&quot;
+$OidcStorageAccount = &quot;oidc$($Persona.Substring(0,4))$Suffix&quot;
+$KeyVault           = &quot;kv-$($Persona.Substring(0,4))-$Suffix&quot;
 
-# Collaborator emails (for invitation)
-$NORTHWIND_EMAIL = &quot;jsnorthwind@outlook.com&quot;
-$WOODGROVE_EMAIL = &quot;jswoodgrove@outlook.com&quot;
+# ── Collaboration (must match in both sessions) ─────────────────────
+$CollaborationName = &quot;woodgrove-northwind-analytics&quot;
 
-# Northwind (data publisher)
-$NORTHWIND_RESOURCE_GROUP = &quot;jsnorthwind-cleanroom-cpk-rg&quot;
-$NORTHWIND_PERSONA        = &quot;northwind&quot;
+# ── Dataset names (derived from persona) ─────────────────────────────
+$DatasetName       = &quot;$Persona-input-csv&quot;
+$OutputDatasetName = &quot;woodgrove-output-csv&quot;          # woodgrove only
+$QueryName         = &quot;overlap-analysis&quot;
 
-# Woodgrove (data consumer / query runner)
-$WOODGROVE_RESOURCE_GROUP = &quot;jswoodgrove-cleanroom-cpk-rg&quot;
-$WOODGROVE_PERSONA        = &quot;woodgrove&quot;
+# ── Output directory ─────────────────────────────────────────────────
+$OutDir = &quot;./generated&quot;
 
-# Dataset names (used in publish/query steps)
-$NORTHWIND_DATASET_NAME = &quot;northwind-input-csv&quot;
-$NORTHWIND_DATASTORE     = &quot;northwinddata&quot;
-$WOODGROVE_DATASET_NAME  = &quot;woodgrove-input-csv&quot;
-$WOODGROVE_DATASTORE     = &quot;woodgrovedata&quot;
-$WOODGROVE_OUTPUT_DATASET = &quot;woodgrove-output-csv&quot;
-$QUERY_NAME              = &quot;mentions-analysis&quot;
-
-# Schema
-$INPUT_SCHEMA  = &quot;date:date,time:string,author:string,mentions:string&quot;
-$OUTPUT_SCHEMA = &quot;author:string,Number_Of_Mentions:long&quot;
-
-# Output directory (generated metadata, temp files)
-$OUT_DIR = &quot;./generated&quot;
+# ── Error handling ───────────────────────────────────────────────────
+$ErrorActionPreference = &#39;Stop&#39;
 </code></pre>
-<blockquote class="markdown-alert markdown-alert-tip"><p><strong>TIP</strong>
-Copy both blocks above into your PowerShell session. All commands below reference these variables.</p>
+<blockquote class="markdown-alert markdown-alert-tip"><p><strong>TIP</strong></p>
+<p>The <code>$CollaborationName</code> must be identical in both sessions since it
+identifies the shared collaboration resource. All other values are
+derived from <code>$Persona</code> so they differ per session automatically.</p>
+
 </blockquote>
-<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong>
-Every participant (owner, Northwind, Woodgrove) must run these steps in their own environment.</p>
+
+
+<blockquote class="markdown-alert markdown-alert-important"><p><strong>IMPORTANT</strong></p>
+<p><strong>Multi-tenant users:</strong> If your Microsoft account is a guest in multiple Azure AD tenants, you <strong>must</strong> specify the correct tenant via <code>az login --tenant</code>. Using the wrong tenant will cause access failures at query execution time.</p>
+
 </blockquote>
-<blockquote class="markdown-alert markdown-alert-important"><p><strong>IMPORTANT</strong>
-<strong>Multi-tenant users:</strong> If your Microsoft account is a guest in multiple Azure AD tenants, you <strong>must</strong> specify the correct tenant via <code>az login --tenant</code>. The tenant ID is used during OIDC identity setup (Step 6) and federated credential creation (Step 7). Using the wrong tenant will cause access failures at query execution time.</p>
-</blockquote>
-<hr>
-<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong>
-<strong>Reading this guide — Possibility 1 vs Possibility 2:</strong>
-Some steps below show two approaches:</p>
-<ul>
-<li><strong>Possibility 1 (Ideal)</strong> is the <strong>aspirational single-command UX</strong> that the ACCR team should aim for. These commands don&#39;t exist yet — they represent what the developer experience <em>should</em> look like.</li>
-<li><strong>Possibility 2 (Current)</strong> is the <strong>working approach today</strong>, using the provided scripts.</li>
-</ul>
-<p><strong>Step 8 (Publish datasets)</strong> currently requires constructing DatasetSpecification JSON natively (with CPK encryption secrets). All P1/P2 blocks are UX improvements to <code>az managedcleanroom</code> itself.</p>
-</blockquote>
-<h2>Step 1: Create the collaboration (Owner)</h2>
-<p>The clean room owner creates the collaboration and invites both parties. <strong>This step is identical to SSE.</strong></p>
-<blockquote>
-<p><strong>Possibility 1 (Ideal)</strong> — Single command that creates, invites, and enables workload:</p>
+
+
+<h2>Step 1: Create the collaboration (woodgrove)</h2>
+<p>Woodgrove creates the collaboration and invites Northwind.</p>
+<p><strong>1a. Get the owner&#39;s identity</strong> (needed for <code>--user-identity</code>):</p>
+<pre><code class="language-powershell">$TenantId     = (az account show --query tenantId -o tsv)
+$ObjectId     = (az ad signed-in-user show --query id -o tsv)
+$UserIdentity = &quot;{tenant-id:$TenantId,object-id:$ObjectId,account-type:microsoft}&quot;
+</code></pre>
+<p><strong>1b. Create the collaboration:</strong></p>
 <pre><code class="language-powershell">az managedcleanroom collaboration create `
-    --collaboration-name $COLLABORATION_NAME `
-    --resource-group $OWNER_RESOURCE_GROUP `
-    --location $LOCATION `
+    --collaboration-name $CollaborationName `
+    --resource-group $ResourceGroup `
+    --location $Location `
     --consortium-type ConfidentialACI `
-    --members &quot;$NORTHWIND_EMAIL,$WOODGROVE_EMAIL&quot; `
+    --user-identity $UserIdentity
+</code></pre>
+<p><strong>1c. Add each collaborator by email:</strong></p>
+<pre><code class="language-powershell">az managedcleanroom collaboration add-collaborator `
+    --collaboration-name $CollaborationName `
+    --resource-group $ResourceGroup `
+    --email &quot;northwind-user@contoso.com&quot;         # ← replace with Northwind&#39;s email
+
+az managedcleanroom collaboration add-collaborator `
+    --collaboration-name $CollaborationName `
+    --resource-group $ResourceGroup `
+    --email &quot;woodgrove-user@contoso.com&quot;         # ← replace with Woodgrove&#39;s email
+</code></pre>
+<p><strong>1d. Enable the analytics workload:</strong></p>
+<pre><code class="language-powershell">az managedcleanroom collaboration enable-workload `
+    --collaboration-name $CollaborationName `
+    --resource-group $ResourceGroup `
     --workload-type analytics
 </code></pre>
-<p><strong>Value add:</strong> Today the script must make 3 separate CLI calls: create the collaboration, add each collaborator by email, and enable the analytics workload. In the ideal UX, a single command handles creation, invitation, and workload enablement — reducing 3 calls to 1.</p>
-</blockquote>
-<p><strong>Possibility 2 (Current)</strong> — Using the provided script:</p>
-<pre><code class="language-powershell">./scripts/01-setup-collaboration.ps1 `
-    -collaborationName $COLLABORATION_NAME `
-    -resourceGroup $OWNER_RESOURCE_GROUP `
-    -collaboratorEmails @($NORTHWIND_EMAIL, $WOODGROVE_EMAIL) `
-    -location $LOCATION
+<p><strong>1e. Retrieve the collaboration details</strong> (frontend endpoint + ARM ID):</p>
+<pre><code class="language-powershell">az managedcleanroom collaboration show `
+    --collaboration-name $CollaborationName `
+    --resource-group $ResourceGroup
+
+# Extract the frontend endpoint (PowerShell):
+$collab = az managedcleanroom collaboration show `
+    --collaboration-name $CollaborationName `
+    --resource-group $ResourceGroup | ConvertFrom-Json
+$CollaborationId  = $collab.id
+$FrontendEndpoint = ($collab.workloads | Where-Object { $_.workloadType -eq &quot;analytics&quot; }).endpoint
+Write-Host &quot;Collaboration ID:  $CollaborationId&quot;
+Write-Host &quot;Frontend Endpoint: $FrontendEndpoint&quot;
 </code></pre>
-<p>This script:</p>
-<ol>
-<li>Gets the owner&#39;s identity (tenant ID + object ID) from the current <code>az login</code> session</li>
-<li>Creates the collaboration (<code>az managedcleanroom collaboration create</code> with <code>--consortium-type ConfidentialACI</code> and <code>--user-identity</code>)</li>
-<li>Adds each collaborator by email (<code>add-collaborator --email</code>)</li>
-<li>Enables the analytics workload (<code>enable-workload --workload-type analytics</code>)</li>
-<li>Outputs the <strong>Collaboration ARM ID</strong> and <strong>Frontend Endpoint</strong></li>
-</ol>
-<blockquote class="markdown-alert markdown-alert-important"><p><strong>IMPORTANT</strong>
-Note the <strong>Collaboration ARM ID</strong> and <strong>Frontend Endpoint</strong> from the output — all collaborators need both for subsequent steps. The ARM ID is used as <code>$COLLABORATION_ID</code> and the Frontend Endpoint is the analytics API URL (<code>workloads[0].endpoint</code> — the CLI flattens <code>properties</code> via <code>client_flatten</code>).</p>
+<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong></p>
+<p>Share the <strong>Collaboration ARM ID</strong> (<code>$CollaborationId</code>) and <strong>Frontend Endpoint</strong> (<code>$FrontendEndpoint</code>) with Northwind — they need both for Step 2.</p>
+
 </blockquote>
-<blockquote class="markdown-alert markdown-alert-warning"><p><strong>WARNING</strong>
-<strong>Resolved — Frontend endpoint discovery.</strong> Source code analysis (<a href="https://github.com/Azure/azure-cli-extensions/tree/main/src/managedcleanroom"><code>Azure/azure-cli-extensions</code></a> → <code>aaz/latest/managedcleanroom/collaboration/_show.py</code>) confirms: <code>az managedcleanroom collaboration show</code> returns <code>workloads[]</code> where each workload has <code>endpoint</code>, <code>namespace</code>, and <code>workloadType</code> fields (the ARM <code>properties</code> are flattened by <code>client_flatten</code>). The frontend URL is at <code>workloads[0].endpoint</code> (for <code>workloadType: &quot;analytics&quot;</code>). Our <code>01-setup-collaboration.ps1</code> script extracts and displays this automatically.</p>
-<p>🔴 <strong>ACCR team: Please document the <code>collaboration show</code> response schema in CLI help text.</strong> The <code>workloads[].endpoint</code> field is not mentioned in <code>--help</code>.</p>
-</blockquote>
-<blockquote class="markdown-alert markdown-alert-warning"><p><strong>WARNING</strong>
-<strong>Question — Why is <code>--user-identity</code> required?</strong> The <code>collaboration create</code> command requires an explicit <code>--user-identity {tenant-id:...,object-id:...,account-type:...}</code> parameter, but this information is already available from the logged-in session — tenant ID via <code>az account show</code> and object ID via <code>az ad signed-in-user show</code>. Moreover, the tenant ID is already set at session level (via <code>az login --tenant</code>), making the <code>tenant-id</code> field in <code>--user-identity</code> redundant. Our script auto-derives it, but the CLI should do this internally. The only scenario where an explicit <code>--user-identity</code> might be needed is when creating a collaboration on behalf of a different identity (e.g., a service principal or another user) — but even then, it should be an <strong>optional override</strong> that defaults to the logged-in user. Additionally, there is no validation that the supplied identity matches the caller — supplying a different identity would register someone else as the owner, with errors only surfacing in later steps.</p>
-<p>🔴 <strong>ACCR team: Can <code>--user-identity</code> be made optional, defaulting to the logged-in user?</strong></p>
-</blockquote>
-<blockquote class="markdown-alert markdown-alert-warning"><p><strong>WARNING</strong>
-<strong>Confirmed gap — No collaborator management commands.</strong> Source code analysis (<a href="https://github.com/Azure/azure-cli-extensions/tree/main/src/managedcleanroom"><code>Azure/azure-cli-extensions</code></a> → <code>aaz/latest/managedcleanroom/collaboration/</code>) confirms only <code>_add_collaborator.py</code> exists — there are no <code>list-collaborators</code>, <code>show-collaborator</code>, or <code>remove-collaborator</code> commands. This means there is no way to verify who has been added, check if a collaborator was added successfully, or remove a collaborator added by mistake. Our scripts must use try-and-catch to handle idempotent re-runs (detecting &quot;already added&quot; from error text) instead of a clean pre-check.</p>
-<p>🔴 <strong>ACCR team: Can <code>list-collaborators</code> and <code>remove-collaborator</code> commands be added?</strong></p>
-</blockquote>
-<blockquote class="markdown-alert markdown-alert-caution"><p><strong>CAUTION</strong>
-<strong>Untested — error patterns for idempotency are guessed.</strong> This script assumes:</p>
-<ul>
-<li>The error text from <code>add-collaborator</code> when re-adding matches <code>&quot;already exists|already added|Conflict&quot;</code></li>
-<li>The error text from <code>enable-workload</code> when re-enabling matches <code>&quot;already enabled|already exists|Conflict&quot;</code></li>
-</ul>
-<p>The <code>.id</code> field from <code>collaboration show</code> and the <code>workloads[].endpoint</code> field have been confirmed from source code. Error patterns cannot be determined from CLI source code — the CLI uses standard <code>MgmtErrorFormat</code> and passes through whatever the ARM RP (<code>Microsoft.CleanRoom</code>) returns. Needs live validation.</p>
-<p>🔴 <strong>ACCR team: Please document the error responses for <code>add-collaborator</code> and <code>enable-workload</code> when called with duplicate inputs (e.g., re-adding the same collaborator).</strong></p>
-</blockquote>
+
+
+<p>Also configure the frontend and log in:</p>
+<pre><code class="language-powershell">az managedcleanroom frontend configure --endpoint $FrontendEndpoint
+az managedcleanroom frontend login
+</code></pre>
 <hr>
-<h2>Step 2: Accept invitation (each collaborator)</h2>
-<p>Each collaborator accepts their invitation to join the collaboration. <strong>Identical to SSE.</strong></p>
-<blockquote>
-<p><strong>Possibility 1 (Ideal)</strong> — Single command that configures, authenticates, and accepts:</p>
+<h2>Step 2: Accept invitation (northwind)</h2>
+<p>Northwind accepts the invitation to join the collaboration.</p>
+<p>Set the values shared by Woodgrove (from Step 1e output):</p>
+<pre><code class="language-powershell">$CollaborationId  = &quot;&lt;paste-collaboration-id-from-woodgrove&gt;&quot;
+$FrontendEndpoint = &quot;&lt;paste-frontend-endpoint-from-woodgrove&gt;&quot;
+</code></pre>
+<p><strong>2a. Configure the frontend endpoint:</strong></p>
+<pre><code class="language-powershell">az managedcleanroom frontend configure --endpoint $FrontendEndpoint
+</code></pre>
+<p><strong>2b. Authenticate</strong> (interactive device code flow):</p>
+<pre><code class="language-powershell">az managedcleanroom frontend login
+</code></pre>
+<p><strong>2c. List pending invitations</strong> and extract the invitation ID:</p>
+<pre><code class="language-powershell"># List invitations
+az managedcleanroom frontend invitation list `
+    --collaboration-id $CollaborationId
+
+# Extract the invitation ID (PowerShell):
+$invitations = (az managedcleanroom frontend invitation list `
+    --collaboration-id $CollaborationId | ConvertFrom-Json).invitations
+$InvitationId = $invitations[0].invitationId
+Write-Host &quot;Invitation ID: $InvitationId&quot;
+</code></pre>
+<p><strong>2d. Accept the invitation:</strong></p>
 <pre><code class="language-powershell">az managedcleanroom frontend invitation accept `
-    --endpoint &quot;&lt;frontend-endpoint&gt;&quot; `
-    --collaboration-id $COLLABORATION_ID
+    --collaboration-id $CollaborationId `
+    --invitation-id $InvitationId
 </code></pre>
-<p><strong>Value add:</strong> Today the script must configure the frontend endpoint, list pending invitations to discover the invitation ID, then accept it — 3 separate commands. In the ideal UX, a single command handles endpoint setup and acceptance (auto-discovering the pending invitation).</p>
-</blockquote>
-<p><strong>Possibility 2 (Current)</strong> — Using the provided script:</p>
-<pre><code class="language-powershell"># Run by each collaborator (Northwind and Woodgrove)
-./scripts/02-accept-invitation.ps1 `
-    -collaborationId $COLLABORATION_ID `
-    -frontendEndpoint &quot;&lt;frontend-endpoint&gt;&quot;
-</code></pre>
-<p>This script:</p>
-<ol>
-<li>Configures the frontend endpoint (<code>az managedcleanroom frontend configure --endpoint</code>)</li>
-<li>Triggers interactive device code authentication (<code>az managedcleanroom frontend login</code>)</li>
-<li>Lists pending invitations to discover the invitation ID (<code>az managedcleanroom frontend invitation list --collaboration-id</code>)</li>
-<li>Parses the response to extract the invitation ID</li>
-<li>Accepts the invitation (<code>az managedcleanroom frontend invitation accept --collaboration-id --invitation-id</code>)</li>
-</ol>
-<blockquote class="markdown-alert markdown-alert-caution"><p><strong>CAUTION</strong>
-<strong>Confirmed — response schema and idempotency validated from source code.</strong> The CLI help does not document the <code>invitation list</code> response schema or the <code>invitation accept</code> idempotency behavior. These were discovered by reading the frontend service source code (<code>src/workloads/frontend/Controllers/CollaborationController.cs</code> on the <code>user/ashank/frontendAuth</code> branch):</p>
-<ul>
-<li><code>invitation list</code> returns <code>{ &quot;invitations&quot;: [{ &quot;invitationId&quot;: &quot;...&quot; }, ...] }</code> — a wrapper object, <strong>not</strong> a bare array ✅</li>
-<li>Each invitation uses <strong><code>.invitationId</code></strong> (not <code>.id</code>) ✅</li>
-<li><code>invitation accept</code> is <strong>inherently idempotent</strong> — the controller runs a state machine (<code>Open</code> → <code>Accepted</code> → <code>Finalized</code>) and each transition catches Conflict/PreconditionFailed gracefully. Re-calling accept on a finalized invitation returns <code>200 OK</code> immediately ✅</li>
-<li><code>invitation list</code> returns invitations regardless of status (no status filter) — so re-runs will still find the invitation and accept will succeed as a no-op ✅</li>
-</ul>
-<p>🔴 <strong>ACCR team: Please document <code>invitation list</code> response schema and <code>invitation accept</code> idempotency behavior in the CLI help.</strong></p>
-</blockquote>
-<blockquote class="markdown-alert markdown-alert-warning"><p><strong>WARNING</strong>
-<strong>Note — <code>frontend login</code> vs <code>az login</code> for frontend authentication.</strong> The frontend CLI supports two auth methods: (1) MSAL device code flow via <code>frontend login</code>, and (2) regular <code>az login</code> credentials. In production, where each collaborator uses a single corporate identity for both ARM and frontend, <code>az login</code> alone is sufficient — no separate <code>frontend login</code> needed. Our scripts use <code>frontend login</code> because we simulate multiple parties from one machine: <code>az login</code> is the corporate account (for Azure resources) while <code>frontend login</code> authenticates the personal account (matching the invited email). If you&#39;re running this with one identity per party, you can skip <code>frontend login</code>.</p>
-</blockquote>
 <hr>
-<h2>Step 3: Generate demo data</h2>
-<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong>
-<strong>Demo only.</strong> This step generates sample Twitter CSV data for testing. In a real scenario, each collaborator would already have their own data — skip this step and point Step 5 at your existing files.</p>
-</blockquote>
-<p>Each collaborator downloads their own sample Twitter CSV dataset:</p>
-<pre><code class="language-powershell"># Run by Northwind
-./demos/generate-data.ps1 -persona $NORTHWIND_PERSONA
+<h2>Step 3: Prepare Azure resources (northwind, woodgrove)</h2>
+<p>Each collaborator provisions Azure resources.
+<strong>Unlike SSE, CPK requires a Key Vault (Premium SKU)</strong> for encryption keys.</p>
+<pre><code class="language-powershell">./scripts/04-prepare-resources.ps1 `
+    -resourceGroup $ResourceGroup `
+    -variant cpk `
+    -location $Location `
+    -outDir $OutDir
+</code></pre>
+<p>The script creates a resource group, storage account, Key Vault (Premium),
+managed identity, and RBAC assignments.</p>
+<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong></p>
+<p>Allow a few minutes for RBAC assignments to propagate before running Step 4.</p>
 
-# Run by Woodgrove
-./demos/generate-data.ps1 -persona $WOODGROVE_PERSONA
-</code></pre>
-<p>This downloads CSV files from the <a href="https://github.com/Azure-Samples/Synapse/tree/main/Data/Tweets">Azure Synapse samples repository</a>:</p>
-<ul>
-<li><strong>Northwind</strong> gets: <code>RahulPotharajuTweets.csv</code>, <code>raghurwiTweets.csv</code>, <code>MikeDoesBigDataTweets.csv</code>, <code>SQLCindyTweets.csv</code></li>
-<li><strong>Woodgrove</strong> gets: <code>BrigitMurtaughTweets.csv</code>, <code>FranmerMSTweets.csv</code>, <code>JeremyLiknessTweets.csv</code>, <code>mwinkleTweets.csv</code></li>
-</ul>
-<hr>
-<h2>Step 4: Prepare Azure resources (each collaborator)</h2>
-<p>Each collaborator provisions Azure resources. <strong>Unlike SSE, CPK requires a Premium Key Vault</strong> for storing encryption keys.</p>
-<p>Using the provided script:</p>
-<pre><code class="language-powershell"># Run by Northwind
-./scripts/04-prepare-resources.ps1 `
-    -resourceGroup $NORTHWIND_RESOURCE_GROUP `
-    -location $LOCATION `
-    -outDir $OUT_DIR
-
-# Run by Woodgrove
-./scripts/04-prepare-resources.ps1 `
-    -resourceGroup $WOODGROVE_RESOURCE_GROUP `
-    -location $LOCATION `
-    -outDir $OUT_DIR
-</code></pre>
-<p>This creates:</p>
-<ul>
-<li>A <strong>resource group</strong> (if not existing)</li>
-<li>A <strong>storage account</strong> for data (Azure Blob Storage)</li>
-<li>A <strong>Key Vault (Premium SKU)</strong> for DEK/KEK storage — required for client-side encryption key management</li>
-<li>A <strong>managed identity</strong> (User-Assigned) for clean room access</li>
-<li><strong>RBAC assignments</strong> for the logged-in user (Storage Blob Data Contributor, Key Vault Crypto Officer, Key Vault Secrets Officer)</li>
-</ul>
-<p>The script runs 6+ Azure CLI commands (<code>az group create</code>, <code>az storage account create</code>, <code>az keyvault create --sku Premium</code>, <code>az identity create</code>, <code>az role assignment create</code> × 3).</p>
-<hr>
-<h2>Step 5: Prepare data with encryption (each collaborator)</h2>
-<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong>
-In a real customer scenario, customers likely already have encrypted data in Azure Storage with keys in Key Vault. This step demonstrates the encryption pipeline for the demo.</p>
 </blockquote>
+
+
+<hr>
+<h2>Step 4: Prepare data (northwind, woodgrove)</h2>
+<p><strong>4a. Generate demo data:</strong></p>
+<blockquote>
+<p>In a real scenario you would already have your own data &mdash; skip to 4b and
+point <code>-dataDir</code> at your existing files.</p>
+</blockquote>
+<pre><code class="language-powershell">./demos/generate-data.ps1 -persona $Persona
+</code></pre>
+<p>This generates ~8 MB of synthetic CSV data per persona:</p>
+<ul>
+<li><strong>Northwind</strong>: <code>audience_id</code>, <code>hashed_email</code>, <code>annual_income</code>, <code>region</code> (US / UK / IN / CA)</li>
+<li><strong>Woodgrove</strong>: <code>user_id</code>, <code>hashed_email</code>, <code>purchase_history</code></li>
+</ul>
+<p><strong>4b. Encrypt and upload data to Azure Storage:</strong></p>
 <p>Each collaborator encrypts their data with AES-256 and uploads the encrypted files.</p>
-<pre><code class="language-powershell"># Run by Northwind
-./scripts/05-prepare-data-cpk.ps1 `
-    -resourceGroup $NORTHWIND_RESOURCE_GROUP `
-    -persona $NORTHWIND_PERSONA `
-    -dataDir &quot;./demos/datasource/northwind/input/csv&quot; `
-    -outDir $OUT_DIR
-
-# Run by Woodgrove
-./scripts/05-prepare-data-cpk.ps1 `
-    -resourceGroup $WOODGROVE_RESOURCE_GROUP `
-    -persona $WOODGROVE_PERSONA `
-    -dataDir &quot;./demos/datasource/woodgrove/input/csv&quot; `
-    -outDir $OUT_DIR
+<pre><code class="language-powershell">./scripts/05-prepare-data.ps1 `
+    -resourceGroup $ResourceGroup `
+    -variant cpk `
+    -persona $Persona `
+    -dataDir &quot;./demos/datasource/$Persona/input/csv&quot; `
+    -collaborationId $CollaborationId `
+    -outDir $OutDir
 </code></pre>
-<p>This script uses <strong>only standard Azure CLI + PowerShell</strong> (no <code>az cleanroom</code>):</p>
-<ol>
-<li>Resolves the storage account URL and Key Vault URL (<code>az storage account show</code>, <code>az keyvault show</code>)</li>
-<li>Creates blob containers for input data (and output for Woodgrove) (<code>az storage container create</code>)</li>
-<li>Generates a random <strong>AES-256 DEK</strong> (Data Encryption Key) using <code>[System.Security.Cryptography.Aes]::Create()</code></li>
-<li>Creates an <strong>RSA-2048 KEK</strong> (Key Encryption Key) in Key Vault (<code>az keyvault key create --kty RSA --size 2048</code>)</li>
-<li><strong>Wraps the DEK</strong> with the KEK (<code>az keyvault key encrypt --algorithm RSA-OAEP-256</code>) — the DEK is now protected by the KEK</li>
-<li>Stores the <strong>wrapped DEK</strong> as a Key Vault secret (<code>az keyvault secret set</code>)</li>
-<li><strong>Encrypts each CSV file</strong> with AES-256-CBC (IV prepended to ciphertext) using PowerShell</li>
-<li>Uploads encrypted files via <code>az storage blob upload-batch</code></li>
-<li>Saves datastore metadata (schema, storage URL, encryption config including DEK/KEK references) to a JSON file for Step 8</li>
-</ol>
+<p>The script generates a random AES-256 DEK, fetches the clean room policy via
+<code>az managedcleanroom frontend analytics cleanroompolicy</code>, creates an exportable
+RSA-HSM KEK in Key Vault with a Secure Key Release (SKR) policy tied to the
+clean room, wraps the DEK with the KEK, uploads data with CPK encryption headers,
+and saves metadata for Step 7.</p>
 <hr>
-<h2>Step 6: Set up identity &amp; OIDC (each collaborator)</h2>
+<h2>Step 5: Set up identity &amp; OIDC (northwind, woodgrove)</h2>
 <p>Each collaborator sets up OIDC issuer infrastructure and saves identity metadata.</p>
-<blockquote>
-<p><strong>Possibility 1 (Ideal)</strong> — If the managed RP auto-provisions OIDC issuer:</p>
-<pre><code class="language-powershell"># No separate step needed — issuer provisioned at collaboration create time,
-# identity registered automatically during invitation accept
+<pre><code class="language-powershell">./scripts/06-setup-identity.ps1 `
+    -resourceGroup $ResourceGroup `
+    -persona $Persona `
+    -collaborationId $CollaborationId `
+    -frontendEndpoint $FrontendEndpoint `
+    -outDir $OutDir
 </code></pre>
-<p><strong>Value add:</strong> Today each collaborator must manually create an OIDC issuer (Azure Storage static website with JWKS + openid-configuration), then register it with the collaboration. In the ideal UX, the managed RP provisions OIDC infrastructure at collaboration create time and registers identities during invitation accept — eliminating this step entirely.</p>
-</blockquote>
-<p><strong>Possibility 2 (Current)</strong> — Using the provided script:</p>
-<pre><code class="language-powershell"># Run by Northwind
-./scripts/06-setup-identity.ps1 `
-    -resourceGroup $NORTHWIND_RESOURCE_GROUP `
-    -persona $NORTHWIND_PERSONA `
-    -collaborationId $COLLABORATION_ID `
-    -frontendEndpoint $FRONTEND_ENDPOINT `
-    -outDir $OUT_DIR
+<p>The script creates an OIDC storage account, fetches JWKS from the frontend,
+uploads OpenID discovery documents, registers the issuer URL with CGS, and
+saves identity metadata (client ID, tenant ID, issuer URL) for Steps 6 and 7.</p>
+<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong></p>
+<p>The OIDC issuer lets the clean room prove (via hardware attestation) that it is
+running approved code, so Azure AD grants it the permissions you assign in Step 6.</p>
 
-# Run by Woodgrove
-./scripts/06-setup-identity.ps1 `
-    -resourceGroup $WOODGROVE_RESOURCE_GROUP `
-    -persona $WOODGROVE_PERSONA `
-    -collaborationId $COLLABORATION_ID `
-    -frontendEndpoint $FRONTEND_ENDPOINT `
-    -outDir $OUT_DIR
-</code></pre>
-<p>This script uses <strong>only standard Azure CLI</strong> and <code>az managedcleanroom</code>:</p>
-<ol>
-<li><strong>Creates an OIDC storage account</strong> — a separate Azure Storage account with static website hosting enabled, used to serve the OpenID Connect discovery documents publicly</li>
-<li><strong>Fetches OIDC issuer metadata</strong> via <code>az managedcleanroom frontend oidc issuerinfo show</code> — returns <code>{ enabled, issuerUrl, tenantData: { issuerUrl, tenantId } }</code> (issuer metadata, <strong>not</strong> JWKS). Note: this response schema is not documented in <code>--help</code>; it was confirmed from source code (<a href="https://github.com/Azure/azure-cli-extensions/tree/main/src/managedcleanroom"><code>Azure/azure-cli-extensions</code></a> → <code>analytics_frontend_api/operations/_operations.py</code>). 🔴 <strong>ACCR team: Please document the <code>oidc issuerinfo show</code> response schema in CLI help.</strong></li>
-<li><strong>Fetches JWKS from the frontend</strong> via direct REST call to <code>GET {frontendEndpoint}/collaborations/{id}/oidc/keys</code> — returns <code>{ keys: [{ kty, kid, alg, n, e, ... }] }</code>. No CLI command wraps this endpoint — confirmed from source code (<a href="https://github.com/Azure/azure-cli-extensions/tree/main/src/managedcleanroom"><code>Azure/azure-cli-extensions</code></a> — only <code>oidc issuerinfo show</code> exists).
-🔴 <strong>ACCR team: Please add <code>az managedcleanroom frontend oidc keys show</code> CLI command to replace this direct REST call.</strong></li>
-<li><strong>Uploads two discovery documents</strong> to the static website&#39;s <code>$web</code> container:<ul>
-<li><code>/.well-known/openid-configuration</code> — the OpenID discovery document that tells Azure AD where to find the JWKS</li>
-<li><code>/openid/v1/jwks</code> — the JWKS fetched from the frontend in step 3</li>
-</ul>
-</li>
-<li><strong>Registers the issuer URL</strong> with CGS via direct REST call to <code>POST /collaborations/{id}/oidc/setIssuerUrl</code> — tells the clean room where to find the OIDC documents. No CLI command wraps this endpoint — confirmed from source code (<a href="https://github.com/Azure/azure-cli-extensions/tree/main/src/managedcleanroom"><code>Azure/azure-cli-extensions</code></a> — only <code>oidc issuerinfo show</code> exists).
-🔴 <strong>ACCR team: Please add <code>az managedcleanroom frontend oidc set-issuer-url</code> CLI command to replace this direct REST call.</strong></li>
-<li><strong>Reads the OIDC issuer URL</strong> (the static website URL + container path) and saves it to a file for use in Step 7 (federated credential creation)</li>
-<li><strong>Gets the managed identity&#39;s client ID and tenant ID</strong> via <code>az identity show</code></li>
-<li><strong>Saves identity metadata to a JSON file</strong> (client ID, tenant ID, issuer URL) — the identity registration with the collaboration happens implicitly when the DatasetSpecification (which embeds the identity) is published at Step 8</li>
-</ol>
-<blockquote class="markdown-alert markdown-alert-caution"><p><strong>CAUTION</strong>
-<strong>OIDC architecture — two possible approaches.</strong> Source code analysis (<code>src/workloads/frontend/</code> on <code>user/ashank/frontendAuth</code> branch) and the <a href="https://github.com/azure-core/azure-cleanroom/blob/develop/poc/managed-cleanroom/configure-workload.md">POC architecture docs</a> show two possible OIDC models for managed cleanroom:</p>
-<p><strong>Current script approach (Option B — user-hosted OIDC):</strong></p>
-<ul>
-<li>Creates a static website to host OIDC discovery documents</li>
-<li>Fetches JWKS from the frontend via <strong>direct REST call</strong> to <code>GET /collaborations/{id}/oidc/keys</code> (no CLI command wraps this endpoint yet)</li>
-<li>Uploads <code>openid-configuration</code> and <code>jwks</code> to the static website</li>
-<li>Registers the static website URL with CGS via <strong>direct REST call</strong> to <code>POST /collaborations/{id}/oidc/setIssuerUrl</code> (no CLI command wraps this endpoint yet)</li>
-</ul>
-<p><strong>Alternative approach (Option A — CCF-as-IDP):</strong></p>
-<ul>
-<li>The <code>issuerUrl</code> from <code>oidc issuerinfo show</code> may already point to CCF&#39;s own OIDC endpoint</li>
-<li>CCF serves <code>.well-known/openid-configuration</code> and JWKS at <code>/app/oidc/keys</code> directly</li>
-<li>Users would only need to set the federated credential with this issuer URL — no storage account, no static website, no JWKS upload</li>
-<li>If this is the intended model, Step 6 could be simplified significantly</li>
-</ul>
-<p>🔴 <strong>ACCR team: (1) Is Option A (CCF-as-IDP) or Option B (user-hosted) the correct approach? (2) Please add <code>az managedcleanroom frontend oidc keys show</code> CLI command to replace the direct REST call. (3) If Option A, the <code>issuerUrl</code> from <code>oidc issuerinfo show</code> should be documented as the federated credential issuer.</strong></p>
 </blockquote>
-<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong>
-<strong>Why OIDC?</strong> The clean room needs to prove (via hardware attestation) that it&#39;s running approved code before accessing your data. The OIDC issuer validates that attestation and issues a JWT token. Your managed identity has a federated credential that trusts this issuer, so Azure AD accepts the token and grants the clean room the RBAC permissions you assigned in Step 7.</p>
-</blockquote>
+
+
 <hr>
-<h2>Step 7: Grant clean room access (each collaborator)</h2>
-<p>Each collaborator grants the clean room workload access. <strong>Unlike SSE, CPK also requires Key Vault RBAC</strong> (Crypto Officer + Secrets User) so the clean room can unwrap encryption keys.</p>
-<p>Using the provided script:</p>
-<pre><code class="language-powershell"># Run by Northwind
-./scripts/07-grant-access.ps1 `
-    -resourceGroup $NORTHWIND_RESOURCE_GROUP `
-    -collaborationId $COLLABORATION_ID `
+<h2>Step 6: Grant clean room access (northwind, woodgrove)</h2>
+<p>Each collaborator grants the clean room workload access.
+<strong>Unlike SSE, CPK also requires Key Vault RBAC</strong> (Crypto Officer + Secrets User)
+so the clean room can unwrap encryption keys.</p>
+<pre><code class="language-powershell">./scripts/07-grant-access.ps1 `
+    -resourceGroup $ResourceGroup `
+    -variant cpk `
+    -collaborationId $CollaborationId `
     -contractId &quot;analytics&quot; `
-    -userId &quot;&lt;northwind-user-id&gt;&quot; `
-    -outDir $OUT_DIR
-
-# Run by Woodgrove
-./scripts/07-grant-access.ps1 `
-    -resourceGroup $WOODGROVE_RESOURCE_GROUP `
-    -collaborationId $COLLABORATION_ID `
-    -contractId &quot;analytics&quot; `
-    -userId &quot;&lt;woodgrove-user-id&gt;&quot; `
-    -outDir $OUT_DIR
+    -userId (az ad signed-in-user show --query id -o tsv) `
+    -outDir $OutDir
 </code></pre>
-<p>This script:</p>
-<ol>
-<li>Reads the OIDC issuer URL from Step 6 output</li>
-<li>Computes the federation subject string (<code>{contractId}-{userId}</code>)</li>
-<li>Resolves the managed identity&#39;s principal ID (<code>az identity show</code>)</li>
-<li>Resolves the storage account resource ID (<code>az storage account show</code>)</li>
-<li>Assigns <strong>Storage Blob Data Owner</strong> on the storage account (<code>az role assignment create</code>)</li>
-<li>Resolves the Key Vault resource ID (<code>az keyvault show</code>)</li>
-<li>Assigns <strong>Key Vault Crypto Officer</strong> on the Key Vault (<code>az role assignment create</code>) — for KEK unwrap operations</li>
-<li>Assigns <strong>Key Vault Secrets User</strong> on the Key Vault (<code>az role assignment create</code>) — for DEK retrieval</li>
-<li>Creates a <strong>federated credential</strong> on the managed identity (<code>az identity federated-credential create --issuer --subject --audiences &quot;api://AzureADTokenExchange&quot;</code>)</li>
-</ol>
-<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong>
-The <code>userId</code> is the collaborator&#39;s object ID in the CCF governance. You can obtain it by running <code>az ad signed-in-user show --query id -o tsv</code>, or it may be returned during the invitation acceptance (Step 2). The <code>contractId</code> defaults to <code>&quot;analytics&quot;</code> unless a different contract was configured.</p>
+<p>The script assigns Storage Blob Data Owner, Key Vault Crypto Officer,
+and Key Vault Secrets User RBAC roles on the managed identity, then creates
+a federated credential linking the OIDC issuer to the identity.</p>
+<blockquote class="markdown-alert markdown-alert-tip"><p><strong>TIP</strong></p>
+<p>The federated credential subject uses the format <code>{contractId}-{userId}</code>.
+Get your <code>userId</code> via <code>az ad signed-in-user show --query id -o tsv</code>.</p>
+
 </blockquote>
-<blockquote class="markdown-alert markdown-alert-caution"><p><strong>CAUTION</strong>
-<strong>Partially confirmed — subject format and audience validated from source code, but retrieval is a gap.</strong> Analysis of the Spark analytics agent (<code>src/workloads/analytics/cleanroom-spark-analytics-agent/Controllers/QueriesController.cs</code> on <code>user/ashank/frontendAuth</code> branch):</p>
-<ul>
-<li><strong>Subject format</strong> <code>{contractId}-{ownerId}</code> — confirmed at line 355: <code>string.Join(&quot;-&quot;, inputJob.ContractId, dataset.OwnerId)</code> ✅</li>
-<li><strong>Audience</strong> <code>api://AzureADTokenExchange</code> — confirmed at line 410: <code>var aud = &quot;api://AzureADTokenExchange&quot;</code> ✅</li>
-<li><strong>RBAC roles</strong> <code>Storage Blob Data Owner</code> + <code>Key Vault Crypto Officer</code> + <code>Key Vault Secrets User</code> — not confirmed from source (RBAC is configured on the Azure AD side, not in the clean room code). May need different role combinations for CPK key unwrapping ❓</li>
-</ul>
-<p><strong>Gap — <code>cleanroom_identity</code> is not exposed to users.</strong> The <a href="https://github.com/azure-core/azure-cleanroom/blob/develop/poc/managed-cleanroom/configure-workload.md">POC architecture docs</a> show that users should <strong>retrieve</strong> the <code>cleanroom_identity</code> from the service (via &quot;Get Clean Room Details&quot; → CGS returns <code>cleanroom_identity</code> → user sets federation). This <code>cleanroom_identity</code> is the <code>{contractId}-{ownerId}</code> subject computed internally by the analytics agent. However:</p>
-<ul>
-<li><code>az managedcleanroom frontend oidc issuerinfo show</code> returns <code>{ enabled, issuerUrl, tenantData }</code> — <strong>no <code>cleanroom_identity</code> field</strong></li>
-<li>No other CLI command or frontend API endpoint exposes this value</li>
-<li>The <code>contractId</code> and <code>ownerId</code> are internal service values — users shouldn&#39;t have to guess them</li>
-<li>Our script computes the subject locally (which matches the runtime format), but this is fragile — if the internal convention changes, the federation will break silently</li>
-</ul>
-<p>🔴 <strong>ACCR team: Please expose the federated credential subject (<code>cleanroom_identity</code>) via a CLI command or include it in the <code>oidc issuerinfo show</code> response, so users don&#39;t need to reverse-engineer the <code>{contractId}-{ownerId}</code> format.</strong>
-If any of these don&#39;t match what the clean room actually presents at runtime, the token exchange will fail silently (Azure AD rejects the token). Will be validated once we can test end-to-end.</p>
-</blockquote>
+
+
 <hr>
-<h2>Step 8: Publish datasets (each collaborator)</h2>
-<p>Each collaborator publishes their dataset metadata to the collaboration.</p>
-<blockquote>
-<p><strong>Possibility 1 (Ideal)</strong> — Single command per dataset:</p>
-<pre><code class="language-powershell"># Northwind publishes their input dataset (read-only)
-az managedcleanroom frontend analytics dataset publish `
-    --collaboration-id $COLLABORATION_ID `
-    --dataset-name $NORTHWIND_DATASET_NAME `
-    --storage-account $NORTHWIND_DATASTORE `
-    --encryption-mode CPK `
-    --key-vault &quot;northwind-kv&quot; `
-    --access-mode read `
-    --schema-format csv `
-    --schema-fields $INPUT_SCHEMA
+<h2>Step 7: Publish datasets (northwind, woodgrove)</h2>
+<p>Each collaborator publishes their dataset metadata to the collaboration.
+The CPK encryption secret references (DEK/KEK) are filled in automatically from
+the metadata generated in previous steps.</p>
+<blockquote class="markdown-alert markdown-alert-important"><p><strong>IMPORTANT</strong></p>
+<p><strong>7a. Review the dataset config.</strong>
+Open <a href="templates/dataset-config.json"><code>templates/dataset-config.json</code></a> and adjust
+<code>schema</code> and <code>allowedFields</code> for each dataset if your data differs from the demo
+defaults. All other values (storage account, identity, key vault, encryption
+secrets) are filled in automatically by the script in the next step.</p>
 
-# Woodgrove publishes their input dataset (read-only)
-az managedcleanroom frontend analytics dataset publish `
-    --collaboration-id $COLLABORATION_ID `
-    --dataset-name $WOODGROVE_DATASET_NAME `
-    --storage-account $WOODGROVE_DATASTORE `
-    --encryption-mode CPK `
-    --key-vault &quot;woodgrove-kv&quot; `
-    --access-mode read `
-    --schema-format csv `
-    --schema-fields $INPUT_SCHEMA
+</blockquote>
 
-# Woodgrove also publishes the output dataset (write — query results land here)
-az managedcleanroom frontend analytics dataset publish `
-    --collaboration-id $COLLABORATION_ID `
-    --dataset-name $WOODGROVE_OUTPUT_DATASET `
-    --storage-account $WOODGROVE_DATASTORE `
-    --encryption-mode CPK `
-    --key-vault &quot;woodgrove-kv&quot; `
-    --access-mode write `
-    --schema-format csv `
-    --schema-fields $OUTPUT_SCHEMA
+
+<p><strong>7b. Generate the publish-ready JSON files</strong> from metadata produced by Steps 3–5:</p>
+<pre><code class="language-powershell">./scripts/populate-templates.ps1 -variant cpk -persona $Persona -resourceGroup $ResourceGroup
 </code></pre>
-<p><strong>Value add:</strong> Today publishing requires constructing a deeply nested DatasetSpecification JSON body natively in PowerShell, including CPK encryption secret chains (DEK/KEK). In the ideal UX, a single command accepts storage, encryption, and schema details directly — no JSON construction needed.</p>
-</blockquote>
-<p><strong>Possibility 2 (Current)</strong> — Using the provided script:</p>
-<pre><code class="language-powershell"># Run by Northwind
-./scripts/08-publish-dataset-cpk.ps1 `
-    -collaborationId $COLLABORATION_ID `
-    -resourceGroup $NORTHWIND_RESOURCE_GROUP `
-    -persona $NORTHWIND_PERSONA `
-    -outDir $OUT_DIR
-
-# Run by Woodgrove
-./scripts/08-publish-dataset-cpk.ps1 `
-    -collaborationId $COLLABORATION_ID `
-    -resourceGroup $WOODGROVE_RESOURCE_GROUP `
-    -persona $WOODGROVE_PERSONA `
-    -outDir $OUT_DIR
+<p>Output files are written to <code>generated/datasets/cpk/</code>.</p>
+<p><strong>7c. Publish the datasets:</strong></p>
+<pre><code class="language-powershell"># Publish your input dataset
+az managedcleanroom frontend analytics dataset publish `
+    --collaboration-id $CollaborationId `
+    --document-id $DatasetName `
+    --body &quot;@generated/datasets/cpk/$Persona-input-dataset.json&quot;
 </code></pre>
-<p>This script constructs the <strong>DatasetSpecification JSON</strong> natively in PowerShell (no <code>az cleanroom</code> dependency):</p>
-<ol>
-<li>Reads datastore metadata from Step 5 (<code>generated/datastores/{persona}-datastore-metadata.json</code> — storage URL, container, schema, encryption config including DEK/KEK references) and identity metadata from Step 6 (<code>generated/{resourceGroup}/identity-metadata.json</code> — client ID, tenant ID, OIDC issuer URL)</li>
-<li>Builds the DatasetSpecification JSON — a nested structure containing schema, access policy, storage access point (<code>AccessPoint</code>), identity references, and protection settings (<code>PrivacyProxySettings</code>) <strong>with CPK <code>EncryptionSecrets</code></strong> (DEK/KEK store references pointing to Key Vault). The structure was derived from the cleanroom extension source code (cleanroom v5.0.0 <code>CleanRoomSpecification</code> model)</li>
-<li>Publishes via <code>az managedcleanroom frontend analytics dataset publish --body @file</code></li>
-<li><strong>Enables execution consent</strong> on each published dataset via <code>az managedcleanroom frontend consent set --consent-action enable</code> — required for the clean room to access the data at query run time</li>
-<li>Verifies the dataset state</li>
-</ol>
-<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong>
-<strong>DatasetSpecification format verified against frontend source.</strong> The JSON body matches <code>DatasetInputDetails</code> (<code>src/workloads/frontend/Models/CGS/DatasetInputDetails.cs</code>): <code>{ &quot;data&quot;: { name, datasetSchema, datasetAccessPolicy, datasetAccessPoint } }</code>. The <code>AccessPoint.protection.encryptionSecrets</code> structure (DEK/KEK with <code>backingResource</code> pointing to Key Vault) matches the cleanroom <code>EncryptionSecrets</code> model. The frontend performs <strong>no field-level validation</strong> — it passes the AccessPoint through to CGS verbatim (<code>DatasetDocumentPublisher.cs:73-84</code>). Publishing will succeed, but the cleanroom runtime may fail if any derived values are wrong.</p>
-<p><strong>Specific runtime risks (see <code>.NOTES</code> in script for details):</strong></p>
-<ul>
-<li><code>tokenIssuer.url</code> is set to <code>https://cgs/oidc</code> (v5.0.0 symbolic reference) — old samples used the actual OIDC issuer URL</li>
-<li><code>backingResource.id</code> for DEK/KEK uses logical names (<code>$persona-dek-store</code>) — if CGS resolves these against a registry, they&#39;d fail since we didn&#39;t register via <code>secretstore add</code></li>
-<li><code>protection.configuration</code> uses Python-style single-quoted dict — if CGS parses as JSON, use double quotes</li>
-<li><code>store.id</code> uses the datastore name — if CGS expects the ARM resource ID, change to <code>storeId</code> from metadata</li>
-</ul>
-<p>🔴 <strong>ACCR team: Please document the expected <code>dataset publish --body</code> JSON schema in the CLI help, so users don&#39;t need to read source code to verify compatibility.</strong></p>
+<p>Woodgrove also publishes the output dataset:</p>
+<pre><code class="language-powershell"># Woodgrove only
+az managedcleanroom frontend analytics dataset publish `
+    --collaboration-id $CollaborationId `
+    --document-id $OutputDatasetName `
+    --body &quot;@generated/datasets/cpk/woodgrove-output-dataset.json&quot;
+</code></pre>
+<p><strong>7d. Enable execution consent</strong> on each published dataset (required for the clean room to access the data at query run time):</p>
+<pre><code class="language-powershell"># Enable consent for your input dataset
+az managedcleanroom frontend consent set `
+    --collaboration-id $CollaborationId `
+    --document-id $DatasetName `
+    --consent-action enable
+</code></pre>
+<p>Woodgrove also enables consent for the output dataset:</p>
+<pre><code class="language-powershell"># Woodgrove only
+az managedcleanroom frontend consent set `
+    --collaboration-id $CollaborationId `
+    --document-id $OutputDatasetName `
+    --consent-action enable
+</code></pre>
+<p><strong>7e. Verify</strong> each dataset was published:</p>
+<pre><code class="language-powershell">az managedcleanroom frontend analytics dataset show `
+    --collaboration-id $CollaborationId `
+    --document-id $DatasetName
+</code></pre>
+<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong></p>
+<p><strong>Northwind</strong> publishes 1 dataset (read-only). <strong>Woodgrove</strong> publishes 2 datasets (read-only input + write output for results).</p>
+
 </blockquote>
-<blockquote class="markdown-alert markdown-alert-caution"><p><strong>CAUTION</strong>
-<strong>Untested — idempotency relies on <code>dataset show</code> behavior.</strong> The script checks if a dataset is already published by calling <code>dataset show</code> and assuming it returns a non-zero exit code when the dataset doesn&#39;t exist, and a JSON response when it does. If <code>dataset show</code> behaves differently (e.g., returns an empty response or a 200 with an error object), the idempotency check may not work correctly.</p>
-</blockquote>
-<p><strong>Northwind</strong> publishes 1 dataset:</p>
-<ul>
-<li><code>northwind-input-csv</code> — their input data (read-only access)</li>
-</ul>
-<p><strong>Woodgrove</strong> publishes 2 datasets:</p>
-<ul>
-<li><code>woodgrove-input-csv</code> — their input data (read-only access)</li>
-<li><code>woodgrove-output-csv</code> — the output dataset where query results are written (write access). Woodgrove owns the output because they are the query proposer.</li>
-</ul>
+
+
 <hr>
-<h2>Step 9: Publish query (Woodgrove)</h2>
-<p>Woodgrove proposes a Spark SQL query that combines both datasets. The query itself is identical to SSE — encryption mode doesn&#39;t affect the query.</p>
-<pre><code class="language-powershell">./scripts/09-publish-query.ps1 `
-    -collaborationId $COLLABORATION_ID `
-    -queryName $QUERY_NAME `
-    -queryDir &quot;./demos/query/woodgrove/query1&quot; `
-    -publisherInputDataset $NORTHWIND_DATASET_NAME `
-    -consumerInputDataset $WOODGROVE_DATASET_NAME `
-    -outputDataset $WOODGROVE_OUTPUT_DATASET `
-    -outDir $OUT_DIR
-</code></pre>
-<p>This script uses <strong>only PowerShell + <code>az managedcleanroom</code></strong>:</p>
-<ol>
-<li>Reads query segment files (<code>segment1.txt</code>, <code>segment2.txt</code>, <code>segment3.txt</code>) directly from disk</li>
-<li>Builds the query specification JSON in PowerShell (segments with execution sequence, input/output dataset mappings)</li>
-<li>Checks if the query is already published via <code>query show</code> (skips publish if so — idempotent)</li>
-<li>Publishes via <code>az managedcleanroom frontend analytics query publish --body @file</code></li>
-<li><strong>Enables execution consent</strong> on the query via <code>az managedcleanroom frontend consent set --consent-action enable</code> — the query publisher enables consent at publish time; this can be done before other collaborators vote</li>
-<li>Verifies the query state</li>
-</ol>
-<blockquote class="markdown-alert markdown-alert-caution"><p><strong>CAUTION</strong>
-<strong>Untested</strong> — idempotency relies on <code>query show</code> behavior. The script assumes <code>query show</code> returns a non-zero exit code when a query doesn&#39;t exist, and a JSON response when it does. If <code>query show</code> behaves differently (e.g., returns an empty response or a 200 with an error object), the idempotency check may not work correctly. Will be validated once we can test end-to-end.</p>
-</blockquote>
-<blockquote class="markdown-alert markdown-alert-caution"><p><strong>CAUTION</strong>
-<strong>Confirmed — query body JSON structure.</strong> Validated against the frontend service source code
-(<code>src/workloads/frontend/Models/CGS/</code> in the <code>azure-core/azure-cleanroom</code> repo):</p>
-<ul>
-<li><code>queryData.segments[]</code> — each segment has <code>executionSequence</code> (int), <code>data</code> (string), and optional <code>preConditions</code>/<code>postFilters</code> arrays</li>
-<li><code>inputDatasets[]</code> — each entry has <code>view</code> (string) and <code>datasetDocumentId</code> (string)</li>
-<li><code>outputDataset</code> — same shape as <code>inputDatasets[]</code> entries: <code>{view, datasetDocumentId}</code></li>
-<li><code>contractId</code> — not part of the client-facing schema (managed internally by the server in <code>CreateUserDocument.cs</code>)</li>
-</ul>
-<p>🔴 <strong>ACCR team: Please document the <code>query publish --body</code> JSON schema in the CLI help, including segment fields and dataset input structure.</strong></p>
-</blockquote>
-<blockquote class="markdown-alert markdown-alert-warning"><p><strong>WARNING</strong>
-<strong>CLI gap</strong> — <code>az managedcleanroom</code> has no commands for building query segments or generating the query body. However, <code>az cleanroom</code> (non-public) <strong>does</strong> have <code>spark-sql publish --prepare-only</code> which generates a compatible query body (<code>src/tools/azure-cli-extension/cleanroom/azext_cleanroom/collaboration_cmd.py:694</code>). Its output includes <code>{ contractId, queryData, inputDatasets, outputDataset }</code> — note the extra <code>contractId</code> field which the frontend ignores (not part of <code>QueryInputDetails</code>). Our scripts hand-craft the JSON instead (confirmed correct against source — see CAUTION above).</p>
-<p>🔴 <strong>ACCR team: Can <code>az managedcleanroom</code> add equivalent query body generation commands (e.g., <code>query segment add</code>, <code>query publish --prepare-only</code>)?</strong></p>
-</blockquote>
-<p>The query runs three SQL segments:</p>
-<ol>
-<li><code>CREATE OR REPLACE TEMP VIEW publisher_view AS SELECT * FROM publisher_data</code></li>
-<li><code>CREATE OR REPLACE TEMP VIEW consumer_view AS SELECT * FROM consumer_data</code></li>
-<li><code>SELECT author, COUNT(*) AS Number_Of_Mentions, SUM(mentions) AS Restricted_Sum FROM (SELECT * FROM publisher_view UNION ALL SELECT * FROM consumer_view) ...</code></li>
-</ol>
-<hr>
-<h2>Step 10: Vote on query (each collaborator)</h2>
-<p><strong>Both</strong> collaborators must vote to approve the query before it can execute.</p>
-<pre><code class="language-powershell"># Run by Northwind
-./scripts/10-vote-query.ps1 `
-    -collaborationId $COLLABORATION_ID `
-    -queryName $QUERY_NAME
+<h2>Step 8: Publish query (woodgrove)</h2>
+<p>Woodgrove proposes a Spark SQL query that combines both datasets.</p>
+<blockquote class="markdown-alert markdown-alert-important"><p><strong>IMPORTANT</strong></p>
+<p><strong>8a. Review the query config.</strong>
+Open <a href="templates/query.json"><code>templates/query.json</code></a> and adjust the SQL segments
+and dataset document IDs if your query differs from the demo defaults.</p>
 
-# Run by Woodgrove (the proposer also votes)
-./scripts/10-vote-query.ps1 `
-    -collaborationId $COLLABORATION_ID `
-    -queryName $QUERY_NAME
+</blockquote>
+
+
+<p><strong>8b. Publish the query:</strong></p>
+<pre><code class="language-powershell">az managedcleanroom frontend analytics query publish `
+    --collaboration-id $CollaborationId `
+    --document-id $QueryName `
+    --body &quot;@templates/query.json&quot;
 </code></pre>
-<p>The script performs 2 CLI calls per collaborator:</p>
-<ol>
-<li>Votes to accept the query (<code>az managedcleanroom frontend analytics query vote accept</code>) — no <code>--body</code> needed per CLI help; idempotent, skips if already voted</li>
-<li>Verifies query state via <code>query show</code></li>
-</ol>
-<blockquote class="markdown-alert markdown-alert-caution"><p><strong>CAUTION</strong>
-<strong>Partially confirmed — vote idempotency still uncertain.</strong> Source code analysis (<code>src/workloads/frontend/Controllers/CollaborationController.cs:202-222</code> on <code>user/ashank/frontendAuth</code> branch):</p>
-<ul>
-<li><code>VoteRequest</code> has a <code>proposalId</code> field, but it&#39;s <strong>optional</strong> in the OpenAPI schema (<code>proposalId?: string</code>) — our script correctly omits it ✅</li>
-<li>The controller calls <code>VoteDocumentProposalAsync</code> which posts to CGS at <code>/userdocuments/{documentId}/vote_accept</code> — no try-catch for Conflict/duplicate votes ❓</li>
-<li>Unlike <code>invitation accept</code> (which has a state machine with Conflict handling), vote accept has <strong>no duplicate-vote handling</strong> — if CGS rejects a re-vote, the error propagates unhandled</li>
-<li>The script&#39;s <code>Invoke-AzIdempotent</code> error-text matching (<code>&quot;already voted|accepted|approved&quot;</code>) is the only safety net — but the actual CGS error message for duplicate votes is still unknown</li>
-</ul>
-<p>Needs live testing to confirm whether CGS silently accepts or rejects duplicate votes.</p>
-<p>🔴 <strong>ACCR team: Please document <code>vote accept</code> idempotency behavior (what happens on duplicate votes) and the <code>VoteRequest</code> body schema in the CLI help.</strong></p>
-</blockquote>
-<blockquote class="markdown-alert markdown-alert-warning"><p><strong>WARNING</strong>
-<strong>CLI gap</strong> — <code>vote accept --help</code> does not document whether voting twice returns an error or is silently accepted. The <a href="https://github.com/azure-core/azure-cleanroom/blob/develop/poc/managed-cleanroom/spark/README.md">POC architecture docs</a> confirm that document approvers accept/reject directly — no <code>proposalId</code> is needed, consistent with the CLI help showing <code>--body</code> is optional.</p>
-</blockquote>
+<p><strong>8c. Enable execution consent</strong> on the query:</p>
+<pre><code class="language-powershell">az managedcleanroom frontend consent set `
+    --collaboration-id $CollaborationId `
+    --document-id $QueryName `
+    --consent-action enable
+</code></pre>
+<p><strong>8d. Verify</strong> the query was published:</p>
+<pre><code class="language-powershell">az managedcleanroom frontend analytics query show `
+    --collaboration-id $CollaborationId `
+    --document-id $QueryName
+</code></pre>
+<p>All collaborators must now vote to approve this query before execution.</p>
+<hr>
+<h2>Step 9: Vote on query (northwind, woodgrove)</h2>
+<p>Both collaborators must vote to approve the query before it can execute.</p>
+<pre><code class="language-powershell">az managedcleanroom frontend analytics query vote accept `
+    --collaboration-id $CollaborationId `
+    --document-id $QueryName
+</code></pre>
+<p>No <code>--body</code> is needed — per CLI help, the body is optional (accepts reason/metadata only).</p>
+<p>Verify query state after both votes:</p>
+<pre><code class="language-powershell">az managedcleanroom frontend analytics query show `
+    --collaboration-id $CollaborationId `
+    --document-id $QueryName
+</code></pre>
 <p>After both votes, the query state changes from &quot;Proposed&quot; to &quot;Accepted&quot;.</p>
 <hr>
-<h2>Step 11: Run query (Woodgrove)</h2>
-<p>Execute the approved query in the confidential clean room:</p>
-<blockquote>
-<p><strong>Possibility 1 (Ideal)</strong> — Single command:</p>
-<pre><code class="language-powershell">az managedcleanroom frontend analytics query run `
-    --collaboration-id $COLLABORATION_ID `
-    --query-name $QUERY_NAME `
-    --wait
+<h2>Step 10: Run query (woodgrove)</h2>
+<p>Execute the approved query in the confidential clean room.</p>
+<p><strong>10a. Submit the query run:</strong></p>
+<pre><code class="language-powershell">$runResponse = az managedcleanroom frontend analytics query run `
+    --collaboration-id $CollaborationId `
+    --document-id $QueryName | ConvertFrom-Json
+
+$JobId = $runResponse.jobId
+Write-Host &quot;Job ID: $JobId&quot;
 </code></pre>
-<p><strong>Value add:</strong> Today the script must submit the query, extract a job ID from the response, then poll <code>runresult show</code> in a loop until completion. In the ideal UX, a single command with <code>--wait</code> blocks until the job completes — no polling loop needed.</p>
+<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong></p>
+<p>Each invocation submits a new query run — re-running the command starts
+a fresh execution.</p>
+
 </blockquote>
-<p><strong>Possibility 2 (Current)</strong> — Using the provided script (submits + polls for completion):</p>
-<pre><code class="language-powershell">./scripts/11-run-query.ps1 `
-    -collaborationId $COLLABORATION_ID `
-    -queryName $QUERY_NAME
+
+
+<p><strong>10b. Poll for completion</strong> using <code>runresult show</code>:</p>
+<pre><code class="language-powershell"># Poll every 15 seconds until COMPLETED or FAILED
+do {
+    Start-Sleep -Seconds 15
+    $result = az managedcleanroom frontend analytics query runresult show `
+        --collaboration-id $CollaborationId `
+        --job-id $JobId | ConvertFrom-Json
+    $state = $result.status.applicationState.state
+    Write-Host &quot;Status: $state&quot;
+} while ($state -notin @(&quot;COMPLETED&quot;, &quot;FAILED&quot;, &quot;SUBMISSION_FAILED&quot;))
+
+# Display the result
+$result | ConvertTo-Json -Depth 10
 </code></pre>
-<p>The script:</p>
-<ol>
-<li>Submits the query run via <code>az managedcleanroom frontend analytics query run</code></li>
-<li>Polls for completion using <code>az managedcleanroom frontend analytics query runresult show</code> every 15 seconds (configurable via <code>-pollIntervalSeconds</code>)</li>
-<li>Times out after 30 minutes (configurable via <code>-timeoutMinutes</code>)</li>
-<li>Displays the final status (COMPLETED or FAILED)</li>
-</ol>
-<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong>
-This step is intentionally <strong>not idempotent</strong> — each invocation submits a new query run. Re-running the script will start a fresh execution, which is valid (you may want to re-run a query with updated data).</p>
-</blockquote>
-<blockquote class="markdown-alert markdown-alert-caution"><p><strong>CAUTION</strong>
-<strong>Confirmed — response schemas validated from source code.</strong> Analysis of the frontend service (<code>src/workloads/frontend/</code> on <code>user/ashank/frontendAuth</code> branch):</p>
-<ul>
-<li><strong><code>query run</code> response</strong> (<code>QueryRunOutput</code> in OpenAPI schema): field is <code>jobId</code> (string) — our script&#39;s primary extraction <code>$runResponse.jobId</code> is correct ✅</li>
-<li><strong><code>runresult show</code> response</strong> (<code>QueryRunResult</code> in <code>Models/CGS/QueryRunResult.cs</code>): nesting is <code>status.applicationState.state</code> — our script&#39;s primary path <code>$result.status.applicationState.state</code> is correct ✅</li>
-<li><strong>State values</strong> (from OpenAPI enum): <code>&quot;SUBMITTED&quot;</code>, <code>&quot;RUNNING&quot;</code>, <code>&quot;COMPLETED&quot;</code>, <code>&quot;FAILED&quot;</code>, <code>&quot;SUBMISSION_FAILED&quot;</code>, <code>&quot;PENDING_RERUN&quot;</code>, <code>&quot;INVALIDATING&quot;</code>, <code>&quot;SUCCEEDING&quot;</code>, <code>&quot;FAILING&quot;</code>, <code>&quot;SUSPENDING&quot;</code>, <code>&quot;SUSPENDED&quot;</code>, <code>&quot;RESUMING&quot;</code>, <code>&quot;UNKNOWN&quot;</code> — our script checks <code>&quot;COMPLETED&quot;</code> and <code>&quot;FAILED&quot;</code>/<code>&quot;SUBMISSION_FAILED&quot;</code> which are correct ✅</li>
-</ul>
-<p>🔴 <strong>ACCR team: Please document <code>query run</code> and <code>runresult show</code> response schemas in the CLI help, including the <code>jobId</code> field, <code>status.applicationState.state</code> nesting, and valid state enum values.</strong></p>
-</blockquote>
 <hr>
-<h2>Step 12: View results</h2>
-<p>View run history and audit events:</p>
-<pre><code class="language-powershell">./scripts/12-view-results.ps1 `
-    -collaborationId $COLLABORATION_ID `
-    -queryName $QUERY_NAME
+<h2>Step 11: View results</h2>
+<p>Once the query completes, the results are written to Woodgrove&#39;s output storage
+container (<code>woodgrove-output</code>). In CPK mode the results are encrypted with the
+same DEK used during upload. To download and read them, you need to reconstruct
+the DEK from the wrapped secret in Key Vault using the local KEK private key.</p>
+<p><strong>11a. Reconstruct the DEK:</strong></p>
+<p>The raw DEK was generated in memory during Step 4 and only its wrapped (RSA-OAEP-SHA256
+encrypted) form was stored in Key Vault. The KEK private PEM was saved locally.</p>
+<pre><code class="language-powershell"># Retrieve the wrapped DEK (hex string) from Key Vault
+$wrappedDekHex = az keyvault secret show `
+    --vault-name $KeyVault `
+    --name &quot;woodgrove-output-dek-wrapped&quot; `
+    --query value -o tsv
+
+# Convert hex string back to bytes
+$wrappedDekBytes = [byte[]]::new($wrappedDekHex.Length / 2)
+for ($i = 0; $i -lt $wrappedDekHex.Length; $i += 2) {
+    $wrappedDekBytes[$i / 2] = [Convert]::ToByte($wrappedDekHex.Substring($i, 2), 16)
+}
+
+# Load the KEK private key (saved during Step 4)
+$kekPemPath = Join-Path $OutDir $ResourceGroup &quot;woodgrove-kek-private.pem&quot;
+$kekPem = Get-Content $kekPemPath -Raw
+$rsa = [System.Security.Cryptography.RSA]::Create()
+$rsa.ImportFromPem($kekPem)
+
+# Unwrap (decrypt) the DEK
+$dekBytes = $rsa.Decrypt($wrappedDekBytes,
+    [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
+$dekBase64 = [Convert]::ToBase64String($dekBytes)
+$dekSha256Base64 = [Convert]::ToBase64String(
+    [System.Security.Cryptography.SHA256]::HashData($dekBytes))
+
+$rsa.Dispose()
+Write-Host &quot;DEK reconstructed successfully.&quot; -ForegroundColor Green
 </code></pre>
-<p>The script calls two native CLI commands directly — no gap between ideal and current UX:</p>
-<pre><code class="language-powershell">az managedcleanroom frontend analytics query runhistory list --collaboration-id $COLLABORATION_ID --document-id $QUERY_NAME
-az managedcleanroom frontend analytics auditevent list --collaboration-id $COLLABORATION_ID
+<p><strong>11b. List output blobs:</strong></p>
+<pre><code class="language-powershell">az storage blob list `
+    --account-name $StorageAccount `
+    --container-name &quot;woodgrove-output&quot; `
+    --auth-mode login `
+    --output table
+</code></pre>
+<p><strong>11c. Download and decrypt results:</strong></p>
+<p>Since CPK blobs require the encryption key in the request headers, use the
+REST API to download each blob:</p>
+<pre><code class="language-powershell">$ResultsDir = &quot;./results&quot;
+New-Item -ItemType Directory -Path $ResultsDir -Force | Out-Null
+
+$tokenJson = az account get-access-token `
+    --resource https://storage.azure.com --output json | ConvertFrom-Json
+$accessToken = $tokenJson.accessToken
+
+# Get blob endpoint
+$storageJson = az storage account show `
+    --name $StorageAccount `
+    --resource-group $ResourceGroup `
+    --output json | ConvertFrom-Json
+$blobEndpoint = $storageJson.primaryEndpoints.blob
+
+# List and download each blob
+$blobs = az storage blob list `
+    --account-name $StorageAccount `
+    --container-name &quot;woodgrove-output&quot; `
+    --auth-mode login `
+    --output json | ConvertFrom-Json
+
+foreach ($blob in $blobs) {
+    $blobUrl = &quot;${blobEndpoint}woodgrove-output/$($blob.name)&quot;
+    $localPath = Join-Path $ResultsDir $blob.name
+    New-Item -ItemType Directory -Path (Split-Path $localPath) -Force | Out-Null
+
+    $headers = @{
+        &quot;Authorization&quot;              = &quot;Bearer $accessToken&quot;
+        &quot;x-ms-version&quot;               = &quot;2024-11-04&quot;
+        &quot;x-ms-encryption-key&quot;        = $dekBase64
+        &quot;x-ms-encryption-key-sha256&quot; = $dekSha256Base64
+        &quot;x-ms-encryption-algorithm&quot;  = &quot;AES256&quot;
+    }
+
+    Invoke-RestMethod -Uri $blobUrl -Method Get -Headers $headers `
+        -OutFile $localPath
+    Write-Host &quot;Downloaded: $($blob.name)&quot; -ForegroundColor Green
+}
+</code></pre>
+<p><strong>11d. View the downloaded data:</strong></p>
+<pre><code class="language-powershell">Get-ChildItem $ResultsDir -Recurse -File | ForEach-Object {
+    Write-Host &quot;--- $($_.Name) ---&quot; -ForegroundColor Cyan
+    Get-Content $_.FullName | Select-Object -First 20
+}
+</code></pre>
+<p><strong>11e. View run history and audit events:</strong></p>
+<pre><code class="language-powershell"># Query run history
+az managedcleanroom frontend analytics query runhistory list `
+    --collaboration-id $CollaborationId `
+    --document-id $QueryName
+
+# Audit events
+az managedcleanroom frontend analytics auditevent list `
+    --collaboration-id $CollaborationId
 </code></pre>
 <hr>
 <h2>Advanced Topics</h2>
@@ -1011,121 +655,110 @@ $runBody = @{
 } | ConvertTo-Json
 
 az managedcleanroom frontend analytics query run `
-    --collaboration-id $COLLABORATION_ID `
-    --document-id $QUERY_NAME `
+    --collaboration-id $CollaborationId `
+    --document-id $QueryName `
     --body $runBody
 </code></pre>
-<p>The frontend API accepts <code>startDate</code> and <code>endDate</code> as ISO 8601 strings in the run request body. Only data within the specified range is loaded into the clean room.</p>
-<blockquote class="markdown-alert markdown-alert-note"><p><strong>NOTE</strong>
-Date filtering is applied at the data-loading stage — the clean room only mounts partitions matching the range. This is more efficient than filtering in the SQL query itself.</p>
-</blockquote>
+<p>When a date range is provided, only matching partitions are read.</p>
 <h3>Privacy controls</h3>
-<p>The sample query includes privacy-preserving mechanisms built into the query segments:</p>
-<ul>
-<li><p><strong>Pre-conditions</strong> (<code>segment1.txt</code>, <code>segment2.txt</code>): Each segment includes a <code>minRowCount</code> check. If either dataset has fewer rows than the threshold, the query aborts — preventing analysis on too-small datasets where individual records could be re-identified.</p>
-</li>
-<li><p><strong>Post-filters</strong> (<code>segment3.txt</code>): The final aggregation query filters output to only include groups with <code>Number_Of_Mentions &gt;= 2</code>, ensuring no single-author results are exposed.</p>
-</li>
-</ul>
-<p>These controls are defined in the query segments under <code>demos/query/woodgrove/query1/</code>. You can customise the thresholds by editing the segment files before publishing the query (Step 9).</p>
+<p><strong>Pre-conditions</strong> enforce a minimum row count per view. If any view has fewer
+rows than <code>minRowCount</code>, the query aborts.</p>
+<p><strong>Post-filters</strong> remove groups from the output whose aggregation count is
+below a threshold, preventing identification of individuals.</p>
+<p>Both are defined in the query segments. Edit the thresholds before publishing
+the query (Step 8).</p>
 <h3>Audit events</h3>
 <p>View all audit events for the collaboration directly via the CLI:</p>
 <pre><code class="language-powershell">az managedcleanroom frontend analytics auditevent list `
-    --collaboration-id $COLLABORATION_ID
+    --collaboration-id $CollaborationId
 </code></pre>
 <p>Events include query execution start/completion, input/output row counts, dataset access, and failures. The audit log is maintained in the CCF ledger and is tamper-proof.</p>
 <hr>
-<h2>Appendix: CLI commands per step</h2>
+<h2>Appendix &mdash; CLI commands per step</h2>
 <table>
 <thead>
 <tr>
 <th>Step</th>
 <th>Description</th>
-<th>CLI Extension</th>
+<th>Approach</th>
 <th>CLI Commands Used</th>
 </tr>
 </thead>
 <tbody><tr>
 <td>0</td>
 <td>Prerequisites</td>
-<td><code>managedcleanroom</code></td>
+<td><strong>Direct CLI</strong></td>
 <td><code>az extension add</code>, <code>az login</code></td>
 </tr>
 <tr>
 <td>1</td>
 <td>Create collaboration</td>
-<td><code>managedcleanroom</code></td>
-<td><code>az account show</code>, <code>az ad signed-in-user show</code>, <code>az managedcleanroom collaboration create</code>, <code>add-collaborator</code> (×2), <code>enable-workload</code></td>
+<td><strong>Direct CLI</strong></td>
+<td><code>az account show</code>, <code>az ad signed-in-user show</code>, <code>az managedcleanroom collaboration create</code>, <code>add-collaborator</code> (×2), <code>enable-workload</code>, <code>collaboration show</code></td>
 </tr>
 <tr>
 <td>2</td>
 <td>Accept invitation</td>
-<td><code>managedcleanroom</code></td>
+<td><strong>Direct CLI</strong></td>
 <td><code>az managedcleanroom frontend configure</code>, <code>login</code>, <code>invitation list</code>, <code>invitation accept</code></td>
 </tr>
 <tr>
 <td>3</td>
-<td>Generate demo data</td>
-<td><em>(none)</em></td>
-<td>PowerShell only — downloads CSV files from GitHub</td>
-</tr>
-<tr>
-<td>4</td>
 <td>Prepare resources</td>
-<td><em>(standard az)</em></td>
+<td><strong>Helper script</strong></td>
 <td><code>az group create</code>, <code>az storage account create</code>, <code>az keyvault create --sku Premium</code>, <code>az identity create</code>, <code>az role assignment create</code> (×3)</td>
 </tr>
 <tr>
+<td>4</td>
+<td>Prepare data</td>
+<td><strong>Helper script</strong></td>
+<td><code>./demos/generate-data.ps1</code> (demo only) + <code>./scripts/05-prepare-data.ps1 -variant cpk</code> — <code>az managedcleanroom frontend analytics cleanroompolicy</code>, <code>az storage account show</code>, <code>az keyvault show</code>, <code>az storage container create</code>, <code>az keyvault key import</code> (RSA-HSM, exportable, SKR policy), <code>az keyvault secret set</code>, <code>Invoke-RestMethod</code> (CPK upload)</td>
+</tr>
+<tr>
 <td>5</td>
-<td>Prepare data (CPK)</td>
-<td><em>(standard az)</em></td>
-<td><code>az storage account show</code>, <code>az keyvault show</code>, <code>az storage container create</code>, <code>az keyvault key create</code>, <code>az keyvault key encrypt</code>, <code>az keyvault secret set</code>, <code>az storage blob upload-batch</code></td>
+<td>Identity &amp; OIDC</td>
+<td><strong>Helper script</strong></td>
+<td><code>az storage account create</code>, <code>az storage blob service-properties update</code>, <code>az role assignment create</code>, <code>az managedcleanroom frontend oidc issuerinfo show</code>, OIDC REST calls, <code>az storage blob upload</code> (×2), <code>az identity show</code></td>
 </tr>
 <tr>
 <td>6</td>
-<td>Identity &amp; OIDC</td>
-<td><code>managedcleanroom</code> + <em>(standard az)</em> + <em>(REST)</em></td>
-<td><code>az storage account create</code>, <code>az storage blob service-properties update</code>, <code>az role assignment create</code>, <code>az managedcleanroom frontend oidc issuerinfo show</code>, <code>GET /collaborations/{id}/oidc/keys</code> <em>(direct REST — no CLI)</em>, <code>az storage blob upload</code> (×2), <code>POST /collaborations/{id}/oidc/setIssuerUrl</code> <em>(direct REST — no CLI)</em>, <code>az identity show</code></td>
-</tr>
-<tr>
-<td>7</td>
 <td>Grant access (CPK)</td>
-<td><em>(standard az)</em></td>
+<td><strong>Helper script</strong></td>
 <td><code>az identity show</code>, <code>az storage account show</code>, <code>az keyvault show</code>, <code>az role assignment create</code> (×3: Storage + KV Crypto + KV Secrets), <code>az identity federated-credential create</code></td>
 </tr>
 <tr>
-<td><strong>8</strong></td>
-<td><strong>Publish datasets</strong></td>
-<td><code>managedcleanroom</code></td>
-<td>PowerShell <code>New-DatasetBody</code> (builds DatasetSpecification JSON natively with CPK <code>EncryptionSecrets</code>), <code>az managedcleanroom frontend analytics dataset publish --body @file</code>, <code>az managedcleanroom frontend analytics dataset show</code>, <code>az managedcleanroom frontend consent set --consent-action enable</code> (per dataset)</td>
+<td>7</td>
+<td>Publish datasets</td>
+<td>Config + script</td>
+<td>Edit <code>templates/dataset-config.json</code>, run <code>populate-templates.ps1</code>, then <code>az managedcleanroom frontend analytics dataset publish</code> (×3), <code>consent set --consent-action enable</code> (×3), <code>dataset show</code></td>
+</tr>
+<tr>
+<td>8</td>
+<td>Publish query</td>
+<td><strong>Direct CLI</strong></td>
+<td><code>az managedcleanroom frontend analytics query publish --body @file</code>, <code>consent set --consent-action enable</code>, <code>query show</code></td>
 </tr>
 <tr>
 <td>9</td>
-<td>Publish query</td>
-<td><code>managedcleanroom</code></td>
-<td>PowerShell JSON assembly, <code>az managedcleanroom frontend analytics query publish --body @file</code>, <code>az managedcleanroom frontend consent set --consent-action enable</code></td>
+<td>Vote on query</td>
+<td><strong>Direct CLI</strong></td>
+<td><code>az managedcleanroom frontend analytics query vote accept</code> (×2), <code>query show</code></td>
 </tr>
 <tr>
 <td>10</td>
-<td>Vote on query</td>
-<td><code>managedcleanroom</code></td>
-<td><code>az managedcleanroom frontend analytics query show</code>, <code>query vote accept --body</code></td>
-</tr>
-<tr>
-<td>11</td>
 <td>Run query</td>
-<td><code>managedcleanroom</code></td>
+<td><strong>Direct CLI</strong></td>
 <td><code>az managedcleanroom frontend analytics query run</code>, <code>query runresult show</code> (polling)</td>
 </tr>
 <tr>
-<td>12</td>
+<td>11</td>
 <td>View results</td>
-<td><code>managedcleanroom</code></td>
-<td><code>az managedcleanroom frontend analytics query runhistory list</code>, <code>auditevent list</code></td>
+<td><strong>Direct CLI</strong></td>
+<td><code>az keyvault secret show</code> (wrapped DEK), RSA unwrap (local KEK PEM), <code>az storage blob list</code>, <code>Invoke-RestMethod</code> (CPK download), <code>az managedcleanroom frontend analytics query runhistory list</code>, <code>auditevent list</code></td>
 </tr>
 </tbody></table>
 <blockquote>
-<p><strong>No <code>az cleanroom</code> dependency.</strong> All steps use standard Azure CLI or the publicly available <code>az managedcleanroom</code> extension. Step 8 constructs the DatasetSpecification JSON (with CPK encryption secrets) natively in PowerShell.</p>
+<p><strong>No <code>az cleanroom</code> dependency.</strong> All steps use standard Azure CLI or the <code>az managedcleanroom</code> extension.</p>
 </blockquote>
 
 </body>

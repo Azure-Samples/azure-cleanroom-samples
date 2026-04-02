@@ -1,0 +1,35 @@
+{
+  "queryData": {
+    "segments": [
+      {
+        "executionSequence": 1,
+        "data": "CREATE OR REPLACE TEMP VIEW modified_northwind AS SELECT * FROM northwind_data WHERE annual_income > 100000 AND region IN ('IN', 'US', 'UK')",
+        "preConditions": [],
+        "postFilters": []
+      },
+      {
+        "executionSequence": 2,
+        "data": "SELECT woodgrove_data.user_id FROM modified_northwind INNER JOIN woodgrove_data ON modified_northwind.hashed_email = woodgrove_data.hashed_email",
+        "preConditions": [
+          { "viewName": "modified_northwind", "minRowCount": 1000 },
+          { "viewName": "woodgrove_data", "minRowCount": 1000 }
+        ],
+        "postFilters": []
+      }
+    ]
+  },
+  "inputDatasets": [
+    {
+      "datasetDocumentId": "northwind-input-csv",
+      "view": "northwind_data"
+    },
+    {
+      "datasetDocumentId": "woodgrove-input-csv",
+      "view": "woodgrove_data"
+    }
+  ],
+  "outputDataset": {
+    "datasetDocumentId": "woodgrove-output-csv",
+    "view": "output"
+  }
+}

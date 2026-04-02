@@ -19,29 +19,15 @@ param(
     [ValidateSet("blob", "adlsgen2")]
     [string]$storageType = "blob",
 
+    [switch]$skipKeyVault,
+
     [string]$outDir = "./generated"
 )
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
-# Runs an az command, returning $null instead of throwing if it fails.
-function Invoke-AzSafe {
-    param([string[]]$Arguments)
-    $PSNativeCommandUseErrorActionPreference = $false
-    $result = & az @Arguments 2>$null
-    if ($LASTEXITCODE -eq 0) { return $result }
-    return $null
-}
-
-function Get-ResourceNameHash {
-    param([string]$seed)
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($seed)
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    $hash = $sha.ComputeHash($bytes)
-    $hex = -join ($hash | ForEach-Object { $_.ToString("x2") })
-    return $hex
-}
+. "$PSScriptRoot/utils.ps1"
 
 # Derive deterministic, globally-unique resource names from resource group + subscription.
 $subscriptionId = az account show --query id -o tsv
@@ -83,6 +69,11 @@ $storageId = $storageJson.id
 Write-Host "Storage account '$storageAccountName' created." -ForegroundColor Green
 
 # -- Key Vault -------------------------------------------------------------------
+if ($skipKeyVault) {
+    Write-Host "Skipping Key Vault creation (not required for SSE)." -ForegroundColor Yellow
+    $kvId = $null
+    $keyVaultName = $null
+} else {
 Write-Host "Creating Key Vault '$keyVaultName' (premium, RBAC)..." -ForegroundColor Cyan
 $existingKv = Invoke-AzSafe @("keyvault", "show", "--name", $keyVaultName, "--resource-group", $resourceGroup, "--output", "json")
 if ($existingKv) {
@@ -105,6 +96,7 @@ if ($existingKv) {
     Write-Host "Key Vault '$keyVaultName' ready." -ForegroundColor Green
 }
 $kvId = $kvJson.id
+}
 
 # -- Managed Identity ------------------------------------------------------------
 Write-Host "Creating managed identity '$managedIdentityName'..." -ForegroundColor Cyan
@@ -125,9 +117,11 @@ if ($existingId) {
 Write-Host "Assigning RBAC roles to the logged-in user..." -ForegroundColor Cyan
 $callerObjectId = az ad signed-in-user show --query id -o tsv
 
-# Key Vault roles (skip if already assigned)
-Invoke-AzSafe @("role", "assignment", "create", "--role", "Key Vault Crypto Officer", "--assignee-object-id", $callerObjectId, "--assignee-principal-type", "User", "--scope", $kvId, "--output", "none")
-Invoke-AzSafe @("role", "assignment", "create", "--role", "Key Vault Secrets Officer", "--assignee-object-id", $callerObjectId, "--assignee-principal-type", "User", "--scope", $kvId, "--output", "none")
+# Key Vault roles (skip if already assigned or if Key Vault was not created)
+if (-not $skipKeyVault) {
+    Invoke-AzSafe @("role", "assignment", "create", "--role", "Key Vault Crypto Officer", "--assignee-object-id", $callerObjectId, "--assignee-principal-type", "User", "--scope", $kvId, "--output", "none")
+    Invoke-AzSafe @("role", "assignment", "create", "--role", "Key Vault Secrets Officer", "--assignee-object-id", $callerObjectId, "--assignee-principal-type", "User", "--scope", $kvId, "--output", "none")
+}
 
 # Storage role (skip if already assigned)
 Invoke-AzSafe @("role", "assignment", "create", "--role", "Storage Blob Data Contributor", "--assignee-object-id", $callerObjectId, "--assignee-principal-type", "User", "--scope", $storageId, "--output", "none")
