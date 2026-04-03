@@ -5,8 +5,56 @@ Supports **SSE** and **CPK** encryption modes, with **CLI** or **REST API** oper
 
 ---
 
+## Scenario
+
+Woodgrove is an advertiser that wants to generate target audience segments by
+performing an overlap analysis with a media publisher, Northwind. Both parties
+contribute sensitive datasets to an
+[Azure Confidential Clean Room](https://learn.microsoft.com/en-us/azure/confidential-computing/confidential-clean-rooms)
+where a Spark SQL query joins the data, computes the overlap, and writes the
+results — all without either party exposing raw data to the other.
+
+This is only a sample scenario. You can try any scenario of your choice by
+providing your own data and query.
+
+## Overview
+
+| Aspect | Details |
+|---|---|
+| **Encryption** | SSE (Azure-managed) or CPK (customer-provided keys via Key Vault Premium) |
+| **Parties** | Woodgrove (owner / advertiser), Northwind (publisher) |
+| **Data format** | CSV (Parquet and JSON also supported) |
+| **Query engine** | Confidential Spark SQL |
+
+### Parties Involved
+
+| Party | Role |
+|:---|:---|
+| **Woodgrove** | Clean room **owner** — creates the collaboration, invites Northwind, publishes the query, runs it, and retrieves results. Also contributes sensitive first-party user data. |
+| **Northwind** | Data **publisher** — accepts the invitation and contributes sensitive subscriber data which can be matched with Woodgrove's data to identify common users. |
+
+### Which Party Runs Which Step?
+
+| Step | Woodgrove | Northwind | Notes |
+|:-----|:---------:|:---------:|:------|
+| 01 — Prerequisites | &#10003; | &#10003; | Both authenticate and set variables |
+| 02 — Create collaboration | &#10003; | | Owner only (ARM operations) |
+| 03 — Accept invitation | | &#10003; | Each invited collaborator |
+| 04 — Provision resources | &#10003; | &#10003; | Independent resource groups |
+| 05 — OIDC identity | &#10003; | &#10003; | Federated credential per collaborator |
+| 06 — Publish datasets | &#10003; (input + output) | &#10003; (input only) | Woodgrove also publishes the output dataset |
+| 07 — Publish query | &#10003; | | Woodgrove proposes queries |
+| 08 — Approve query | &#10003; | &#10003; | All affected collaborators vote |
+| 09 — Execute query | &#10003; | | Woodgrove triggers execution |
+| 10 — Monitor query | &#10003; | &#10003; | Any collaborator can poll status |
+| 11 — Results & audit | &#10003; | &#10003; | Woodgrove downloads output; both view audit |
+
+---
+
 ## Table of Contents
 
+- [Scenario](#scenario)
+- [Overview](#overview)
 - [Configuration](#configuration)
 - [Step 01: Prerequisites & Authentication](#step-01-prerequisites--authentication) `[ALL]`
 - [Step 02: Create Collaboration](#step-02-create-collaboration) `[OWNER]`
@@ -25,6 +73,8 @@ Supports **SSE** and **CPK** encryption modes, with **CLI** or **REST API** oper
 - [Appendix D: CLI Command Reference](#appendix-d-cli-command-reference)
 - [Appendix E: API Response Reference](#appendix-e-api-response-reference)
 - [Appendix F: Collaboration Management](#appendix-f-collaboration-management)
+- [Appendix G: Advanced Topics](#appendix-g-advanced-topics)
+- [Appendix H: CLI Commands Per Step](#appendix-h-cli-commands-per-step)
 
 ---
 
@@ -425,6 +475,12 @@ $variant = if ($EncryptionMode -eq "CPK") { "cpk" } else { "sse" }
 ## Step 05: OIDC Identity & Federated Credentials `[EACH COLLABORATOR]`
 
 > Run these commands in **each collaborator terminal**.
+>
+> **How OIDC works in the clean room**: The clean room has no credentials of its own.
+> At runtime it proves its identity via hardware attestation, receives a signed JWT
+> from the governance service (CGS), and exchanges it for an Azure AD token to access
+> your storage. The OIDC issuer URL created here is what makes that token exchange
+> work — Azure AD trusts the issuer to vouch for the clean room's identity.
 
 ### 5.1 Setup OIDC Issuer
 
@@ -513,6 +569,19 @@ az identity federated-credential list `
 > The script auto-detects SSE/CPK mode from the datastore metadata generated in Step 4.4.
 > For CPK, it also creates per-dataset KEKs and wraps DEKs (Phase B).
 
+Each dataset includes a schema definition and an `allowedFields` list that controls
+which columns the query can access. The demo datasets use this schema:
+
+| Dataset | Fields | Allowed Fields |
+|---|---|---|
+| **Northwind input** | `audience_id` (string), `hashed_email` (string), `annual_income` (long), `region` (string) | `hashed_email`, `annual_income`, `region` |
+| **Woodgrove input** | `user_id` (string), `hashed_email` (string), `purchase_history` (string) | `hashed_email`, `purchase_history` |
+| **Woodgrove output** | `user_id` (string) | `user_id` |
+
+> Fields not in `allowedFields` are excluded from query access — this prevents the
+> query from reading `audience_id` (Northwind's PII) even if someone modifies the SQL.
+> The schema `format` supports `csv`, `parquet`, and `json`.
+
 ```powershell
 ./scripts/08-publish-dataset.ps1 -collaborationId $collabId `
     -resourceGroup $personaRg -persona $persona `
@@ -598,6 +667,23 @@ The query has 3 segments (in `demos/query/woodgrove/query1/`):
 > **Multi-collaborator** (query2, in `demos/query/woodgrove/query2/`): Uses a cross-dataset
 > overlap JOIN on `hashed_email` with filters on northwind-only columns (`annual_income`,
 > `region`).
+
+#### Query Structure Reference
+
+The published query JSON has three main sections:
+
+| Section | Purpose |
+|---|---|
+| `queryData.segments[]` | Ordered SQL statements. Each segment has `executionSequence` (execution order), `data` (SQL), `preConditions` (min row counts per view), and `postFilters` (output aggregation thresholds). |
+| `inputDatasets[]` | Maps each `datasetDocumentId` to a SQL view name (e.g., `northwind_data`, `woodgrove_data`). |
+| `outputDataset` | The `datasetDocumentId` where results are written, mapped to view `output`. |
+
+**Privacy controls** in query segments:
+- **Pre-conditions** (`preConditions`): Enforce a minimum row count per view. If any view
+  has fewer rows than `minRowCount`, the query aborts — preventing queries on tiny datasets
+  that could identify individuals.
+- **Post-filters** (`postFilters`): Remove groups from the output whose aggregation count
+  is below a threshold, preventing identification of individuals in aggregated results.
 
 **Expected**: 204 No Content.
 
@@ -1093,3 +1179,112 @@ az managedcleanroom collaboration delete `
 ```
 
 > This permanently deletes the collaboration and all its associated resources.
+
+---
+
+## Appendix G: Advanced Topics
+
+### Date Range Filtering
+
+Filter input data by date range when executing a query. Pass a body with
+`startDate` and `endDate` to the query run command:
+
+```powershell
+# Via REST mode
+$runBody = @{
+    startDate = "2025-09-01"
+    endDate   = "2025-09-02"
+} | ConvertTo-Json
+
+# The 11-run-query.ps1 script supports -Body for passing additional parameters.
+# Alternatively, call the CLI directly:
+az managedcleanroom frontend analytics query run `
+    --collaboration-id $collabId `
+    --document-id $queryName `
+    --body $runBody
+```
+
+When a date range is provided, only matching partitions are read — reducing
+execution time and cost for large time-partitioned datasets.
+
+### Privacy Controls
+
+Privacy controls are defined per query segment and enforced at runtime by the
+Spark SQL engine inside the clean room.
+
+**Pre-conditions** (`preConditions`): Enforce a minimum row count per view.
+If any view has fewer rows than `minRowCount`, the entire query aborts. This
+prevents queries on tiny datasets that could de-anonymize individuals.
+
+```json
+"preConditions": [
+  { "viewName": "northwind_data", "minRowCount": 1000 },
+  { "viewName": "woodgrove_data", "minRowCount": 1000 }
+]
+```
+
+**Post-filters** (`postFilters`): Remove groups from the output whose
+aggregation count is below a threshold, preventing identification of
+individuals in aggregated results. Both are defined in the query segments —
+edit the thresholds before publishing the query (Step 07).
+
+### Re-Running Queries
+
+Each invocation of `query run` submits a **new** execution — re-running the
+command starts a fresh Spark job. Previous results are not overwritten;
+each run writes output under a separate path (`Analytics/<date>/<run-uuid>/`).
+
+### Execution Consent
+
+All documents (datasets and queries) have execution consent enabled by default
+when published via the helper scripts. To revoke or re-enable consent:
+
+```powershell
+# Disable (revoke) — the clean room will no longer access this document
+az managedcleanroom frontend consent set `
+    --collaboration-id $collabId `
+    --document-id "<document-name>" `
+    --consent-action disable
+
+# Re-enable
+az managedcleanroom frontend consent set `
+    --collaboration-id $collabId `
+    --document-id "<document-name>" `
+    --consent-action enable
+```
+
+Consent is per-document. Revoking consent on a dataset prevents all queries
+that reference it from reading the data, even if the query is already approved.
+
+### Audit Events
+
+The audit log is maintained in the CCF ledger and is tamper-proof. Events include:
+- Query execution start/completion
+- Input/output row counts
+- Dataset access (which datasets were read)
+- Failures and error details
+
+```powershell
+az managedcleanroom frontend analytics auditevent list `
+    --collaboration-id $collabId
+```
+
+---
+
+## Appendix H: CLI Commands Per Step
+
+| Step | Description | Approach | Key CLI Commands / Tools |
+|------|-------------|----------|--------------------------|
+| 01 | Prerequisites | Direct CLI | `az extension add`, `az login`, `Get-MsalToken` |
+| 02 | Create collaboration | Direct CLI | `az managedcleanroom collaboration create`, `enable-workload`, `collaboration show` |
+| 03 | Add & accept invitations | Direct CLI | `add-collaborator`, `frontend collaboration list`, `frontend invitation list`, `invitation accept` |
+| 04 | Provision resources | **Helper script** | `04-prepare-resources.ps1` → `az group create`, `az storage account create`, `az keyvault create` (CPK: Premium SKU), `az identity create`, `az role assignment create` |
+| 04 | Prepare & upload data | **Helper script** | `generate-data.ps1` (demo) + `05-prepare-data.ps1` → `az storage container create`, `az storage blob upload-batch` (SSE) / `azcopy copy --cpk-by-value` (CPK) |
+| 05 | OIDC identity | **Helper script** | `06-setup-identity.ps1` → OIDC discovery upload, JWKS fetch, `frontend oidc issuerinfo set`, `az identity show` |
+| 05 | Grant access | **Helper script** | `07-grant-access.ps1` → `az role assignment create` (Storage + KV), `az identity federated-credential create` |
+| 06 | Publish datasets | **Helper script** | `08-publish-dataset.ps1` → `frontend analytics dataset publish`, `consent set` (CPK: + `keyvault key import`, `keyvault secret set`) |
+| 07 | Publish query | **Helper script** | `09-publish-query.ps1` → `frontend analytics query publish`, `consent set` |
+| 08 | Approve query | **Helper script** | `10-vote-query.ps1` → `frontend analytics query vote` |
+| 09 | Execute query | **Helper script** | `11-run-query.ps1` → `frontend analytics query run` |
+| 10 | Monitor query | **Helper script** | `13-run-status.ps1` → `frontend analytics query runresult show` (polling) |
+| 11 | Results & audit | **Helper script** / Direct CLI | `14-run-history.ps1`, `12-view-results.ps1` (CPK), `az storage blob download` (SSE), `frontend analytics auditevent list` |
