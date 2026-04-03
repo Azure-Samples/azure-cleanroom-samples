@@ -1,0 +1,730 @@
+# Big Data Analytics — REST API (`az rest` + `Invoke-RestMethod`)
+
+This guide uses **`az rest`** for ARM collaboration operations and
+**`Invoke-RestMethod`** for frontend service operations, with the same helper
+scripts for Azure resource provisioning.
+
+For the CLI variant using `az managedcleanroom`, see [README-AZ.md](README-AZ.md).
+
+---
+
+## Scenario
+
+Woodgrove is an advertiser that wants to generate target audience segments by
+performing an overlap analysis with a media publisher, Northwind. Both parties
+contribute sensitive datasets to an
+[Azure Confidential Clean Room](https://learn.microsoft.com/en-us/azure/confidential-computing/confidential-clean-rooms)
+where a Spark SQL query joins the data, computes the overlap, and writes the
+results — all without either party exposing raw data to the other.
+
+This is only a sample scenario. You can try any scenario of your choice by
+providing your own data and query.
+
+## Overview
+
+| Aspect | Details |
+|---|---|
+| **API mode** | `az rest` (ARM) + `Invoke-RestMethod` (frontend) |
+| **Encryption** | SSE (Azure-managed) or CPK (customer-provided keys via Key Vault Premium) |
+| **Parties** | Woodgrove (owner / advertiser), Northwind (publisher) |
+| **Data format** | CSV (Parquet and JSON also supported) |
+| **Query engine** | Confidential Spark SQL |
+
+### Parties Involved
+
+| Party | Role |
+|:---|:---|
+| **Woodgrove** | Clean room **owner** — creates the collaboration, invites Northwind, publishes the query, runs it, and retrieves results. Also contributes sensitive first-party user data. |
+| **Northwind** | Data **publisher** — accepts the invitation and contributes sensitive subscriber data which can be matched with Woodgrove's data to identify common users. |
+
+### Which Party Runs Which Step?
+
+| Step | Woodgrove | Northwind | Notes |
+|:-----|:---------:|:---------:|:------|
+| 01 — Prerequisites | &#10003; | &#10003; | Both authenticate and set variables |
+| 02 — Create collaboration | &#10003; | | Owner only (ARM) |
+| 03 — Accept invitation | | &#10003; | Each invited collaborator |
+| 04 — Provision resources | &#10003; | &#10003; | Independent resource groups |
+| 05 — OIDC identity | &#10003; | &#10003; | Federated credential per collaborator |
+| 06 — Publish datasets | &#10003; (input + output) | &#10003; (input only) | Woodgrove also publishes output |
+| 07 — Publish query | &#10003; | | Woodgrove proposes queries |
+| 08 — Approve query | &#10003; | &#10003; | All affected collaborators vote |
+| 09 — Execute query | &#10003; | | Woodgrove triggers execution |
+| 10 — Monitor query | &#10003; | &#10003; | Any collaborator can poll |
+| 11 — Results & audit | &#10003; | &#10003; | Woodgrove downloads; both view audit |
+
+---
+
+## Table of Contents
+
+- [Scenario](#scenario)
+- [Overview](#overview)
+- [Step 01: Prerequisites](#step-01-prerequisites) `[ALL]`
+- [Step 02: Create Collaboration](#step-02-create-collaboration) `[OWNER]`
+- [Step 03: Accept Invitations](#step-03-accept-invitations) `[EACH COLLABORATOR]`
+- [Step 04: Provision Resources & Upload Data](#step-04-provision-resources--upload-data) `[EACH COLLABORATOR]`
+- [Step 05: OIDC Identity & Access](#step-05-oidc-identity--access) `[EACH COLLABORATOR]`
+- [Step 06: Publish Datasets](#step-06-publish-datasets) `[EACH COLLABORATOR]`
+- [Step 07: Publish Query](#step-07-publish-query) `[WOODGROVE]`
+- [Step 08: Approve Query](#step-08-approve-query) `[EACH COLLABORATOR]`
+- [Step 09: Execute Query](#step-09-execute-query) `[WOODGROVE]`
+- [Step 10: Monitor Query](#step-10-monitor-query) `[ANY]`
+- [Step 11: Results & Audit](#step-11-results--audit) `[WOODGROVE]`
+- [Appendix A: Federated Credential Subject Reference](#appendix-a-federated-credential-subject-reference)
+- [Appendix B: Troubleshooting](#appendix-b-troubleshooting)
+- [Appendix C: CPK Deep Dive](#appendix-c-cpk-deep-dive)
+- [Appendix D: Dataset Schema Reference](#appendix-d-dataset-schema-reference)
+- [Appendix E: Query Structure Reference](#appendix-e-query-structure-reference)
+- [Appendix F: REST API Endpoint Reference](#appendix-f-rest-api-endpoint-reference)
+
+---
+
+## Step 01: Prerequisites `[ALL]`
+
+### 1.1 Requirements
+
+| Requirement | Details |
+|---|---|
+| Azure CLI | 2.75.0+ |
+| PowerShell | 7.x+ |
+| MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
+| azcopy | v10+ (CPK mode only) |
+
+> The `managedcleanroom` CLI extension is **not required** for this guide.
+
+### 1.2 Terminal T1 (Owner) — Variables
+
+```powershell
+az login
+$account = az account show -o json | ConvertFrom-Json
+$subscription = $account.id
+$tenantId = $account.tenantId
+
+$location = "westus"
+$collabName = "<collaboration-name>"
+$collabRg = "<collaboration-resource-group>"
+
+# ARM API
+$armEndpoint = "https://eastus2euap.management.azure.com"
+$armApiVersion = "2025-10-31-preview"
+$armResource = "https://management.azure.com/"   # az rest needs explicit resource for EUAP endpoint
+$collabArmUrl = "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName"
+```
+
+### 1.3 Each Collaborator Terminal — Variables
+
+```powershell
+az login
+$account = az account show -o json | ConvertFrom-Json
+$subscription = $account.id
+$tenantId = $account.tenantId
+
+$location = "westus"
+$EncryptionMode = "SSE"    # "SSE" or "CPK"
+$iteration = 0
+
+$persona = "woodgrove"                # T2: "woodgrove"  |  T3: "northwind"
+$personaRg = "cr-e2e-$persona-rg"
+$personaEmail = "<your-email>"
+
+az group create --name $personaRg --location $location -o none 2>$null
+
+$frontend = "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net"
+$feApiVersion = "2026-03-01-preview"
+$oidcStorageAccount = "cleanroomoidc"   # MSFT tenant; omit for other tenants
+
+# Helper for all frontend REST calls (used throughout this guide)
+function Invoke-Frontend {
+    param([string]$Method = "GET", [string]$Path, [object]$Body)
+    $feToken = (Get-Content $personaTokenFile -Raw).Trim()
+    $headers = @{ Authorization = "Bearer $feToken"; "Content-Type" = "application/json" }
+    $url = if ($Path) { "$frontend/collaborations/$Path" } else { "$frontend/collaborations" }
+    if ($url -notmatch '\?') { $url += "?api-version=$feApiVersion" }
+    else { $url += "&api-version=$feApiVersion" }
+    $params = @{ Uri = $url; Method = $Method; Headers = $headers; SkipCertificateCheck = $true }
+    if ($Body) {
+        $params.Body = if ($Body -is [string]) { $Body } else { $Body | ConvertTo-Json -Depth 20 }
+        $params.ContentType = "application/json"
+    }
+    return Invoke-RestMethod @params
+}
+```
+
+### 1.4 Generate MSAL Token & Extract OID
+
+```powershell
+$token = Get-MsalToken -ClientId "8a3849c1-81c5-4d62-b83e-3bb2bb11251a" `
+    -TenantId "common" -Scopes "User.Read" -DeviceCode
+$personaTokenFile = Join-Path ([System.IO.Path]::GetTempPath()) "msal-idtoken-$persona.txt"
+$token.IdToken | Out-File -FilePath $personaTokenFile -NoNewline
+
+# Extract JWT oid (used for federated credentials in Step 05)
+$tokenB64 = (Get-Content $personaTokenFile -Raw).Split('.')[1]
+$padLen = (4 - $tokenB64.Length % 4) % 4
+$padded = $tokenB64 + ('=' * $padLen)
+$claims = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($padded)) | ConvertFrom-Json
+$personaOid = $claims.oid
+Write-Host "JWT oid: $personaOid"
+```
+
+> **CRITICAL**: Always use the JWT `oid`, NOT `az ad signed-in-user show --query id`.
+> For MSA accounts these differ. See [Appendix A](#appendix-a-federated-credential-subject-reference).
+
+---
+
+## Step 02: Create Collaboration `[OWNER]`
+
+> **Terminal: T1 (Owner)** — Uses `az rest` to call the ARM API directly.
+
+### 2.1 Create Resource Group
+
+```powershell
+az group create --name $collabRg --location $location -o none
+```
+
+### 2.2 Create Collaboration
+
+```powershell
+$createBody = @{ location = $location; properties = @{} } | ConvertTo-Json
+[System.IO.File]::WriteAllText("$PWD/body.json", $createBody)
+az rest --method PUT `
+    --url "$collabArmUrl`?api-version=$armApiVersion" `
+    --resource $armResource `
+    --headers "Content-Type=application/json" `
+    --body "@body.json"
+```
+
+**Runtime**: ~25 minutes. Poll for completion:
+
+```powershell
+do {
+    Start-Sleep -Seconds 60
+    $collab = az rest --method GET --url "$collabArmUrl`?api-version=$armApiVersion" --resource $armResource -o json | ConvertFrom-Json
+    Write-Host "State: $($collab.properties.provisioningState)"
+} while ($collab.properties.provisioningState -notin @("Succeeded", "Failed"))
+```
+
+### 2.3 Enable Analytics Workload
+
+```powershell
+$enableBody = @{ workloadType = "Analytics"; securityPolicyOption = "cached" } | ConvertTo-Json
+[System.IO.File]::WriteAllText("$PWD/body.json", $enableBody)
+az rest --method POST `
+    --url "$collabArmUrl/enableWorkload`?api-version=$armApiVersion" `
+    --resource $armResource `
+    --headers "Content-Type=application/json" `
+    --body "@body.json"
+```
+
+**Runtime**: ~7 minutes.
+
+### 2.4 Add Collaborators
+
+Repeat for each collaborator:
+
+```powershell
+# Add Woodgrove
+$collaboratorEmail = "<woodgrove-email>"
+$addBody = @{ Collaborator = @{ UserIdentifier = $collaboratorEmail } } | ConvertTo-Json
+[System.IO.File]::WriteAllText("$PWD/body.json", $addBody)
+az rest --method POST `
+    --url "$collabArmUrl/addCollaborator`?api-version=$armApiVersion" `
+    --resource $armResource `
+    --headers "Content-Type=application/json" `
+    --body "@body.json"
+
+# Add Northwind (multi-collaborator only)
+$collaboratorEmail = "<northwind-email>"
+$addBody = @{ Collaborator = @{ UserIdentifier = $collaboratorEmail } } | ConvertTo-Json
+[System.IO.File]::WriteAllText("$PWD/body.json", $addBody)
+az rest --method POST `
+    --url "$collabArmUrl/addCollaborator`?api-version=$armApiVersion" `
+    --resource $armResource `
+    --headers "Content-Type=application/json" `
+    --body "@body.json"
+```
+
+> **IMPORTANT**: The body requires **PascalCase** keys (`Collaborator`, `UserIdentifier`).
+> We use `[System.IO.File]::WriteAllText()` to write body files (avoids BOM encoding issues).
+
+**Verify**:
+```powershell
+az rest --method GET --url "$collabArmUrl`?api-version=$armApiVersion" --resource $armResource -o json
+```
+
+---
+
+## Step 03: Accept Invitations `[EACH COLLABORATOR]`
+
+### 3.1 Get Collaboration UUID
+
+```powershell
+$collabs = (Invoke-Frontend -Path "" -Method GET).collaborations
+$collabs | Format-Table @{L='#';E={[array]::IndexOf($collabs,$_)+1}}, collaborationName, collaborationId, userStatus
+
+$choice = Read-Host "Enter the number of your collaboration"
+$collabId = $collabs[[int]$choice - 1].collaborationId
+Write-Host "Selected: $collabId"
+```
+
+### 3.2 Accept Invitation
+
+```powershell
+$invitations = (Invoke-Frontend -Path "$collabId/invitations" -Method GET).invitations
+$invitations | Format-Table invitationId, accountType, status
+
+$invitationId = $invitations[0].invitationId
+
+Invoke-Frontend -Path "$collabId/invitations/$invitationId/accept" -Method POST
+```
+
+---
+
+## Step 04: Provision Resources & Upload Data `[EACH COLLABORATOR]`
+
+> Run Steps 04-06 in **each collaborator terminal**. Commands are identical —
+> only `$persona` differs. In multi-collaborator mode, Woodgrove (T2) and
+> Northwind (T3) run these steps **in parallel** (independent resource groups).
+
+### 4.1 Prepare Resources
+
+```powershell
+./scripts/04-prepare-resources.ps1 -resourceGroup $personaRg -persona $persona -location $location
+```
+
+### 4.2 Generate Sample Data
+
+```powershell
+./demos/generate-data.ps1 -persona $persona
+```
+
+### 4.3 Set Dataset Names
+
+```powershell
+$iteration++
+$suffix = if ($EncryptionMode -eq "CPK") { "-cpk-v$iteration" } else { "-v$iteration" }
+$queryName = "query1$suffix"
+Write-Host "Iteration: $iteration | Suffix: '$suffix' | Query: '$queryName'"
+```
+
+### 4.4 Upload Data
+
+```powershell
+$variant = if ($EncryptionMode -eq "CPK") { "cpk" } else { "sse" }
+./scripts/05-prepare-data.ps1 -resourceGroup $personaRg `
+    -variant $variant -persona $persona `
+    -dataDir "./generated/datasource/$persona/csv" `
+    -datasetSuffix "$suffix"
+```
+
+---
+
+## Step 05: OIDC Identity & Access `[EACH COLLABORATOR]`
+
+> **How OIDC works**: The clean room has no credentials of its own. At runtime it
+> proves its identity via hardware attestation, receives a signed JWT from CGS, and
+> exchanges it for an Azure AD token. The OIDC issuer URL makes this exchange work.
+
+### 5.1 Fetch JWKS from Frontend
+
+```powershell
+$jwksDir = "generated/$personaRg"
+New-Item -ItemType Directory -Path $jwksDir -Force | Out-Null
+
+$jwks = Invoke-Frontend -Path "$collabId/oidc/keys" -Method GET
+$jwks | ConvertTo-Json -Depth 10 | Out-File "$jwksDir/jwks.json" -Encoding utf8
+```
+
+### 5.2 Setup OIDC Storage & Upload Documents
+
+```powershell
+$oidcParams = @{
+    resourceGroup   = $personaRg
+    persona         = $persona
+    collaborationId = $collabId
+    JwksFile        = "generated/$personaRg/jwks.json"
+}
+if ($oidcStorageAccount) { $oidcParams["OidcStorageAccount"] = $oidcStorageAccount }
+
+./scripts/06-setup-oidc-storage.ps1 @oidcParams
+```
+
+### 5.3 Register Issuer URL with Frontend
+
+```powershell
+$issuerUrl = (Get-Content "generated/$personaRg/issuer-url.txt" -Raw).Trim()
+
+Invoke-Frontend -Path "$collabId/oidc/setIssuerUrl" -Method POST `
+    -Body @{ url = $issuerUrl }
+```
+
+### 5.4 Grant Access & Create Federated Credentials
+
+```powershell
+./scripts/07-grant-access.ps1 -resourceGroup $personaRg `
+    -collaborationId $collabId -contractId "Analytics" `
+    -userId $personaOid -EncryptionMode $EncryptionMode
+```
+
+> **CRITICAL**: `contractId` must be `"Analytics"` (capital A). `-userId` must be
+> the JWT `oid` from Step 01.4.
+
+**Verify**:
+```powershell
+. "generated/$personaRg/names.generated.ps1"
+az identity federated-credential list `
+    --identity-name $MANAGED_IDENTITY_NAME `
+    --resource-group $personaRg -o table
+```
+
+---
+
+## Step 06: Publish Datasets `[EACH COLLABORATOR]`
+
+> Woodgrove publishes input + output datasets. Northwind publishes input only.
+> See [Appendix D](#appendix-d-dataset-schema-reference) for schema details.
+
+### 6.1 Build Dataset Body JSON
+
+```powershell
+./scripts/08-build-dataset-body.ps1 -resourceGroup $personaRg -persona $persona
+```
+
+### 6.2 Publish Input Dataset
+
+```powershell
+$inputBody = Get-Content "generated/publish/$persona-input-dataset.json" -Raw
+
+Invoke-Frontend -Path "$collabId/analytics/datasets/$persona-input-csv$suffix/publish" `
+    -Method POST -Body $inputBody
+```
+
+### 6.3 Publish Output Dataset (Woodgrove only)
+
+```powershell
+if ($persona -eq "woodgrove") {
+    $outputBody = Get-Content "generated/publish/woodgrove-output-dataset.json" -Raw
+
+    Invoke-Frontend -Path "$collabId/analytics/datasets/woodgrove-output-csv$suffix/publish" `
+        -Method POST -Body $outputBody
+}
+```
+
+> Execution consent is enabled by default at publish time. To revoke or re-enable later:
+> ```powershell
+> Invoke-Frontend -Path "$collabId/consent/<document-name>" `
+>     -Method PUT -Body @{ consentAction = "disable" }   # or "enable"
+> ```
+
+### 6.4 Prepare CPK Keys (CPK mode only)
+
+> CPK keys must be created **after** publishing datasets. The script fetches the
+> SKR (Secure Key Release) policy from the published dataset, which determines
+> the attestation hash for the KEK release policy.
+
+```powershell
+if ($EncryptionMode -eq "CPK") {
+    ./scripts/08-prepare-dataset-keys.ps1 -collaborationId $collabId `
+        -resourceGroup $personaRg -persona $persona `
+        -frontendEndpoint $frontend -TokenFile $personaTokenFile
+}
+```
+
+**Verify**:
+```powershell
+Invoke-Frontend -Path "$collabId/analytics/datasets/$persona-input-csv$suffix" | ConvertTo-Json -Depth 10
+```
+
+---
+
+## Step 07: Publish Query `[WOODGROVE]`
+
+> See [Appendix E](#appendix-e-query-structure-reference) for query format details.
+
+### 7.1 Build Query Body
+
+**Single-collaborator** (Woodgrove data only — both views point to the same dataset):
+
+```powershell
+./scripts/09-build-query-body.ps1 -queryName $queryName `
+    -queryDir "./demos/query/woodgrove/query1" `
+    -publisherInputDataset "woodgrove-input-csv$suffix" `
+    -consumerInputDataset "woodgrove-input-csv$suffix" `
+    -outputDataset "woodgrove-output-csv$suffix"
+```
+
+**Multi-collaborator** (cross-dataset JOIN — Northwind + Woodgrove):
+
+> Get Northwind's exact dataset name (Northwind's suffix may differ from yours):
+> ```powershell
+> $datasets = Invoke-Frontend -Path "$collabId/analytics/datasets" -Method GET
+> $datasets.datasets | Where-Object { $_.id -match "northwind" } | ForEach-Object { Write-Host $_.id }
+> ```
+
+```powershell
+$northwindDataset = "<northwind-input-csv-suffix>"   # e.g., "northwind-input-csv-v1"
+./scripts/09-build-query-body.ps1 -queryName "query2$suffix" `
+    -queryDir "./demos/query/woodgrove/query2" `
+    -publisherInputDataset $northwindDataset `
+    -consumerInputDataset "woodgrove-input-csv$suffix" `
+    -outputDataset "woodgrove-output-csv$suffix"
+```
+
+### 7.2 Publish Query
+
+```powershell
+$queryBody = Get-Content "generated/publish/$queryName.json" -Raw
+
+Invoke-Frontend -Path "$collabId/analytics/queries/$queryName/publish" `
+    -Method POST -Body $queryBody
+```
+
+---
+
+## Step 08: Approve Query `[EACH COLLABORATOR]`
+
+> **Single-collaborator**: Only Woodgrove votes (one vote → `Accepted`).
+>
+> **Multi-collaborator**: Both collaborators must vote. Northwind needs the
+> `$queryName` from Woodgrove (or list queries to find it).
+
+Each collaborator runs in their own terminal:
+
+```powershell
+# Get proposal ID
+$queryInfo = Invoke-Frontend -Path "$collabId/analytics/queries/$queryName"
+$proposalId = $queryInfo.proposalId
+Write-Host "Proposal ID: $proposalId"
+
+# Vote
+Invoke-Frontend -Path "$collabId/analytics/queries/$queryName/vote" `
+    -Method POST -Body @{ voteAction = "accept"; proposalId = $proposalId }
+```
+
+> **Northwind (T3)**: If you don't have `$queryName`, list published queries:
+> ```powershell
+> $queries = Invoke-Frontend -Path "$collabId/analytics/queries" -Method GET
+> $queries | ConvertTo-Json -Depth 5
+> ```
+
+**Verify**: Query state should be `"Accepted"` after all required votes.
+
+---
+
+## Step 09: Execute Query `[WOODGROVE]`
+
+```powershell
+$runBody = @{ runId = [guid]::NewGuid().ToString() }
+$runResult = Invoke-Frontend -Path "$collabId/analytics/queries/$queryName/run" `
+    -Method POST -Body $runBody
+
+$jobId = $runResult.id
+Write-Host "Job ID: $jobId"
+```
+
+> `"status": "success"` means accepted for scheduling, not completed. Takes 10-20 min.
+
+---
+
+## Step 10: Monitor Query `[ANY]`
+
+```powershell
+do {
+    Start-Sleep -Seconds 30
+    $result = Invoke-Frontend -Path "$collabId/analytics/runs/$jobId"
+    $state = $result.status.applicationState.state
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] State: $state"
+} while ($state -notin @("COMPLETED", "FAILED", "SUBMISSION_FAILED"))
+
+$result | ConvertTo-Json -Depth 10
+```
+
+| Time | State | Key Events |
+|---|---|---|
+| +0 min | `SUBMITTED` | `SparkApplicationSubmitted` |
+| +5-8 min | `RUNNING` | `SparkDriverRunning` |
+| +10-15 min | `RUNNING` | `QUERY_SEGMENT_EXECUTION_*` |
+| +15-20 min | `COMPLETED` | `SparkDriverCompleted` |
+
+> `PENDING_RERUN` is normal — transitions to `SUBMITTED` automatically.
+
+---
+
+## Step 11: Results & Audit `[WOODGROVE]`
+
+### 11.1 Run History
+
+```powershell
+$history = Invoke-Frontend -Path "$collabId/analytics/queries/$queryName/runs"
+$history | ConvertTo-Json -Depth 10
+```
+
+### 11.2 Audit Events
+
+```powershell
+$audit = Invoke-Frontend -Path "$collabId/analytics/auditevents"
+$audit | ConvertTo-Json -Depth 10
+```
+
+### 11.3 Download Output
+
+Auto-detects SSE/CPK mode from metadata. Pass `-JobId` to filter to a specific run.
+
+```powershell
+./scripts/11-download-output.ps1 -resourceGroup $personaRg `
+    -datasetSuffix "$suffix" -JobId $jobId
+```
+
+> Output CSVs are saved to `generated/output/`. Without `-JobId`, downloads the latest.
+
+---
+
+## Appendix A: Federated Credential Subject Reference
+
+Format: `{contractId}-{ownerId}` where `contractId` = `"Analytics"` (capital A)
+and `ownerId` = JWT `oid` from Step 01.4.
+
+MSA accounts: JWT `oid` ≠ `az ad signed-in-user show --query id`. Always use JWT `oid`.
+
+**Fixing wrong subjects**:
+```powershell
+. "generated/$personaRg/names.generated.ps1"
+az identity federated-credential delete --name "Analytics-$personaOid-federation" `
+    --identity-name $MANAGED_IDENTITY_NAME --resource-group $personaRg --yes
+az identity federated-credential create --name "Analytics-$personaOid-federation" `
+    --identity-name $MANAGED_IDENTITY_NAME --resource-group $personaRg `
+    --issuer "$(Get-Content generated/$personaRg/issuer-url.txt)" `
+    --subject "Analytics-$personaOid" --audiences "api://AzureADTokenExchange"
+```
+
+---
+
+## Appendix B: Troubleshooting
+
+| Error | Cause | Fix |
+|---|---|---|
+| `SPARK_JOB_FAILED: ExitCode 1` | Federated credential subject mismatch | See [Appendix A](#appendix-a-federated-credential-subject-reference) |
+| `AADSTS700211: No matching federated identity record` | Wrong issuer URL or stale FIC | Republish dataset; delete/recreate FIC |
+| `SSL certificate verify failed` | Dogfood cert mismatch | Use `-SkipCertificateCheck` on `Invoke-RestMethod` |
+| `404 Not Found` on frontend | Using ARM resource ID instead of frontend UUID | Use UUID from `Invoke-Frontend -Path ""` |
+| `ContractNotFound` | Stale CCF endpoint | Create new collaboration |
+| `Already voted / Conflict` | Idempotent vote | Safe to ignore |
+| `PENDING_RERUN` | Normal scheduling | Keep polling |
+
+---
+
+## Appendix C: CPK Deep Dive
+
+| Aspect | SSE | CPK |
+|---|---|---|
+| Encryption | Azure-managed keys | Customer-provided keys per dataset |
+| Key Vault | Not required | Required (Premium SKU with HSM) |
+| Upload tool | `az storage blob upload-batch` | `azcopy copy --cpk-by-value` |
+| Output download | `az storage blob download` | `azcopy copy --cpk-by-value` |
+
+**Architecture**:
+```
+Upload:   plaintext CSV → azcopy --cpk-by-value → Azure Storage (encrypted with DEK)
+Keys:     DEK → RSA-OAEP wrap with KEK → KV Secret (wrapped DEK)
+          KEK (RSA-2048) → az keyvault key import (with SKR policy) → KV Key
+Runtime:  SKR release → KEK private → unwrap DEK → CPK header → Storage → plaintext
+```
+
+> **CRITICAL**: CPK is server-side encryption. Do NOT manually encrypt files before upload.
+
+---
+
+## Appendix D: Dataset Schema Reference
+
+| Dataset | Fields | Allowed Fields |
+|---|---|---|
+| **Northwind input** | `audience_id` (string), `hashed_email` (string), `annual_income` (long), `region` (string) | `hashed_email`, `annual_income`, `region` |
+| **Woodgrove input** | `user_id` (string), `hashed_email` (string), `purchase_history` (string) | `hashed_email`, `purchase_history` |
+| **Woodgrove output** | `user_id` (string) | `user_id` |
+
+Fields not in `allowedFields` are excluded from query access — prevents PII exposure.
+Supported formats: `csv`, `parquet`, `json`.
+
+---
+
+## Appendix E: Query Structure Reference
+
+| Section | Purpose |
+|---|---|
+| `queryData.segments[]` | Ordered SQL statements with `executionSequence`, `data`, `preConditions`, `postFilters` |
+| `inputDatasets[]` | Maps `datasetDocumentId` to SQL view names |
+| `outputDataset` | Where results are written |
+
+**Privacy controls**:
+- `preConditions`: Min row count per view (query aborts if below threshold)
+- `postFilters`: Remove output groups below aggregation threshold
+
+---
+
+## Appendix F: REST API Endpoint Reference
+
+### ARM API (via `az rest`)
+
+Base: `https://eastus2euap.management.azure.com`
+API version: `2025-10-31-preview`
+
+| Operation | Method | URL |
+|---|---|---|
+| Create collaboration | PUT | `.../providers/Private.CleanRoom/Collaborations/{name}` |
+| Show collaboration | GET | `.../providers/Private.CleanRoom/Collaborations/{name}` |
+| Enable workload | POST | `.../Collaborations/{name}/enableWorkload` |
+| Add collaborator | POST | `.../Collaborations/{name}/addCollaborator` |
+
+### Frontend API (via `Invoke-RestMethod`)
+
+Base: `{frontendEndpoint}/collaborations`
+API version: `2026-03-01-preview`
+
+| Operation | Method | Path |
+|---|---|---|
+| List collaborations | GET | `/` |
+| List invitations | GET | `/{id}/invitations` |
+| Accept invitation | POST | `/{id}/invitations/{invId}/accept` |
+| OIDC keys | GET | `/{id}/oidc/keys` |
+| Set issuer URL | POST | `/{id}/oidc/setIssuerUrl` |
+| Publish dataset | POST | `/{id}/analytics/datasets/{docId}/publish` |
+| Show dataset | GET | `/{id}/analytics/datasets/{docId}` |
+| Set consent | PUT | `/{id}/consent/{docId}` |
+| Publish query | POST | `/{id}/analytics/queries/{docId}/publish` |
+| Show query | GET | `/{id}/analytics/queries/{docId}` |
+| Vote on query | POST | `/{id}/analytics/queries/{docId}/vote` |
+| Run query | POST | `/{id}/analytics/queries/{docId}/run` |
+| Run result | GET | `/{id}/analytics/runs/{jobId}` |
+| Run history | GET | `/{id}/analytics/queries/{docId}/runs` |
+| Audit events | GET | `/{id}/analytics/auditevents` |
+
+---
+
+## Appendix G: Collaboration Management
+
+### Force Recover
+
+If the collaboration becomes unresponsive (e.g., `ContractNotFound`, frontend errors on all operations):
+
+```powershell
+$recoverBody = @{ forceRecover = $true } | ConvertTo-Json
+[System.IO.File]::WriteAllText("$PWD/body.json", $recoverBody)
+az rest --method POST `
+    --url "$collabArmUrl/recover`?api-version=$armApiVersion" `
+    --resource $armResource `
+    --headers "Content-Type=application/json" `
+    --body "@body.json"
+```
+
+> Last-resort operation. Resets internal state. Existing datasets and queries
+> need not be republished after recovery.
+
+### Delete Collaboration
+
+```powershell
+az rest --method DELETE `
+    --url "$collabArmUrl`?api-version=$armApiVersion" `
+    --resource $armResource
+```
+
+> Permanently deletes the collaboration and all associated resources.
