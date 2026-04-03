@@ -127,7 +127,29 @@ $federationName = "$subject-federation"
 Write-Host "Creating federated credential '$federationName'..." -ForegroundColor Cyan
 $existingFed = Invoke-AzSafe @("identity", "federated-credential", "show", "--name", $federationName, "--identity-name", $MANAGED_IDENTITY_NAME, "--resource-group", $resourceGroup, "--output", "json")
 if ($existingFed) {
-    Write-Host "Federated credential '$federationName' already exists." -ForegroundColor Green
+    $existingFedObj = $existingFed | ConvertFrom-Json
+    if ($existingFedObj.issuer -ne $issuerUrl) {
+        Write-Host "Federated credential '$federationName' exists but has stale issuer:" -ForegroundColor Yellow
+        Write-Host "  Current:  $($existingFedObj.issuer)" -ForegroundColor Yellow
+        Write-Host "  Expected: $issuerUrl" -ForegroundColor Yellow
+        Write-Host "Deleting and recreating with correct issuer..." -ForegroundColor Yellow
+        az identity federated-credential delete `
+            --name $federationName `
+            --identity-name $MANAGED_IDENTITY_NAME `
+            --resource-group $resourceGroup --yes `
+            --output none
+        az identity federated-credential create `
+            --name $federationName `
+            --identity-name $MANAGED_IDENTITY_NAME `
+            --resource-group $resourceGroup `
+            --issuer $issuerUrl `
+            --subject $subject `
+            --audiences "api://AzureADTokenExchange" `
+            --output none
+        Write-Host "Federated credential '$federationName' recreated with updated issuer." -ForegroundColor Green
+    } else {
+        Write-Host "Federated credential '$federationName' already exists with correct issuer." -ForegroundColor Green
+    }
 } else {
     az identity federated-credential create `
         --name $federationName `
