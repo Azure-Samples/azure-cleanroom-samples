@@ -1,10 +1,10 @@
-# Big Data Analytics — Azure CLI (`az managedcleanroom`)
+# Big Data Analytics — REST API (`az rest` + `Invoke-RestMethod`)
 
-This guide uses **`az managedcleanroom`** CLI commands for all collaboration (ARM)
-and frontend operations, with helper scripts for Azure resource provisioning.
+This guide uses **`az rest`** for ARM collaboration operations and
+**`Invoke-RestMethod`** for frontend service operations, with the same helper
+scripts for Azure resource provisioning.
 
-For the REST API variant using `Invoke-RestMethod` and `az rest`, see
-[README-API.md](README-API.md).
+For the CLI variant using `az managedcleanroom`, see [README-AZ.md](README-AZ.md).
 
 ---
 
@@ -24,7 +24,7 @@ providing your own data and query.
 
 | Aspect | Details |
 |---|---|
-| **API mode** | `az managedcleanroom` CLI extension |
+| **API mode** | `az rest` (ARM) + `Invoke-RestMethod` (frontend) |
 | **Encryption** | SSE (Azure-managed) or CPK (customer-provided keys via Key Vault Premium) |
 | **Parties** | Woodgrove (owner / advertiser), Northwind (publisher) |
 | **Data format** | CSV (Parquet and JSON also supported) |
@@ -75,6 +75,7 @@ providing your own data and query.
 - [Appendix C: CPK Deep Dive](#appendix-c-cpk-deep-dive)
 - [Appendix D: Dataset Schema Reference](#appendix-d-dataset-schema-reference)
 - [Appendix E: Query Structure Reference](#appendix-e-query-structure-reference)
+- [Appendix F: REST API Endpoint Reference](#appendix-f-rest-api-endpoint-reference)
 
 ---
 
@@ -85,10 +86,11 @@ providing your own data and query.
 | Requirement | Details |
 |---|---|
 | Azure CLI | 2.75.0+ |
-| `managedcleanroom` extension | `az extension add --name managedcleanroom` (v1.0.0b5+) |
 | PowerShell | 7.x+ |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) |
+
+> The `managedcleanroom` CLI extension is **not required** for this guide.
 
 ### 1.2 Terminal T1 (Owner) — Variables
 
@@ -101,6 +103,12 @@ $tenantId = $account.tenantId
 $location = "westus"
 $collabName = "<collaboration-name>"
 $collabRg = "<collaboration-resource-group>"
+
+# ARM API
+$armEndpoint = "https://eastus2euap.management.azure.com"
+$armApiVersion = "2025-10-31-preview"
+$armResource = "https://management.azure.com/"   # az rest needs explicit resource for EUAP endpoint
+$collabArmUrl = "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName"
 ```
 
 ### 1.3 Each Collaborator Terminal — Variables
@@ -122,7 +130,24 @@ $personaEmail = "<your-email>"
 az group create --name $personaRg --location $location -o none 2>$null
 
 $frontend = "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net"
+$feApiVersion = "2026-03-01-preview"
 $oidcStorageAccount = "cleanroomoidc"   # MSFT tenant; omit for other tenants
+
+# Helper for all frontend REST calls (used throughout this guide)
+function Invoke-Frontend {
+    param([string]$Method = "GET", [string]$Path, [object]$Body)
+    $feToken = (Get-Content $personaTokenFile -Raw).Trim()
+    $headers = @{ Authorization = "Bearer $feToken"; "Content-Type" = "application/json" }
+    $url = if ($Path) { "$frontend/collaborations/$Path" } else { "$frontend/collaborations" }
+    if ($url -notmatch '\?') { $url += "?api-version=$feApiVersion" }
+    else { $url += "&api-version=$feApiVersion" }
+    $params = @{ Uri = $url; Method = $Method; Headers = $headers; SkipCertificateCheck = $true }
+    if ($Body) {
+        $params.Body = if ($Body -is [string]) { $Body } else { $Body | ConvertTo-Json -Depth 20 }
+        $params.ContentType = "application/json"
+    }
+    return Invoke-RestMethod @params
+}
 ```
 
 ### 1.4 Generate MSAL Token & Extract OID
@@ -145,75 +170,86 @@ Write-Host "JWT oid: $personaOid"
 > **CRITICAL**: Always use the JWT `oid`, NOT `az ad signed-in-user show --query id`.
 > For MSA accounts these differ. See [Appendix A](#appendix-a-federated-credential-subject-reference).
 
-### 1.5 Configure CLI Extension
-
-```powershell
-$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
-$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
-az managedcleanroom frontend configure --endpoint $frontend
-```
-
 ---
 
 ## Step 02: Create Collaboration `[OWNER]`
 
-> **Terminal: T1 (Owner)**
+> **Terminal: T1 (Owner)** — Uses `az rest` to call the ARM API directly.
 
-### 2.1 Configure Private CleanRoom Cloud
-
-```powershell
-$privateCloudName = "PrivateCleanroomAzureCloud"
-az cloud register --name $privateCloudName `
-    --endpoint-resource-manager "https://eastus2euap.management.azure.com/" 2>$null
-az cloud set --name $privateCloudName
-$env:UsePrivateCleanRoomNamespace = "true"
-```
-
-### 2.2 Create Collaboration & Enable Workload
+### 2.1 Create Resource Group
 
 ```powershell
 az group create --name $collabRg --location $location -o none
-
-az managedcleanroom collaboration create `
-    --collaboration-name $collabName `
-    --resource-group $collabRg `
-    --location $location
 ```
 
-**Runtime**: ~25 minutes.
+### 2.2 Create Collaboration
 
 ```powershell
-az managedcleanroom collaboration enable-workload `
-    --collaboration-name $collabName `
-    --resource-group $collabRg `
-    --workload-type Analytics
+$createBody = @{ location = $location; properties = @{} } | ConvertTo-Json
+[System.IO.File]::WriteAllText("$PWD/body.json", $createBody)
+az rest --method PUT `
+    --url "$collabArmUrl`?api-version=$armApiVersion" `
+    --resource $armResource `
+    --headers "Content-Type=application/json" `
+    --body "@body.json"
+```
+
+**Runtime**: ~25 minutes. Poll for completion:
+
+```powershell
+do {
+    Start-Sleep -Seconds 60
+    $collab = az rest --method GET --url "$collabArmUrl`?api-version=$armApiVersion" --resource $armResource -o json | ConvertFrom-Json
+    Write-Host "State: $($collab.properties.provisioningState)"
+} while ($collab.properties.provisioningState -notin @("Succeeded", "Failed"))
+```
+
+### 2.3 Enable Analytics Workload
+
+```powershell
+$enableBody = @{ workloadType = "Analytics"; securityPolicyOption = "cached" } | ConvertTo-Json
+[System.IO.File]::WriteAllText("$PWD/body.json", $enableBody)
+az rest --method POST `
+    --url "$collabArmUrl/enableWorkload`?api-version=$armApiVersion" `
+    --resource $armResource `
+    --headers "Content-Type=application/json" `
+    --body "@body.json"
 ```
 
 **Runtime**: ~7 minutes.
 
-### 2.3 Add Collaborators
+### 2.4 Add Collaborators
 
 Repeat for each collaborator:
 
 ```powershell
 # Add Woodgrove
-az managedcleanroom collaboration add-collaborator `
-    --collaboration-name $collabName `
-    --resource-group $collabRg `
-    --user-identifier "<woodgrove-email>"
+$collaboratorEmail = "<woodgrove-email>"
+$addBody = @{ Collaborator = @{ UserIdentifier = $collaboratorEmail } } | ConvertTo-Json
+[System.IO.File]::WriteAllText("$PWD/body.json", $addBody)
+az rest --method POST `
+    --url "$collabArmUrl/addCollaborator`?api-version=$armApiVersion" `
+    --resource $armResource `
+    --headers "Content-Type=application/json" `
+    --body "@body.json"
 
 # Add Northwind (multi-collaborator only)
-az managedcleanroom collaboration add-collaborator `
-    --collaboration-name $collabName `
-    --resource-group $collabRg `
-    --user-identifier "<northwind-email>"
+$collaboratorEmail = "<northwind-email>"
+$addBody = @{ Collaborator = @{ UserIdentifier = $collaboratorEmail } } | ConvertTo-Json
+[System.IO.File]::WriteAllText("$PWD/body.json", $addBody)
+az rest --method POST `
+    --url "$collabArmUrl/addCollaborator`?api-version=$armApiVersion" `
+    --resource $armResource `
+    --headers "Content-Type=application/json" `
+    --body "@body.json"
 ```
+
+> **IMPORTANT**: The body requires **PascalCase** keys (`Collaborator`, `UserIdentifier`).
+> We use `[System.IO.File]::WriteAllText()` to write body files (avoids BOM encoding issues).
 
 **Verify**:
 ```powershell
-az managedcleanroom collaboration show `
-    --collaboration-name $collabName `
-    --resource-group $collabRg
+az rest --method GET --url "$collabArmUrl`?api-version=$armApiVersion" --resource $armResource -o json
 ```
 
 ---
@@ -223,10 +259,7 @@ az managedcleanroom collaboration show `
 ### 3.1 Get Collaboration UUID
 
 ```powershell
-$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
-$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
-
-$collabs = (az managedcleanroom frontend collaboration list -o json | ConvertFrom-Json).collaborations
+$collabs = (Invoke-Frontend -Path "" -Method GET).collaborations
 $collabs | Format-Table @{L='#';E={[array]::IndexOf($collabs,$_)+1}}, collaborationName, collaborationId, userStatus
 
 $choice = Read-Host "Enter the number of your collaboration"
@@ -237,14 +270,12 @@ Write-Host "Selected: $collabId"
 ### 3.2 Accept Invitation
 
 ```powershell
-$invitations = (az managedcleanroom frontend invitation list `
-    --collaboration-id $collabId -o json | ConvertFrom-Json).invitations
+$invitations = (Invoke-Frontend -Path "$collabId/invitations" -Method GET).invitations
 $invitations | Format-Table invitationId, accountType, status
 
 $invitationId = $invitations[0].invitationId
-az managedcleanroom frontend invitation accept `
-    --collaboration-id $collabId `
-    --invitation-id $invitationId
+
+Invoke-Frontend -Path "$collabId/invitations/$invitationId/accept" -Method POST
 ```
 
 ---
@@ -297,15 +328,11 @@ $variant = if ($EncryptionMode -eq "CPK") { "cpk" } else { "sse" }
 ### 5.1 Fetch JWKS from Frontend
 
 ```powershell
-$env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
-$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
-az managedcleanroom frontend configure --endpoint $frontend
-
 $jwksDir = "generated/$personaRg"
 New-Item -ItemType Directory -Path $jwksDir -Force | Out-Null
 
-az managedcleanroom frontend oidc keys `
-    --collaboration-id $collabId -o json > "$jwksDir/jwks.json"
+$jwks = Invoke-Frontend -Path "$collabId/oidc/keys" -Method GET
+$jwks | ConvertTo-Json -Depth 10 | Out-File "$jwksDir/jwks.json" -Encoding utf8
 ```
 
 ### 5.2 Setup OIDC Storage & Upload Documents
@@ -327,9 +354,8 @@ if ($oidcStorageAccount) { $oidcParams["OidcStorageAccount"] = $oidcStorageAccou
 ```powershell
 $issuerUrl = (Get-Content "generated/$personaRg/issuer-url.txt" -Raw).Trim()
 
-az managedcleanroom frontend oidc set-issuer-url `
-    --collaboration-id $collabId `
-    --url $issuerUrl
+Invoke-Frontend -Path "$collabId/oidc/setIssuerUrl" -Method POST `
+    -Body @{ url = $issuerUrl }
 ```
 
 ### 5.4 Grant Access & Create Federated Credentials
@@ -367,29 +393,27 @@ az identity federated-credential list `
 ### 6.2 Publish Input Dataset
 
 ```powershell
-az managedcleanroom frontend analytics dataset publish `
-    --collaboration-id $collabId `
-    --document-id "$persona-input-csv$suffix" `
-    --body "@generated/publish/$persona-input-dataset.json"
+$inputBody = Get-Content "generated/publish/$persona-input-dataset.json" -Raw
+
+Invoke-Frontend -Path "$collabId/analytics/datasets/$persona-input-csv$suffix/publish" `
+    -Method POST -Body $inputBody
 ```
 
 ### 6.3 Publish Output Dataset (Woodgrove only)
 
 ```powershell
 if ($persona -eq "woodgrove") {
-    az managedcleanroom frontend analytics dataset publish `
-        --collaboration-id $collabId `
-        --document-id "woodgrove-output-csv$suffix" `
-        --body "@generated/publish/woodgrove-output-dataset.json"
+    $outputBody = Get-Content "generated/publish/woodgrove-output-dataset.json" -Raw
+
+    Invoke-Frontend -Path "$collabId/analytics/datasets/woodgrove-output-csv$suffix/publish" `
+        -Method POST -Body $outputBody
 }
 ```
 
 > Execution consent is enabled by default at publish time. To revoke or re-enable later:
 > ```powershell
-> az managedcleanroom frontend consent set `
->     --collaboration-id $collabId `
->     --document-id "<document-name>" `
->     --consent-action disable   # or "enable"
+> Invoke-Frontend -Path "$collabId/consent/<document-name>" `
+>     -Method PUT -Body @{ consentAction = "disable" }   # or "enable"
 > ```
 
 ### 6.4 Prepare CPK Keys (CPK mode only)
@@ -408,9 +432,7 @@ if ($EncryptionMode -eq "CPK") {
 
 **Verify**:
 ```powershell
-az managedcleanroom frontend analytics dataset show `
-    --collaboration-id $collabId `
-    --document-id "$persona-input-csv$suffix" -o json
+Invoke-Frontend -Path "$collabId/analytics/datasets/$persona-input-csv$suffix" | ConvertTo-Json -Depth 10
 ```
 
 ---
@@ -435,11 +457,8 @@ az managedcleanroom frontend analytics dataset show `
 
 > Get Northwind's exact dataset name (Northwind's suffix may differ from yours):
 > ```powershell
-> az managedcleanroom frontend analytics dataset list `
->     --collaboration-id $collabId -o json | ConvertFrom-Json |
->     Select-Object -ExpandProperty datasets |
->     Where-Object { $_.id -match "northwind" } |
->     ForEach-Object { Write-Host $_.id }
+> $datasets = Invoke-Frontend -Path "$collabId/analytics/datasets" -Method GET
+> $datasets.datasets | Where-Object { $_.id -match "northwind" } | ForEach-Object { Write-Host $_.id }
 > ```
 
 ```powershell
@@ -454,10 +473,10 @@ $northwindDataset = "<northwind-input-csv-suffix>"   # e.g., "northwind-input-cs
 ### 7.2 Publish Query
 
 ```powershell
-az managedcleanroom frontend analytics query publish `
-    --collaboration-id $collabId `
-    --document-id $queryName `
-    --body "@generated/publish/$queryName.json"
+$queryBody = Get-Content "generated/publish/$queryName.json" -Raw
+
+Invoke-Frontend -Path "$collabId/analytics/queries/$queryName/publish" `
+    -Method POST -Body $queryBody
 ```
 
 ---
@@ -473,24 +492,19 @@ Each collaborator runs in their own terminal:
 
 ```powershell
 # Get proposal ID
-$queryInfo = az managedcleanroom frontend analytics query show `
-    --collaboration-id $collabId `
-    --document-id $queryName -o json | ConvertFrom-Json
+$queryInfo = Invoke-Frontend -Path "$collabId/analytics/queries/$queryName"
 $proposalId = $queryInfo.proposalId
 Write-Host "Proposal ID: $proposalId"
 
 # Vote
-az managedcleanroom frontend analytics query vote `
-    --collaboration-id $collabId `
-    --document-id $queryName `
-    --vote-action accept `
-    --proposal-id $proposalId
+Invoke-Frontend -Path "$collabId/analytics/queries/$queryName/vote" `
+    -Method POST -Body @{ voteAction = "accept"; proposalId = $proposalId }
 ```
 
 > **Northwind (T3)**: If you don't have `$queryName`, list published queries:
 > ```powershell
-> az managedcleanroom frontend analytics query list `
->     --collaboration-id $collabId -o json
+> $queries = Invoke-Frontend -Path "$collabId/analytics/queries" -Method GET
+> $queries | ConvertTo-Json -Depth 5
 > ```
 
 **Verify**: Query state should be `"Accepted"` after all required votes.
@@ -500,15 +514,15 @@ az managedcleanroom frontend analytics query vote `
 ## Step 09: Execute Query `[WOODGROVE]`
 
 ```powershell
-$runResult = az managedcleanroom frontend analytics query run `
-    --collaboration-id $collabId `
-    --document-id $queryName -o json | ConvertFrom-Json
+$runBody = @{ runId = [guid]::NewGuid().ToString() }
+$runResult = Invoke-Frontend -Path "$collabId/analytics/queries/$queryName/run" `
+    -Method POST -Body $runBody
 
 $jobId = $runResult.id
 Write-Host "Job ID: $jobId"
 ```
 
-> The CLI auto-generates a run ID. Each invocation starts a new execution.
+> `"status": "success"` means accepted for scheduling, not completed. Takes 10-20 min.
 
 ---
 
@@ -517,9 +531,7 @@ Write-Host "Job ID: $jobId"
 ```powershell
 do {
     Start-Sleep -Seconds 30
-    $result = az managedcleanroom frontend analytics query runresult show `
-        --collaboration-id $collabId `
-        --job-id $jobId -o json | ConvertFrom-Json
+    $result = Invoke-Frontend -Path "$collabId/analytics/runs/$jobId"
     $state = $result.status.applicationState.state
     Write-Host "[$(Get-Date -Format 'HH:mm:ss')] State: $state"
 } while ($state -notin @("COMPLETED", "FAILED", "SUBMISSION_FAILED"))
@@ -543,16 +555,15 @@ $result | ConvertTo-Json -Depth 10
 ### 11.1 Run History
 
 ```powershell
-az managedcleanroom frontend analytics query runhistory list `
-    --collaboration-id $collabId `
-    --document-id $queryName -o json
+$history = Invoke-Frontend -Path "$collabId/analytics/queries/$queryName/runs"
+$history | ConvertTo-Json -Depth 10
 ```
 
 ### 11.2 Audit Events
 
 ```powershell
-az managedcleanroom frontend analytics auditevent list `
-    --collaboration-id $collabId -o json
+$audit = Invoke-Frontend -Path "$collabId/analytics/auditevents"
+$audit | ConvertTo-Json -Depth 10
 ```
 
 ### 11.3 Download Output
@@ -593,11 +604,10 @@ az identity federated-credential create --name "Analytics-$personaOid-federation
 | Error | Cause | Fix |
 |---|---|---|
 | `SPARK_JOB_FAILED: ExitCode 1` | Federated credential subject mismatch | See [Appendix A](#appendix-a-federated-credential-subject-reference) |
-| `AADSTS700211: No matching federated identity record` | Wrong issuer URL in dataset or stale FIC | Republish dataset; delete/recreate FIC |
-| `SSL certificate verify failed` | Dogfood cert mismatch | Set `$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"` |
-| `404 Not Found` on frontend | Using ARM ID instead of frontend UUID | Use UUID from `frontend collaboration list` |
+| `AADSTS700211: No matching federated identity record` | Wrong issuer URL or stale FIC | Republish dataset; delete/recreate FIC |
+| `SSL certificate verify failed` | Dogfood cert mismatch | Use `-SkipCertificateCheck` on `Invoke-RestMethod` |
+| `404 Not Found` on frontend | Using ARM resource ID instead of frontend UUID | Use UUID from `Invoke-Frontend -Path ""` |
 | `ContractNotFound` | Stale CCF endpoint | Create new collaboration |
-| `Python 3.13 tuple error` | CLI extension bug | Upgrade to v1.0.0b5+ |
 | `Already voted / Conflict` | Idempotent vote | Safe to ignore |
 | `PENDING_RERUN` | Normal scheduling | Keep polling |
 
@@ -651,17 +661,59 @@ Supported formats: `csv`, `parquet`, `json`.
 
 ---
 
-## Appendix F: Collaboration Management
+## Appendix F: REST API Endpoint Reference
+
+### ARM API (via `az rest`)
+
+Base: `https://eastus2euap.management.azure.com`
+API version: `2025-10-31-preview`
+
+| Operation | Method | URL |
+|---|---|---|
+| Create collaboration | PUT | `.../providers/Private.CleanRoom/Collaborations/{name}` |
+| Show collaboration | GET | `.../providers/Private.CleanRoom/Collaborations/{name}` |
+| Enable workload | POST | `.../Collaborations/{name}/enableWorkload` |
+| Add collaborator | POST | `.../Collaborations/{name}/addCollaborator` |
+
+### Frontend API (via `Invoke-RestMethod`)
+
+Base: `{frontendEndpoint}/collaborations`
+API version: `2026-03-01-preview`
+
+| Operation | Method | Path |
+|---|---|---|
+| List collaborations | GET | `/` |
+| List invitations | GET | `/{id}/invitations` |
+| Accept invitation | POST | `/{id}/invitations/{invId}/accept` |
+| OIDC keys | GET | `/{id}/oidc/keys` |
+| Set issuer URL | POST | `/{id}/oidc/setIssuerUrl` |
+| Publish dataset | POST | `/{id}/analytics/datasets/{docId}/publish` |
+| Show dataset | GET | `/{id}/analytics/datasets/{docId}` |
+| Set consent | PUT | `/{id}/consent/{docId}` |
+| Publish query | POST | `/{id}/analytics/queries/{docId}/publish` |
+| Show query | GET | `/{id}/analytics/queries/{docId}` |
+| Vote on query | POST | `/{id}/analytics/queries/{docId}/vote` |
+| Run query | POST | `/{id}/analytics/queries/{docId}/run` |
+| Run result | GET | `/{id}/analytics/runs/{jobId}` |
+| Run history | GET | `/{id}/analytics/queries/{docId}/runs` |
+| Audit events | GET | `/{id}/analytics/auditevents` |
+
+---
+
+## Appendix G: Collaboration Management
 
 ### Force Recover
 
 If the collaboration becomes unresponsive (e.g., `ContractNotFound`, frontend errors on all operations):
 
 ```powershell
-az managedcleanroom collaboration recover `
-    --collaboration-name $collabName `
-    --resource-group $collabRg `
-    --force-recover $true
+$recoverBody = @{ forceRecover = $true } | ConvertTo-Json
+[System.IO.File]::WriteAllText("$PWD/body.json", $recoverBody)
+az rest --method POST `
+    --url "$collabArmUrl/recover`?api-version=$armApiVersion" `
+    --resource $armResource `
+    --headers "Content-Type=application/json" `
+    --body "@body.json"
 ```
 
 > Last-resort operation. Resets internal state. Existing datasets and queries
@@ -670,9 +722,9 @@ az managedcleanroom collaboration recover `
 ### Delete Collaboration
 
 ```powershell
-az managedcleanroom collaboration delete `
-    --collaboration-name $collabName `
-    --resource-group $collabRg
+az rest --method DELETE `
+    --url "$collabArmUrl`?api-version=$armApiVersion" `
+    --resource $armResource
 ```
 
 > Permanently deletes the collaboration and all associated resources.
