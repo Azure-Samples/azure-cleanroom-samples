@@ -34,6 +34,50 @@ param(
     [string]$subscription
 )
 
+function Initialize-AppAuth {
+    <#
+    .SYNOPSIS
+        Authenticates as a service principal using MSAL SNI (x5c) cert-based auth.
+    .DESCRIPTION
+        For MSFT tenant apps with trustedCertificateSubjects in the manifest.
+        Acquires an access token via Python MSAL and sets it as the frontend token.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$appId,
+        [Parameter(Mandatory)][string]$tenantId,
+        [Parameter(Mandatory)][string]$certPemPath,
+        [string]$subscription
+    )
+
+    Write-Host "Configuring app auth (MSAL SNI)..." -ForegroundColor Cyan
+    $env:UsePrivateCleanRoomNamespace = "true"
+
+    if (-not (Test-Path $certPemPath)) {
+        throw "Certificate PEM file not found: $certPemPath"
+    }
+
+    $commonDir = if ($PSScriptRoot) { $PSScriptRoot } else { "." }
+    $sniScript = Join-Path $commonDir "get-sp-token-sni.ps1"
+    if (Test-Path (Join-Path $commonDir "common" "get-sp-token-sni.ps1")) {
+        $sniScript = Join-Path $commonDir "common" "get-sp-token-sni.ps1"
+    }
+
+    $token = & $sniScript -appId $appId -tenantId $tenantId -certPemPath $certPemPath
+    if (-not $token) {
+        throw "Failed to acquire SP token via MSAL SNI"
+    }
+
+    $env:CLEANROOM_FRONTEND_TOKEN = $token
+    Write-Host "  SP token set in CLEANROOM_FRONTEND_TOKEN" -ForegroundColor Green
+
+    if ($subscription) {
+        Write-Host "  Subscription: $subscription" -ForegroundColor Yellow
+    }
+
+    Write-Host "App auth configuration complete." -ForegroundColor Green
+}
+
+# Default: local user auth
 Write-Host "Configuring local user auth..." -ForegroundColor Cyan
 
 # Set environment variable for Private CleanRoom namespace (used by CLI extension)
