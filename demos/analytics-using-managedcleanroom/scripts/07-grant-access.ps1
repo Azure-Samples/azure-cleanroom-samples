@@ -54,11 +54,20 @@ param(
 
     # Legacy switch — still honored for backward compatibility.
     # If -setupKeyVault is passed, KV access is granted regardless of EncryptionMode.
-    [switch]$setupKeyVault = $false
+    [switch]$setupKeyVault = $false,
+
+    [string]$appId,
+
+    [string]$appTenantId,
+
+    [string]$appCertPemPath
 )
 
-# Configure Private CleanRoom cloud and verify local user auth
+# Auth: app-based (SPN) or user-based
 . "$PSScriptRoot/common/setup-local-auth.ps1"
+if ($appId -and $appCertPemPath -and $appTenantId) {
+    Initialize-AppAuth -appId $appId -tenantId $appTenantId -certPemPath $appCertPemPath
+}
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true

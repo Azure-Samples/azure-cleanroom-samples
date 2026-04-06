@@ -676,3 +676,56 @@ az managedcleanroom collaboration delete `
 ```
 
 > Permanently deletes the collaboration and all associated resources.
+
+---
+
+## Appendix: App-Based Authentication (SPN)
+
+For CI/CD automation, service principals can replace interactive user login.
+
+### Prerequisites
+
+| Requirement | Details |
+|---|---|
+| Python 3 + `msal` + `cryptography` | `pip install msal cryptography` |
+| App registration | With `serviceManagementReference` in MSFT tenant |
+| OneCert certificate | Issued by integrated CA in a KV with OneCert issuer |
+| `trustedCertificateSubjects` | Set in app manifest via Azure Portal |
+
+### Token Acquisition
+
+```powershell
+# Use get-sp-token-sni.ps1 for MSAL SNI (x5c) auth
+$token = ./scripts/common/get-sp-token-sni.ps1 `
+    -appId "<clientAppId>" -tenantId "<tenantId>" -certPemPath "<cert.pem>"
+$env:CLEANROOM_FRONTEND_TOKEN = $token
+```
+
+### Add SPN as Collaborator
+
+```powershell
+az managedcleanroom collaboration add-collaborator `
+    --collaboration-name <name> --resource-group <rg> `
+    --user-identifier <clientAppId> `
+    --object-id <spObjectId> `
+    --tenant-id <tenantId>
+```
+
+> **Note**: `--object-id` must be from the **Enterprise Application** (service principal), not the app registration. SPNs auto-activate — no invitation acceptance needed.
+
+### Federated Credential Subject
+
+Use the SP's Enterprise App object ID (same as the token's `oid` claim):
+
+```
+Analytics-{spObjectId}
+```
+
+### Troubleshooting
+
+| Error | Fix |
+|---|---|
+| `AADSTS700027: certificate not registered` | Use Python MSAL with `public_certificate`, not `az login` |
+| `Credential lifetime exceeds max value` | Use OneCert + `trustedCertificateSubjects` |
+| `InvalidCollaboratorIdentifier` | Add `--object-id` and `--tenant-id` to `add-collaborator` |
+| `is_schema_compatible: Missing field` | Output `allowedFields` must include all query output columns |
