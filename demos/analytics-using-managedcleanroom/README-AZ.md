@@ -676,8 +676,11 @@ Supported formats: `csv`, `parquet`, `json`.
 | `outputDataset` | Where results are written |
 
 **Privacy controls**:
-- `preConditions`: Min row count per view (query aborts if below threshold)
-- `postFilters`: Remove output groups below aggregation threshold
+
+- **Pre-conditions** enforce a minimum row count per view. If any view has fewer rows than `minRowCount`, the query aborts.
+- **Post-filters** remove groups from the output whose aggregation count is below a threshold, preventing identification of individuals.
+
+Both are defined in the query segments. Edit the thresholds before publishing the query (Step 08).
 
 ---
 
