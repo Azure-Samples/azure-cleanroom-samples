@@ -295,6 +295,11 @@ Invoke-Frontend -Path "$collabId/invitations/$invitationId/accept" -Method POST
 ./scripts/04-prepare-resources.ps1 -resourceGroup $personaRg -persona $persona -location $location
 ```
 
+> This script provisions a storage account, Key Vault (premium), and managed identity.
+> It also assigns RBAC roles to the caller:
+> - **Storage Blob Data Contributor** on the storage account (required to upload data)
+> - **Key Vault Crypto Officer** and **Key Vault Secrets Officer** on the Key Vault (required for CPK mode)
+
 ### 4.2 Generate Sample Data
 
 ```powershell
@@ -428,6 +433,9 @@ if ($persona -eq "woodgrove") {
 > CPK keys must be created **after** publishing datasets. The script fetches the
 > SKR (Secure Key Release) policy from the published dataset, which determines
 > the attestation hash for the KEK release policy.
+>
+> Requires **Key Vault Crypto Officer** and **Key Vault Secrets Officer** roles
+> (assigned by `04-prepare-resources.ps1` in Step 4.1).
 
 ```powershell
 if ($EncryptionMode -eq "CPK") {

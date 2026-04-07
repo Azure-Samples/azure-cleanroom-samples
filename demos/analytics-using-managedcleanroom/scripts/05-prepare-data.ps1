@@ -119,34 +119,6 @@ if ($variant -eq "cpk") {
     $kvUrl = $kvJson.properties.vaultUri.TrimEnd('/')
 }
 
-# -- RBAC: Ensure Storage Blob Data Contributor before upload ----------------------
-function Ensure-BlobDataContributor {
-    param(
-        [Parameter(Mandatory)][string]$StorageAccountId,
-        [Parameter(Mandatory)][string]$Assignee
-    )
-    $existing = az role assignment list `
-        --assignee $Assignee `
-        --scope $StorageAccountId `
-        --role "Storage Blob Data Contributor" `
-        --query "length(@)" -o tsv
-    if ($existing -eq "0") {
-        Write-Host "Assigning 'Storage Blob Data Contributor' to '$Assignee' on scope..." -ForegroundColor Cyan
-        az role assignment create `
-            --assignee $Assignee `
-            --role "Storage Blob Data Contributor" `
-            --scope $StorageAccountId `
-            --only-show-errors -o none
-        Start-Sleep -Seconds 20
-    } else {
-        Write-Host "'Storage Blob Data Contributor' already assigned." -ForegroundColor Green
-    }
-}
-
-$Assignee = az account show --query user.name -o tsv
-
-Ensure-BlobDataContributor -StorageAccountId $storageAccountId -Assignee $Assignee
-
 # Container names: each iteration gets unique containers to avoid CPK key conflicts.
 # For SSE, the suffix is still applied for consistency (idempotent container create).
 $inputContainer = if ($datasetSuffix) { "$persona-input$datasetSuffix" } else { "$persona-input" }
