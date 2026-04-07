@@ -25,7 +25,7 @@ providing your own data and query.
 | Aspect | Details |
 |---|---|
 | **API mode** | `az rest` (ARM) + `Invoke-RestMethod` (frontend) |
-| **Encryption** | SSE (Azure-managed) or CPK (customer-provided keys via Key Vault Premium) |
+| **Data Encryption** | SSE (Microsoft Managed Keys) or [CPK](https://learn.microsoft.com/en-us/azure/storage/common/storage-service-encryption#about-encryption-key-management) (Customer Provided Keys) |
 | **Parties** | Woodgrove (owner / advertiser), Northwind (publisher) |
 | **Data format** | CSV (Parquet and JSON also supported) |
 | **Query engine** | Confidential Spark SQL |
@@ -123,7 +123,7 @@ $location = "westus"
 $EncryptionMode = "SSE"    # "SSE" or "CPK"
 $iteration = 0
 
-$persona = "woodgrove"                # T2: "woodgrove"  |  T3: "northwind"
+$persona = "woodgrove"                # "woodgrove" or "northwind"
 $personaRg = "cr-e2e-$persona-rg"
 $personaEmail = "<your-email>"
 
@@ -222,6 +222,9 @@ az rest --method POST `
 
 Repeat for each collaborator:
 
+> To add Service Principals (SPNs) instead of user email IDs for automation, see
+> [Appendix: App-Based Authentication (SPN)](#appendix-app-based-authentication-spn).
+
 ```powershell
 # Add Woodgrove
 $collaboratorEmail = "<woodgrove-email>"
@@ -283,8 +286,8 @@ Invoke-Frontend -Path "$collabId/invitations/$invitationId/accept" -Method POST
 ## Step 04: Provision Resources & Upload Data `[EACH COLLABORATOR]`
 
 > Run Steps 04-06 in **each collaborator terminal**. Commands are identical —
-> only `$persona` differs. In multi-collaborator mode, Woodgrove (T2) and
-> Northwind (T3) run these steps **in parallel** (independent resource groups).
+> only `$persona` differs. In multi-collaborator mode, Woodgrove and
+> Northwind run these steps **in parallel** (independent resource groups).
 
 ### 4.1 Prepare Resources
 
@@ -390,6 +393,10 @@ az identity federated-credential list `
 ./scripts/08-build-dataset-body.ps1 -resourceGroup $personaRg -persona $persona
 ```
 
+> **Bring your own data**: If you want to provide your own datasets, upload your data directly to the
+> storage accounts created for your persona and update the `schema` and `accessPolicy` in the dataset
+> body files: `generated/publish/$persona-input-dataset.json` and `generated/publish/$persona-output-dataset.json`.
+
 ### 6.2 Publish Input Dataset
 
 ```powershell
@@ -463,12 +470,15 @@ Invoke-Frontend -Path "$collabId/analytics/datasets/$persona-input-csv$suffix" |
 
 ```powershell
 $northwindDataset = "<northwind-input-csv-suffix>"   # e.g., "northwind-input-csv-v1"
-./scripts/09-build-query-body.ps1 -queryName "query2$suffix" `
+$queryName = "query2$suffix"   # Update queryName for multi-collaborator
+./scripts/09-build-query-body.ps1 -queryName $queryName `
     -queryDir "./demos/query/woodgrove/query2" `
     -publisherInputDataset $northwindDataset `
     -consumerInputDataset "woodgrove-input-csv$suffix" `
     -outputDataset "woodgrove-output-csv$suffix"
 ```
+
+> **Bring your own query**: If you want to use a custom query, update `generated/publish/$queryName.json` with your required query segments before publishing.
 
 ### 7.2 Publish Query
 
@@ -491,8 +501,9 @@ Invoke-Frontend -Path "$collabId/analytics/queries/$queryName/publish" `
 Each collaborator runs in their own terminal:
 
 ```powershell
-# Get proposal ID
+# View query and get proposal ID
 $queryInfo = Invoke-Frontend -Path "$collabId/analytics/queries/$queryName"
+$queryInfo.data.queryData | Format-Table executionSequence, preConditions, postFilters, data -Wrap
 $proposalId = $queryInfo.proposalId
 Write-Host "Proposal ID: $proposalId"
 
@@ -501,13 +512,20 @@ Invoke-Frontend -Path "$collabId/analytics/queries/$queryName/vote" `
     -Method POST -Body @{ voteAction = "accept"; proposalId = $proposalId }
 ```
 
-> **Northwind (T3)**: If you don't have `$queryName`, list published queries:
+> **Northwind**: If you don't have `$queryName`, list published queries and set it:
 > ```powershell
 > $queries = Invoke-Frontend -Path "$collabId/analytics/queries" -Method GET
 > $queries | ConvertTo-Json -Depth 5
+>
+> $queryName = "<query-name-from-list>"   # e.g., "query2-v1"
 > ```
 
 **Verify**: Query state should be `"Accepted"` after all required votes.
+
+```powershell
+$state = (Invoke-Frontend -Path "$collabId/analytics/queries/$queryName").state
+Write-Host "Query state: $state"
+```
 
 ---
 
@@ -523,6 +541,15 @@ Write-Host "Job ID: $jobId"
 ```
 
 > `"status": "success"` means accepted for scheduling, not completed. Takes 10-20 min.
+
+> **Date-range filtering**: To read datasets within a specific date range,
+> pass `startDate` and `endDate` in the request body:
+>
+> ```powershell
+> $runBody = @{ runId = [guid]::NewGuid().ToString(); startDate = "2025-09-01"; endDate = "2025-09-02" }
+> $runResult = Invoke-Frontend -Path "$collabId/analytics/queries/$queryName/run" `
+>     -Method POST -Body $runBody
+> ```
 
 ---
 
@@ -558,6 +585,8 @@ $result | ConvertTo-Json -Depth 10
 $history = Invoke-Frontend -Path "$collabId/analytics/queries/$queryName/runs"
 $history | ConvertTo-Json -Depth 10
 ```
+
+> The output includes execution stats such as **total rows read**, **total rows written**, and **duration** of the query.
 
 ### 11.2 Audit Events
 

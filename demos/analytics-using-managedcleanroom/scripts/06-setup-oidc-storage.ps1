@@ -136,6 +136,37 @@ if ($OidcStorageAccount) {
 
 Write-Host "Issuer URL: $issuerUrl" -ForegroundColor Yellow
 
+# -- RBAC: Ensure Storage Blob Data Contributor before upload ----------------------
+function Ensure-BlobDataContributor {
+    param(
+        [Parameter(Mandatory)][string]$StorageAccountName,
+        [Parameter(Mandatory)][string]$ResourceGroupName,
+        [Parameter(Mandatory)][string]$Assignee
+    )
+    $scope = az storage account show --name $StorageAccountName `
+        --resource-group $ResourceGroupName --query id -o tsv
+    if (-not $scope) { throw "Storage account scope not found: $StorageAccountName" }
+    $existing = az role assignment list `
+        --assignee $Assignee --scope $scope `
+        --role "Storage Blob Data Contributor" --query "length(@)" -o tsv
+    if ($existing -eq "0") {
+        Write-Host "Assigning 'Storage Blob Data Contributor' to '$Assignee' on '$StorageAccountName'..." -ForegroundColor Cyan
+        az role assignment create --assignee $Assignee `
+            --role "Storage Blob Data Contributor" --scope $scope `
+            --only-show-errors -o none
+        Start-Sleep -Seconds 20
+    } else {
+        Write-Host "'Storage Blob Data Contributor' already assigned on '$StorageAccountName'." -ForegroundColor Green
+    }
+}
+
+$Assignee = az account show --query user.name -o tsv
+
+Ensure-BlobDataContributor `
+    -StorageAccountName $oidcStorageAccountName `
+    -ResourceGroupName $resourceGroup `
+    -Assignee $Assignee
+
 # -- Step 2: Build and upload OpenID configuration --------------------------------
 $openidConfig = @{
     issuer                                = $issuerUrl
