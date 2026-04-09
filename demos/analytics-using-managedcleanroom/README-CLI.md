@@ -25,7 +25,7 @@ providing your own data and query.
 | Aspect | Details |
 |---|---|
 | **API mode** | `az managedcleanroom` CLI extension |
-| **Encryption** | SSE (Azure-managed) or CPK (customer-provided keys via Key Vault Premium) |
+| **Data Encryption** | SSE (Microsoft Managed Keys) or [CPK](https://learn.microsoft.com/en-us/azure/storage/common/storage-service-encryption#about-encryption-key-management) (Customer Provided Keys) |
 | **Parties** | Woodgrove (owner / advertiser), Northwind (publisher) |
 | **Data format** | CSV (Parquet and JSON also supported) |
 | **Query engine** | Confidential Spark SQL |
@@ -115,7 +115,7 @@ $location = "westus"
 $EncryptionMode = "SSE"    # "SSE" or "CPK"
 $iteration = 0
 
-$persona = "woodgrove"                # T2: "woodgrove"  |  T3: "northwind"
+$persona = "woodgrove"                # "woodgrove" or "northwind"
 $personaRg = "cr-e2e-$persona-rg"
 $personaEmail = "<your-email>"
 
@@ -195,6 +195,9 @@ az managedcleanroom collaboration enable-workload `
 
 Repeat for each collaborator:
 
+> To add Service Principals (SPNs) instead of user email IDs for automation, see
+> [Appendix: App-Based Authentication (SPN)](#appendix-app-based-authentication-spn).
+
 ```powershell
 # Add Woodgrove
 az managedcleanroom collaboration add-collaborator `
@@ -252,14 +255,19 @@ az managedcleanroom frontend invitation accept `
 ## Step 04: Provision Resources & Upload Data `[EACH COLLABORATOR]`
 
 > Run Steps 04-06 in **each collaborator terminal**. Commands are identical —
-> only `$persona` differs. In multi-collaborator mode, Woodgrove (T2) and
-> Northwind (T3) run these steps **in parallel** (independent resource groups).
+> only `$persona` differs. In multi-collaborator mode, Woodgrove and
+> Northwind run these steps **in parallel** (independent resource groups).
 
 ### 4.1 Prepare Resources
 
 ```powershell
 ./scripts/04-prepare-resources.ps1 -resourceGroup $personaRg -persona $persona -location $location
 ```
+
+> This script provisions a storage account, Key Vault (premium), and managed identity.
+> It also assigns RBAC roles to the caller:
+> - **Storage Blob Data Contributor** on the storage account (required to upload data)
+> - **Key Vault Crypto Officer** and **Key Vault Secrets Officer** on the Key Vault (required for CPK mode)
 
 ### 4.2 Generate Sample Data
 
@@ -364,6 +372,10 @@ az identity federated-credential list `
 ./scripts/08-build-dataset-body.ps1 -resourceGroup $personaRg -persona $persona
 ```
 
+> **Bring your own data**: If you want to provide your own datasets, upload your data directly to the
+> storage accounts created for your persona and update the `schema` and `accessPolicy` in the dataset
+> body files: `generated/publish/$persona-input-dataset.json` and `generated/publish/$persona-output-dataset.json`.
+
 ### 6.2 Publish Input Dataset
 
 ```powershell
@@ -397,6 +409,9 @@ if ($persona -eq "woodgrove") {
 > CPK keys must be created **after** publishing datasets. The script fetches the
 > SKR (Secure Key Release) policy from the published dataset, which determines
 > the attestation hash for the KEK release policy.
+>
+> Requires **Key Vault Crypto Officer** and **Key Vault Secrets Officer** roles
+> (assigned by `04-prepare-resources.ps1` in Step 4.1).
 
 ```powershell
 if ($EncryptionMode -eq "CPK") {
@@ -444,12 +459,15 @@ az managedcleanroom frontend analytics dataset show `
 
 ```powershell
 $northwindDataset = "<northwind-input-csv-suffix>"   # e.g., "northwind-input-csv-v1"
-./scripts/09-build-query-body.ps1 -queryName "query2$suffix" `
+$queryName = "query2$suffix"   # Update queryName for multi-collaborator
+./scripts/09-build-query-body.ps1 -queryName $queryName `
     -queryDir "./demos/query/woodgrove/query2" `
     -publisherInputDataset $northwindDataset `
     -consumerInputDataset "woodgrove-input-csv$suffix" `
     -outputDataset "woodgrove-output-csv$suffix"
 ```
+
+> **Bring your own query**: If you want to use a custom query, update `generated/publish/$queryName.json` with your required query segments before publishing.
 
 ### 7.2 Publish Query
 
@@ -472,10 +490,11 @@ az managedcleanroom frontend analytics query publish `
 Each collaborator runs in their own terminal:
 
 ```powershell
-# Get proposal ID
+# View query and get proposal ID
 $queryInfo = az managedcleanroom frontend analytics query show `
     --collaboration-id $collabId `
     --document-id $queryName -o json | ConvertFrom-Json
+$queryInfo.data.queryData | Format-Table executionSequence, preConditions, postFilters, data -Wrap
 $proposalId = $queryInfo.proposalId
 Write-Host "Proposal ID: $proposalId"
 
@@ -487,13 +506,21 @@ az managedcleanroom frontend analytics query vote `
     --proposal-id $proposalId
 ```
 
-> **Northwind (T3)**: If you don't have `$queryName`, list published queries:
+> **Northwind**: If you don't have `$queryName`, list published queries and set it:
 > ```powershell
 > az managedcleanroom frontend analytics query list `
 >     --collaboration-id $collabId -o json
+>
+> $queryName = "<query-name-from-list>"   # e.g., "query2-v1"
 > ```
 
 **Verify**: Query state should be `"Accepted"` after all required votes.
+
+```powershell
+az managedcleanroom frontend analytics query show `
+    --collaboration-id $collabId `
+    --document-id $queryName --query state -o tsv
+```
 
 ---
 
@@ -509,6 +536,15 @@ Write-Host "Job ID: $jobId"
 ```
 
 > The CLI auto-generates a run ID. Each invocation starts a new execution.
+
+> **Date-range filtering**: To read datasets within a specific date range,
+> add `--start-date` and `--end-date`:
+>
+> ```powershell
+> $runResult = az managedcleanroom frontend analytics query run `
+>     --collaboration-id $collabId `
+>     --document-id $queryName --start-date "2025-09-01" --end-date "2025-09-02" -o json | ConvertFrom-Json
+> ```
 
 ---
 
@@ -547,6 +583,8 @@ az managedcleanroom frontend analytics query runhistory list `
     --collaboration-id $collabId `
     --document-id $queryName -o json
 ```
+
+> The output includes execution stats such as **total rows read**, **total rows written**, and **duration** of the query.
 
 ### 11.2 Audit Events
 
@@ -646,8 +684,11 @@ Supported formats: `csv`, `parquet`, `json`.
 | `outputDataset` | Where results are written |
 
 **Privacy controls**:
-- `preConditions`: Min row count per view (query aborts if below threshold)
-- `postFilters`: Remove output groups below aggregation threshold
+
+- **Pre-conditions** enforce a minimum row count per view. If any view has fewer rows than `minRowCount`, the query aborts.
+- **Post-filters** remove groups from the output whose aggregation count is below a threshold, preventing identification of individuals.
+
+Both are defined in the query segments. Edit the thresholds before publishing the query (Step 08).
 
 ---
 

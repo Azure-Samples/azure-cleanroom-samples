@@ -1,5 +1,5 @@
 {
-  "data": "CREATE OR REPLACE TEMP VIEW publisher_view AS SELECT * FROM publisher_data",
+  "data": "CREATE OR REPLACE TEMP VIEW publisher_view AS SELECT * FROM publisher_data WHERE annual_income > 100000 AND region IN ('IN', 'US', 'UK')",
   "executionSequence": 1,
   "preConditions": "",
   "postFilters": ""
