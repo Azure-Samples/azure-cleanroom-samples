@@ -5,16 +5,11 @@
 .DESCRIPTION
     Replaces the VM managed identity boilerplate used in scripts 04-12.
     Instead of `az login --identity`, this helper:
-      1. Sets $env:UsePrivateCleanRoomNamespace = "true" (for CLI extension)
-      2. Verifies the user is already logged in via `az account show`
-      3. Optionally sets the correct subscription
+      1. Verifies the user is already logged in via `az account show`
+      2. Optionally sets the correct subscription
 
-    NOTE: This script does NOT switch to PrivateCleanroomAzureCloud.
-    The cloud switch is only needed for ARM operations against the
-    Private.CleanRoom collaboration RP (scripts 01-02). Scripts 04-12
-    operate on standard Azure resources (storage, KV, MI) via normal ARM
-    and call the frontend REST API directly (not through ARM), so they
-    should run on AzureCloud.
+    Scripts 04-12 operate on standard Azure resources (storage, KV, MI)
+    via normal ARM and call the frontend REST API directly.
 
     Prerequisites: User must be logged in via `az login` before running any script.
 
@@ -50,7 +45,6 @@ function Initialize-AppAuth {
     )
 
     Write-Host "Configuring app auth (MSAL SNI)..." -ForegroundColor Cyan
-    $env:UsePrivateCleanRoomNamespace = "true"
 
     if (-not (Test-Path $certPemPath)) {
         throw "Certificate PEM file not found: $certPemPath"
@@ -80,16 +74,7 @@ function Initialize-AppAuth {
 # Default: local user auth
 Write-Host "Configuring local user auth..." -ForegroundColor Cyan
 
-# Set environment variable for Private CleanRoom namespace (used by CLI extension)
-$env:UsePrivateCleanRoomNamespace = "true"
-
-# Ensure we are on AzureCloud (scripts 04-12 need standard ARM + Graph API)
 $PSNativeCommandUseErrorActionPreference = $false
-$currentCloud = az cloud show --query name -o tsv 2>$null
-if ($currentCloud -and $currentCloud -ne "AzureCloud") {
-    Write-Host "  Switching from '$currentCloud' to AzureCloud (needed for ARM + Graph)..." -ForegroundColor Yellow
-    az cloud set --name AzureCloud 2>&1 | Out-Null
-}
 
 # Verify user is logged in
 $accountJson = az account show -o json 2>$null

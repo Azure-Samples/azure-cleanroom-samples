@@ -23,7 +23,7 @@
     Application (client) ID of the app to add as collaborator.
 
 .PARAMETER apiVersion
-    ARM API version (default: 2025-10-31-preview).
+    ARM API version (default: 2026-03-31-preview).
 
 .EXAMPLE
     ./scripts/common/add-app-collaborator.ps1 -collaborationName <collaboration-name> -resourceGroup <resource-group> -subscription "<your-subscription-id>" -appClientId "<your-app-client-id>"
@@ -41,7 +41,7 @@ param(
     [Parameter(Mandatory)]
     [string]$appClientId,
 
-    [string]$apiVersion = "2025-10-31-preview"
+    [string]$apiVersion = "2026-03-31-preview"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -56,7 +56,7 @@ if ($LASTEXITCODE -ne 0 -or -not $token) {
 }
 
 $baseUrl = "https://eastus2euap.management.azure.com"
-$collabUrl = "$baseUrl/subscriptions/$subscription/resourceGroups/$resourceGroup/providers/Private.CleanRoom/collaborations/$collaborationName"
+$collabUrl = "$baseUrl/subscriptions/$subscription/resourceGroups/$resourceGroup/providers/Microsoft.CleanRoom/collaborations/$collaborationName"
 
 # Step 1: Verify the collaboration exists
 Write-Host "Verifying collaboration..." -ForegroundColor Cyan

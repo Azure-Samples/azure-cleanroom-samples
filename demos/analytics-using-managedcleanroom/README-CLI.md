@@ -89,6 +89,11 @@ providing your own data and query.
 | PowerShell | 7.x+ |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) |
+| Resource provider | `Microsoft.CleanRoom` registered in the owner's subscription |
+
+```powershell
+az provider register --namespace Microsoft.CleanRoom
+```
 
 ### 1.2 Terminal T1 (Owner) — Variables
 
@@ -98,7 +103,7 @@ $account = az account show -o json | ConvertFrom-Json
 $subscription = $account.id
 $tenantId = $account.tenantId
 
-$location = "westus"
+$location = "eastus2euap"
 $collabName = "<collaboration-name>"
 $collabRg = "<collaboration-resource-group>"
 ```
@@ -111,7 +116,7 @@ $account = az account show -o json | ConvertFrom-Json
 $subscription = $account.id
 $tenantId = $account.tenantId
 
-$location = "westus"
+$location = "eastus2euap"
 $EncryptionMode = "SSE"    # "SSE" or "CPK"
 $iteration = 0
 
@@ -121,19 +126,32 @@ $personaEmail = "<your-email>"
 
 az group create --name $personaRg --location $location -o none 2>$null
 
-$frontend = "https://dogfood.workload-frontendwestus.cleanroom.cloudapp.azure-test.net"
+$frontend = "https://prod.workload-frontendcentraluseuap.cleanroom.cloudapp.azure.net"
 $oidcStorageAccount = "cleanroomoidc"   # MSFT tenant; omit for other tenants
 ```
 
-### 1.4 Generate MSAL Token & Extract OID
+### 1.4 Acquire Token
+
+**Option A — MSAL device-code flow** (external / MSA accounts):
 
 ```powershell
 $token = Get-MsalToken -ClientId "8a3849c1-81c5-4d62-b83e-3bb2bb11251a" `
     -TenantId "common" -Scopes "User.Read" -DeviceCode
 $personaTokenFile = Join-Path ([System.IO.Path]::GetTempPath()) "msal-idtoken-$persona.txt"
 $token.IdToken | Out-File -FilePath $personaTokenFile -NoNewline
+```
 
-# Extract JWT oid (used for federated credentials in Step 05)
+**Option B — `az login`** (corporate @microsoft.com accounts):
+
+```powershell
+az login
+$personaTokenFile = Join-Path ([System.IO.Path]::GetTempPath()) "msal-idtoken-$persona.txt"
+az account get-access-token --resource "https://management.azure.com/" --query accessToken -o tsv | Out-File -FilePath $personaTokenFile -NoNewline
+```
+
+### 1.5 Extract OID from Token
+
+```powershell
 $tokenB64 = (Get-Content $personaTokenFile -Raw).Split('.')[1]
 $padLen = (4 - $tokenB64.Length % 4) % 4
 $padded = $tokenB64 + ('=' * $padLen)
@@ -145,7 +163,7 @@ Write-Host "JWT oid: $personaOid"
 > **CRITICAL**: Always use the JWT `oid`, NOT `az ad signed-in-user show --query id`.
 > For MSA accounts these differ. See [Appendix A](#appendix-a-federated-credential-subject-reference).
 
-### 1.5 Configure CLI Extension
+### 1.6 Configure CLI Extension
 
 ```powershell
 $env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
@@ -159,17 +177,7 @@ az managedcleanroom frontend configure --endpoint $frontend
 
 > **Terminal: T1 (Owner)**
 
-### 2.1 Configure Private CleanRoom Cloud
-
-```powershell
-$privateCloudName = "PrivateCleanroomAzureCloud"
-az cloud register --name $privateCloudName `
-    --endpoint-resource-manager "https://eastus2euap.management.azure.com/" 2>$null
-az cloud set --name $privateCloudName
-$env:UsePrivateCleanRoomNamespace = "true"
-```
-
-### 2.2 Create Collaboration & Enable Workload
+### 2.1 Create Collaboration & Enable Workload
 
 ```powershell
 az group create --name $collabRg --location $location -o none
@@ -177,21 +185,61 @@ az group create --name $collabRg --location $location -o none
 az managedcleanroom collaboration create `
     --collaboration-name $collabName `
     --resource-group $collabRg `
-    --location $location
+    --location $location `
+    --cluster-endpoint "https://dummy/"
 ```
 
-**Runtime**: ~25 minutes.
+> **NOTE**: `--location` must be `eastus2euap` — this is where the Microsoft.CleanRoom RP is deployed.
+> Actual resources (AKS cluster, CACI instances) are created in `westus`. Configurable region support is coming soon.
+
+**Runtime**: ~25 minutes. Poll `provisioningState` until `Succeeded`:
+
+```powershell
+do {
+    $collab = az managedcleanroom collaboration show `
+        --collaboration-name $collabName `
+        --resource-group $collabRg -o json | ConvertFrom-Json
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] provisioningState: $($collab.properties.provisioningState)"
+    Start-Sleep -Seconds 60
+} while ($collab.properties.provisioningState -notin @("Succeeded", "Failed"))
+```
 
 ```powershell
 az managedcleanroom collaboration enable-workload `
     --collaboration-name $collabName `
     --resource-group $collabRg `
-    --workload-type Analytics
+    --workload-type analytics
 ```
 
-**Runtime**: ~7 minutes.
+**Runtime**: ~7 minutes. Poll for completion:
 
-### 2.3 Add Collaborators
+```powershell
+do {
+    $collab = az managedcleanroom collaboration show `
+        --collaboration-name $collabName `
+        --resource-group $collabRg -o json | ConvertFrom-Json
+    $wl = $collab.properties.workloads | Where-Object { $_.workloadType -eq "analytics" }
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] provisioningState: $($collab.properties.provisioningState) | workload: $($wl.endpoint)"
+    Start-Sleep -Seconds 30
+} while ($collab.properties.provisioningState -notin @("Succeeded", "Failed"))
+```
+
+Then wait for `healthState` to become `Ok`:
+
+```powershell
+do {
+    $collab = az managedcleanroom collaboration show `
+        --collaboration-name $collabName `
+        --resource-group $collabRg -o json | ConvertFrom-Json
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] healthState: $($collab.properties.health.healthState)"
+    if ($collab.properties.health.healthState -ne "Ok" -and $collab.properties.health.healthIssues) {
+        $collab.properties.health.healthIssues | ForEach-Object { Write-Host "  Issue: $($_ | ConvertTo-Json -Compress)" }
+    }
+    Start-Sleep -Seconds 30
+} while ($collab.properties.health.healthState -ne "Ok")
+```
+
+### 2.2 Add Collaborators
 
 Repeat for each collaborator:
 
@@ -552,12 +600,12 @@ Write-Host "Job ID: $jobId"
 
 ```powershell
 do {
-    Start-Sleep -Seconds 30
     $result = az managedcleanroom frontend analytics query runresult show `
         --collaboration-id $collabId `
         --job-id $jobId -o json | ConvertFrom-Json
     $state = $result.status.applicationState.state
     Write-Host "[$(Get-Date -Format 'HH:mm:ss')] State: $state"
+    Start-Sleep -Seconds 30
 } while ($state -notin @("COMPLETED", "FAILED", "SUBMISSION_FAILED"))
 
 $result | ConvertTo-Json -Depth 10
@@ -632,7 +680,7 @@ az identity federated-credential create --name "Analytics-$personaOid-federation
 |---|---|---|
 | `SPARK_JOB_FAILED: ExitCode 1` | Federated credential subject mismatch | See [Appendix A](#appendix-a-federated-credential-subject-reference) |
 | `AADSTS700211: No matching federated identity record` | Wrong issuer URL in dataset or stale FIC | Republish dataset; delete/recreate FIC |
-| `SSL certificate verify failed` | Dogfood cert mismatch | Set `$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"` |
+| `SSL certificate verify failed` | EUAP endpoint cert mismatch | Set `$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"` |
 | `404 Not Found` on frontend | Using ARM ID instead of frontend UUID | Use UUID from `frontend collaboration list` |
 | `ContractNotFound` | Stale CCF endpoint | Create new collaboration |
 | `Python 3.13 tuple error` | CLI extension bug | Upgrade to v1.0.0b5+ |
