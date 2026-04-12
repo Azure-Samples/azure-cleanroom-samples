@@ -269,7 +269,7 @@ Repeat for each collaborator:
 ```powershell
 # Add Woodgrove
 $collaboratorEmail = "<woodgrove-email>"
-$addBody = @{ Collaborator = @{ UserIdentifier = $collaboratorEmail } } | ConvertTo-Json
+$addBody = @{ collaborator = @{ userIdentifier = $collaboratorEmail } } | ConvertTo-Json
 [System.IO.File]::WriteAllText("$PWD/body.json", $addBody)
 az rest --method POST `
     --url "$collabArmUrl/addCollaborator`?api-version=$armApiVersion" `
@@ -279,7 +279,7 @@ az rest --method POST `
 
 # Add Northwind (multi-collaborator only)
 $collaboratorEmail = "<northwind-email>"
-$addBody = @{ Collaborator = @{ UserIdentifier = $collaboratorEmail } } | ConvertTo-Json
+$addBody = @{ collaborator = @{ userIdentifier = $collaboratorEmail } } | ConvertTo-Json
 [System.IO.File]::WriteAllText("$PWD/body.json", $addBody)
 az rest --method POST `
     --url "$collabArmUrl/addCollaborator`?api-version=$armApiVersion" `
@@ -288,7 +288,7 @@ az rest --method POST `
     --body "@body.json"
 ```
 
-> **IMPORTANT**: The body requires **PascalCase** keys (`Collaborator`, `UserIdentifier`).
+> **IMPORTANT**: The body requires **camelCase** keys (`collaborator`, `userIdentifier`).
 > We use `[System.IO.File]::WriteAllText()` to write body files (avoids BOM encoding issues).
 
 **Verify**:
