@@ -201,7 +201,7 @@ az group create --name $collabRg --location $location -o none
 ### 2.2 Create Collaboration
 
 ```powershell
-$createBody = @{ location = $location; properties = @{"clusterEndpoint":"https://dummy/"} } | ConvertTo-Json
+$createBody = @{ location = $location; properties = @{ clusterEndpoint = "https://dummy/" } } | ConvertTo-Json
 [System.IO.File]::WriteAllText("$PWD/body.json", $createBody)
 az rest --method PUT `
     --url "$collabArmUrl`?api-version=$armApiVersion" `
