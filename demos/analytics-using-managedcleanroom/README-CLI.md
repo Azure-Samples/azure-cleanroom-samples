@@ -185,8 +185,7 @@ az group create --name $collabRg --location $location -o none
 az managedcleanroom collaboration create `
     --collaboration-name $collabName `
     --resource-group $collabRg `
-    --location $location `
-    --cluster-endpoint "https://dummy/"
+    --location $location
 ```
 
 > **NOTE**: `--location` must be `eastus2euap` — this is where the Microsoft.CleanRoom RP is deployed.
@@ -584,6 +583,11 @@ Write-Host "Job ID: $jobId"
 ```
 
 > The CLI auto-generates a run ID. Each invocation starts a new execution.
+
+> **Network connectivity**: This step requires the ACCR Frontend Service to reach the Analytics Endpoint of the Collaboration. It can time out due to tenant-specific network configurations:
+>
+> 1. **NSG (Network Security Group)**: If your tenant has NSGs blocking inbound internet access to the AKS Analytics endpoint on port 443, the query will fail. Contact the ACCR team with the `tenantId` of the collaboration so we can whitelist your tenant — an NSG rule will be updated to allow port 443 access to the AKS cluster.
+> 2. **[AVNM (Azure Virtual Network Manager)](https://learn.microsoft.com/en-us/azure/virtual-network-manager/)**: This is a tenant-level policy. Your tenant admin needs to create an AVNM rule to allow port 443 access from the internet by following the documentation linked above.
 
 > **Date-range filtering**: To read datasets within a specific date range,
 > add `--start-date` and `--end-date`:

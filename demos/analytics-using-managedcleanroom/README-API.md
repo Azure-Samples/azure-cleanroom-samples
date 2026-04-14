@@ -591,6 +591,11 @@ Write-Host "Job ID: $jobId"
 
 > `"status": "success"` means accepted for scheduling, not completed. Takes 10-20 min.
 
+> **Network connectivity**: This step requires the ACCR Frontend Service to reach the Analytics Endpoint of the Collaboration. It can time out due to tenant-specific network configurations:
+>
+> 1. **NSG (Network Security Group)**: If your tenant has NSGs blocking inbound internet access to the AKS Analytics endpoint on port 443, the query will fail. Contact the ACCR team with the `tenantId` of the collaboration so we can whitelist your tenant — an NSG rule will be updated to allow port 443 access to the AKS cluster.
+> 2. **[AVNM (Azure Virtual Network Manager)](https://learn.microsoft.com/en-us/azure/virtual-network-manager/)**: This is a tenant-level policy. Your tenant admin needs to create an AVNM rule to allow port 443 access from the internet by following the documentation linked above.
+
 > **Date-range filtering**: To read datasets within a specific date range,
 > pass `startDate` and `endDate` in the request body:
 >
