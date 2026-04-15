@@ -205,7 +205,7 @@ $collaboratorEmail = "<woodgrove-email>"
 $createBody = @{
     location = $location
     properties = @{
-        collaborators = @(@{ UserIdentifier = $collaboratorEmail })
+        collaborators = @(@{ userIdentifier = $collaboratorEmail })
     }
 } | ConvertTo-Json -Depth 5
 [System.IO.File]::WriteAllText("$PWD/body.json", $createBody)
