@@ -182,11 +182,16 @@ az managedcleanroom frontend configure --endpoint $frontend
 ```powershell
 az group create --name $collabRg --location $location -o none
 
+$collaboratorEmail = "<woodgrove-email>"
 az managedcleanroom collaboration create `
     --collaboration-name $collabName `
     --resource-group $collabRg `
-    --location $location
+    --location $location `
+    --collaborators "[{UserIdentifier:'$collaboratorEmail'}]"
 ```
+
+> The `--collaborators` flag adds collaborators at creation time itself.
+> To add more collaborators later, see [Step 2.2](#22-add-more-collaborators-optional).
 
 > **NOTE**: `--location` must be `eastus2euap` — this is where the Microsoft.CleanRoom RP is deployed.
 > Actual resources (AKS cluster, CACI instances) are created in `westus`. Configurable region support is coming soon.
@@ -198,9 +203,9 @@ do {
     $collab = az managedcleanroom collaboration show `
         --collaboration-name $collabName `
         --resource-group $collabRg -o json | ConvertFrom-Json
-    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] provisioningState: $($collab.properties.provisioningState)"
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] provisioningState: $($collab.provisioningState)"
     Start-Sleep -Seconds 60
-} while ($collab.properties.provisioningState -notin @("Succeeded", "Failed"))
+} while ($collab.provisioningState -notin @("Succeeded", "Failed"))
 ```
 
 ```powershell
@@ -217,10 +222,10 @@ do {
     $collab = az managedcleanroom collaboration show `
         --collaboration-name $collabName `
         --resource-group $collabRg -o json | ConvertFrom-Json
-    $wl = $collab.properties.workloads | Where-Object { $_.workloadType -eq "analytics" }
-    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] provisioningState: $($collab.properties.provisioningState) | workload: $($wl.endpoint)"
+    $wl = $collab.workloads | Where-Object { $_.workloadType -eq "analytics" }
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] provisioningState: $($collab.provisioningState) | workload: $($wl.endpoint)"
     Start-Sleep -Seconds 30
-} while ($collab.properties.provisioningState -notin @("Succeeded", "Failed"))
+} while ($collab.provisioningState -notin @("Succeeded", "Failed"))
 ```
 
 Then wait for `healthState` to become `Ok`:
@@ -230,29 +235,24 @@ do {
     $collab = az managedcleanroom collaboration show `
         --collaboration-name $collabName `
         --resource-group $collabRg -o json | ConvertFrom-Json
-    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] healthState: $($collab.properties.health.healthState)"
-    if ($collab.properties.health.healthState -ne "Ok" -and $collab.properties.health.healthIssues) {
-        $collab.properties.health.healthIssues | ForEach-Object { Write-Host "  Issue: $($_ | ConvertTo-Json -Compress)" }
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] healthState: $($collab.health.healthState)"
+    if ($collab.health.healthState -ne "Ok" -and $collab.health.healthIssues) {
+        $collab.health.healthIssues | ForEach-Object { Write-Host "  Issue: $($_ | ConvertTo-Json -Compress)" }
     }
     Start-Sleep -Seconds 30
-} while ($collab.properties.health.healthState -ne "Ok")
+} while ($collab.health.healthState -ne "Ok")
 ```
 
-### 2.2 Add Collaborators
+### 2.2 Add More Collaborators (Optional)
 
-Repeat for each collaborator:
+> The owner was already added as a collaborator during `create` (Step 2.1).
+> Use this step to invite additional collaborators (e.g. Northwind in a multi-party scenario).
 
 > To add Service Principals (SPNs) instead of user email IDs for automation, see
 > [Appendix: App-Based Authentication (SPN)](#appendix-app-based-authentication-spn).
 
 ```powershell
-# Add Woodgrove
-az managedcleanroom collaboration add-collaborator `
-    --collaboration-name $collabName `
-    --resource-group $collabRg `
-    --user-identifier "<woodgrove-email>"
-
-# Add Northwind (multi-collaborator only)
+# Add Northwind
 az managedcleanroom collaboration add-collaborator `
     --collaboration-name $collabName `
     --resource-group $collabRg `
