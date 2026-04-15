@@ -201,7 +201,13 @@ az group create --name $collabRg --location $location -o none
 ### 2.2 Create Collaboration
 
 ```powershell
-$createBody = @{ location = $location; properties = @{ clusterEndpoint = "https://dummy/" } } | ConvertTo-Json
+$collaboratorEmail = "<woodgrove-email>"
+$createBody = @{
+    location = $location
+    properties = @{
+        collaborators = @(@{ userIdentifier = $collaboratorEmail })
+    }
+} | ConvertTo-Json -Depth 5
 [System.IO.File]::WriteAllText("$PWD/body.json", $createBody)
 az rest --method PUT `
     --url "$collabArmUrl`?api-version=$armApiVersion" `
@@ -209,6 +215,9 @@ az rest --method PUT `
     --headers "Content-Type=application/json" `
     --body "@body.json"
 ```
+
+> The `collaborators` array adds collaborators at creation time itself.
+> To add more collaborators later, see [Step 2.4](#24-add-more-collaborators-optional).
 
 > **NOTE**: `location` must be `eastus2euap` — this is where the Microsoft.CleanRoom RP is deployed.
 > Actual resources (AKS cluster, CACI instances) are created in `westus`. Configurable region support is coming soon.
@@ -259,25 +268,16 @@ do {
 } while ($collab.properties.health.healthState -ne "Ok")
 ```
 
-### 2.4 Add Collaborators
+### 2.4 Add More Collaborators (Optional)
 
-Repeat for each collaborator:
+> The owner was already added as a collaborator during `create` (Step 2.2).
+> Use this step to invite additional collaborators (e.g. Northwind in a multi-party scenario).
 
 > To add Service Principals (SPNs) instead of user email IDs for automation, see
 > [Appendix: App-Based Authentication (SPN)](#appendix-app-based-authentication-spn).
 
 ```powershell
-# Add Woodgrove
-$collaboratorEmail = "<woodgrove-email>"
-$addBody = @{ collaborator = @{ userIdentifier = $collaboratorEmail } } | ConvertTo-Json
-[System.IO.File]::WriteAllText("$PWD/body.json", $addBody)
-az rest --method POST `
-    --url "$collabArmUrl/addCollaborator`?api-version=$armApiVersion" `
-    --resource $armResource `
-    --headers "Content-Type=application/json" `
-    --body "@body.json"
-
-# Add Northwind (multi-collaborator only)
+# Add Northwind
 $collaboratorEmail = "<northwind-email>"
 $addBody = @{ collaborator = @{ userIdentifier = $collaboratorEmail } } | ConvertTo-Json
 [System.IO.File]::WriteAllText("$PWD/body.json", $addBody)
