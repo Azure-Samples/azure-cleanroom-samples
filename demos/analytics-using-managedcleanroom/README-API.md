@@ -60,7 +60,15 @@ providing your own data and query.
 - [Scenario](#scenario)
 - [Overview](#overview)
 - [Step 01: Prerequisites](#step-01-prerequisites) `[ALL]`
+  - [1.1 Requirements](#11-requirements)
+  - [1.2 Terminal T1 (Owner) — Variables](#12-terminal-t1-owner--variables)
+  - [1.3 Each Collaborator Terminal — Variables](#13-each-collaborator-terminal--variables)
+  - [1.4 Acquire Token & Extract OID](#14-acquire-token--extract-oid-each-collaborator) `[EACH COLLABORATOR]`
 - [Step 02: Create Collaboration](#step-02-create-collaboration) `[OWNER]`
+  - [2.1 Create Resource Group](#21-create-resource-group)
+  - [2.2 Create Collaboration](#22-create-collaboration)
+  - [2.3 Enable Analytics Workload](#23-enable-analytics-workload)
+  - [2.4 Add More Collaborators (Optional)](#24-add-more-collaborators-optional)
 - [Step 03: Accept Invitations](#step-03-accept-invitations) `[EACH COLLABORATOR]`
 - [Step 04: Provision Resources & Upload Data](#step-04-provision-resources--upload-data) `[EACH COLLABORATOR]`
 - [Step 05: OIDC Identity & Access](#step-05-oidc-identity--access) `[EACH COLLABORATOR]`
@@ -76,6 +84,7 @@ providing your own data and query.
 - [Appendix D: Dataset Schema Reference](#appendix-d-dataset-schema-reference)
 - [Appendix E: Query Structure Reference](#appendix-e-query-structure-reference)
 - [Appendix F: REST API Endpoint Reference](#appendix-f-rest-api-endpoint-reference)
+- [Appendix: App-Based Authentication (SPN)](#appendix-app-based-authentication-spn)
 
 ---
 
@@ -90,8 +99,17 @@ providing your own data and query.
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) |
 | Resource provider | `Microsoft.CleanRoom` registered in the owner's subscription |
+| Feature flags | `EUAPParticipation`, `defaultFeature`, `RestrictTrafficToTestTenants` (see below) |
 
 ```powershell
+az feature register --namespace Microsoft.Resources --name EUAPParticipation
+az feature register --namespace Microsoft.CleanRoom --name defaultFeature
+az feature register --namespace Microsoft.Resources --name RestrictTrafficToTestTenants
+
+# Check registration status (wait until all show "Registered")
+az feature show --namespace Microsoft.Resources --name EUAPParticipation --query properties.state -o tsv
+az feature show --namespace Microsoft.CleanRoom --name defaultFeature --query properties.state -o tsv
+
 az provider register --namespace Microsoft.CleanRoom
 ```
 
@@ -155,7 +173,9 @@ function Invoke-Frontend {
 }
 ```
 
-### 1.4 Acquire Token
+### 1.4 Acquire Token & Extract OID `[EACH COLLABORATOR]`
+
+#### 1.4.1 Acquire Token
 
 **Option A — MSAL device-code flow** (external / MSA accounts):
 
@@ -174,7 +194,7 @@ $personaTokenFile = Join-Path ([System.IO.Path]::GetTempPath()) "msal-idtoken-$p
 az account get-access-token --resource "https://management.azure.com/" --query accessToken -o tsv | Out-File -FilePath $personaTokenFile -NoNewline
 ```
 
-### 1.5 Extract OID from Token
+#### 1.4.2 Extract OID from Token
 
 ```powershell
 $tokenB64 = (Get-Content $personaTokenFile -Raw).Split('.')[1]
