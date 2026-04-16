@@ -215,7 +215,7 @@ az managedcleanroom collaboration enable-workload `
     --workload-type analytics
 ```
 
-**Runtime**: ~7 minutes. Poll for completion:
+**Runtime**: ~7 minutes. Poll `collaborationState` until `Provisioned`:
 
 ```powershell
 do {
@@ -223,9 +223,9 @@ do {
         --collaboration-name $collabName `
         --resource-group $collabRg -o json | ConvertFrom-Json
     $wl = $collab.workloads | Where-Object { $_.workloadType -eq "analytics" }
-    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] provisioningState: $($collab.provisioningState) | workload: $($wl.endpoint)"
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] collaborationState: $($collab.collaborationState) | workload: $($wl.endpoint)"
     Start-Sleep -Seconds 30
-} while ($collab.provisioningState -notin @("Succeeded", "Failed"))
+} while ($collab.collaborationState -notin @("Provisioned", "Failed"))
 ```
 
 Then wait for `healthState` to become `Ok`:
