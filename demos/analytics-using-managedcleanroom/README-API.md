@@ -244,15 +244,15 @@ az rest --method POST `
     --body "@body.json"
 ```
 
-**Runtime**: ~7 minutes. Poll for completion:
+**Runtime**: ~7 minutes. Poll `collaborationState` until `Provisioned`:
 
 ```powershell
 do {
     $collab = az rest --method GET --url "$collabArmUrl`?api-version=$armApiVersion" --resource $armResource -o json | ConvertFrom-Json
     $wl = $collab.properties.workloads | Where-Object { $_.workloadType -eq "analytics" }
-    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] provisioningState: $($collab.properties.provisioningState) | workload: $($wl.endpoint)"
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] collaborationState: $($collab.properties.collaborationState) | workload: $($wl.endpoint)"
     Start-Sleep -Seconds 30
-} while ($collab.properties.provisioningState -notin @("Succeeded", "Failed"))
+} while ($collab.properties.collaborationState -notin @("Provisioned", "Failed"))
 ```
 
 Then wait for `healthState` to become `Ok`:
@@ -628,6 +628,22 @@ $result | ConvertTo-Json -Depth 10
 | +15-20 min | `COMPLETED` | `SparkDriverCompleted` |
 
 > `PENDING_RERUN` is normal — transitions to `SUBMITTED` automatically.
+
+> **Query fails or times out?** If the query stays in `SUBMITTED` or `RUNNING` for
+> an extended period, or transitions to `FAILED`/`SUBMISSION_FAILED`, check the
+> collaboration health for pod-level or capacity issues:
+>
+> ```powershell
+> az rest --method GET --resource "https://management.azure.com/" `
+>     --url "$collabArmUrl`?api-version=$armApiVersion" `
+>     | ConvertFrom-Json | % { $_.properties.health } | ConvertTo-Json -Depth 5
+> ```
+>
+> If `healthState` is `Error`, the `healthIssues` array will list specific pod
+> failures — such as CACI capacity shortages in the region (e.g.,
+> `FailedCreatePodSandBox: resource not available`), executor pods stuck in init,
+> or container crashes. These issues indicate infrastructure-level problems that
+> prevent Spark executors from starting.
 
 ---
 

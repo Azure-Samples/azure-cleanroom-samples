@@ -215,7 +215,7 @@ az managedcleanroom collaboration enable-workload `
     --workload-type analytics
 ```
 
-**Runtime**: ~7 minutes. Poll for completion:
+**Runtime**: ~7 minutes. Poll `collaborationState` until `Provisioned`:
 
 ```powershell
 do {
@@ -223,9 +223,9 @@ do {
         --collaboration-name $collabName `
         --resource-group $collabRg -o json | ConvertFrom-Json
     $wl = $collab.workloads | Where-Object { $_.workloadType -eq "analytics" }
-    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] provisioningState: $($collab.provisioningState) | workload: $($wl.endpoint)"
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] collaborationState: $($collab.collaborationState) | workload: $($wl.endpoint)"
     Start-Sleep -Seconds 30
-} while ($collab.provisioningState -notin @("Succeeded", "Failed"))
+} while ($collab.collaborationState -notin @("Provisioned", "Failed"))
 ```
 
 Then wait for `healthState` to become `Ok`:
@@ -623,6 +623,23 @@ $result | ConvertTo-Json -Depth 10
 | +15-20 min | `COMPLETED` | `SparkDriverCompleted` |
 
 > `PENDING_RERUN` is normal — transitions to `SUBMITTED` automatically.
+
+> **Query fails or times out?** If the query stays in `SUBMITTED` or `RUNNING` for
+> an extended period, or transitions to `FAILED`/`SUBMISSION_FAILED`, check the
+> collaboration health for pod-level or capacity issues:
+>
+> ```powershell
+> az managedcleanroom collaboration show `
+>     --collaboration-name $collabName `
+>     --resource-group $collabRg `
+>     --query "properties.health"
+> ```
+>
+> If `healthState` is `Error`, the `healthIssues` array will list specific pod
+> failures — such as CACI capacity shortages in the region (e.g.,
+> `FailedCreatePodSandBox: resource not available`), executor pods stuck in init,
+> or container crashes. These issues indicate infrastructure-level problems that
+> prevent Spark executors from starting.
 
 ---
 
