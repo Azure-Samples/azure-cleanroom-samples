@@ -98,16 +98,13 @@ providing your own data and query.
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) |
 | Resource provider | `Microsoft.CleanRoom` registered in the owner's subscription |
-| Feature flags | `EUAPParticipation`, `defaultFeature`, `RestrictTrafficToTestTenants` (see below) |
+| Feature flags | `EUAPParticipation` (see below) |
 
 ```powershell
 az feature register --namespace Microsoft.Resources --name EUAPParticipation
-az feature register --namespace Microsoft.CleanRoom --name defaultFeature
-az feature register --namespace Microsoft.Resources --name RestrictTrafficToTestTenants
 
 # Check registration status (wait until all show "Registered")
 az feature show --namespace Microsoft.Resources --name EUAPParticipation --query properties.state -o tsv
-az feature show --namespace Microsoft.CleanRoom --name defaultFeature --query properties.state -o tsv
 
 az provider register --namespace Microsoft.CleanRoom
 ```
