@@ -109,6 +109,15 @@ az feature show --namespace Microsoft.Resources --name EUAPParticipation --query
 az provider register --namespace Microsoft.CleanRoom
 ```
 
+> **Quota check:** This sample deploys an AKS cluster and Confidential ACI
+> container groups in the **West US** region. Ensure your subscription has the
+> following minimum quota in that region before proceeding:
+>
+> | Resource | Minimum vCPUs | SKU / Family |
+> |---|---|---|
+> | AKS node pool | 8 | Standard_D4ds_v5 (Ddsv5 family) |
+> | Confidential ACI | 6 | Confidential container groups |
+
 ### 1.2 Terminal T1 (Owner) — Variables
 
 ```powershell
