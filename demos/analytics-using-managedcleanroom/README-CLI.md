@@ -117,6 +117,11 @@ az provider register --namespace Microsoft.CleanRoom
 > |---|---|---|
 > | AKS node pool | 8 | Standard_D4ds_v5 (Ddsv5 family) |
 > | Confidential ACI | 6 | Confidential container groups |
+>
+> The above covers a single query execution (1 Spark driver + up to 3
+> executors, each using 1 vCPU). Spark pods are provisioned at runtime and
+> removed after query execution completes. Multiple queries can run
+> concurrently — add 4 vCPUs of Ddsv5 quota per additional concurrent query.
 
 ### 1.2 Terminal T1 (Owner) — Variables
 
