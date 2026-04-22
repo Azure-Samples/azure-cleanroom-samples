@@ -62,8 +62,9 @@ providing your own data and query.
 - [Step 01: Prerequisites](#step-01-prerequisites) `[ALL]`
   - [1.1 Requirements](#11-requirements)
   - [1.2 Terminal T1 (Owner) — Variables](#12-terminal-t1-owner--variables)
-  - [1.3 Each Collaborator Terminal — Variables](#13-each-collaborator-terminal--variables)
-  - [1.4 Acquire Token & Extract OID](#14-acquire-token--extract-oid-each-collaborator) `[EACH COLLABORATOR]`
+  - [1.3 One-Time Owner Setup](#13-one-time-owner-setup)
+  - [1.4 Each Collaborator Terminal — Variables](#14-each-collaborator-terminal--variables)
+  - [1.5 Acquire Token & Extract OID](#15-acquire-token--extract-oid-each-collaborator) `[EACH COLLABORATOR]`
 - [Step 02: Create Collaboration](#step-02-create-collaboration) `[OWNER]`
   - [2.1 Create Resource Group](#21-create-resource-group)
   - [2.2 Create Collaboration](#22-create-collaboration)
@@ -98,17 +99,6 @@ providing your own data and query.
 | PowerShell | 7.x+ |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) |
-| Resource provider | `Microsoft.CleanRoom` registered in the owner's subscription |
-| Feature flags | `EUAPParticipation` (see below) |
-
-```powershell
-az feature register --namespace Microsoft.Resources --name EUAPParticipation
-
-# Check registration status (wait until all show "Registered")
-az feature show --namespace Microsoft.Resources --name EUAPParticipation --query properties.state -o tsv
-
-az provider register --namespace Microsoft.CleanRoom
-```
 
 > **Quota check:** This sample deploys an AKS cluster and Confidential ACI
 > container groups in the **West US** region. Ensure your subscription has the
@@ -145,20 +135,41 @@ $armResource = "https://management.azure.com/"   # az rest needs explicit resour
 $collabArmUrl = "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Microsoft.CleanRoom/Collaborations/$collabName"
 ```
 
+### 1.3 One-Time Owner Setup
+
+Register the resource provider and feature flags (only needed once per subscription):
+
+```powershell
+az feature register --namespace Microsoft.Resources --name EUAPParticipation
+
+# Check registration status (wait until it shows "Registered")
+az feature show --namespace Microsoft.Resources --name EUAPParticipation --query properties.state -o tsv
+
+az provider register --namespace Microsoft.CleanRoom
+```
+
 > [!WARNING]
-> For now the owner must have an **Owner** role assignment on the RP's App in
-> their subscription. An ARM manifest update is in progress and this step will
-> be removed once it completes.
+> For now the owner must have **Contributor** and **User Access Administrator**
+> role assignments on the RP's App in their subscription. An ARM manifest update
+> is in progress and this step will be removed once it completes.
 >
 > ```powershell
+> # Contributor role
 > az role assignment create \
 >   --assignee "d76bde86-0387-4db5-af46-51a9e31e6666" \
->   --role "Owner" \
+>   --role "Contributor" \
+>   --scope "/subscriptions/$subscription" \
+>   --subscription $subscription
+>
+> # User Access Administrator role
+> az role assignment create \
+>   --assignee "d76bde86-0387-4db5-af46-51a9e31e6666" \
+>   --role "User Access Administrator" \
 >   --scope "/subscriptions/$subscription" \
 >   --subscription $subscription
 > ```
 
-### 1.3 Each Collaborator Terminal — Variables
+### 1.4 Each Collaborator Terminal — Variables
 
 ```powershell
 az login
@@ -197,9 +208,9 @@ function Invoke-Frontend {
 }
 ```
 
-### 1.4 Acquire Token & Extract OID `[EACH COLLABORATOR]`
+### 1.5 Acquire Token & Extract OID `[EACH COLLABORATOR]`
 
-#### 1.4.1 Acquire Token
+#### 1.5.1 Acquire Token
 
 **Option A — MSAL device-code flow** (external / MSA accounts):
 
@@ -218,7 +229,7 @@ $personaTokenFile = Join-Path ([System.IO.Path]::GetTempPath()) "msal-idtoken-$p
 az account get-access-token --resource "https://management.azure.com/" --query accessToken -o tsv | Out-File -FilePath $personaTokenFile -NoNewline
 ```
 
-#### 1.4.2 Extract OID from Token
+#### 1.5.2 Extract OID from Token
 
 ```powershell
 $tokenB64 = (Get-Content $personaTokenFile -Raw).Split('.')[1]
