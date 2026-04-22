@@ -145,6 +145,19 @@ $armResource = "https://management.azure.com/"   # az rest needs explicit resour
 $collabArmUrl = "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Microsoft.CleanRoom/Collaborations/$collabName"
 ```
 
+> [!WARNING]
+> For now the owner must have an **Owner** role assignment on the RP's App in
+> their subscription. An ARM manifest update is in progress and this step will
+> be removed once it completes.
+>
+> ```powershell
+> az role assignment create \
+>   --assignee "d76bde86-0387-4db5-af46-51a9e31e6666" \
+>   --role "Owner" \
+>   --scope "/subscriptions/$subscription" \
+>   --subscription $subscription
+> ```
+
 ### 1.3 Each Collaborator Terminal — Variables
 
 ```powershell
