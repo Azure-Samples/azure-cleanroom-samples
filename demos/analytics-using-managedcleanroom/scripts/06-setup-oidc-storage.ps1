@@ -86,6 +86,7 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 # -- Step 1: Set up OIDC storage account -----------------------------------------
 $subscriptionId = az account show --query id -o tsv
 
+$newOidcAccountCreated = $false
 if ($OidcStorageAccount) {
     $oidcStorageAccountName = $OidcStorageAccount
     $containerName = $collaborationId
@@ -132,9 +133,15 @@ if ($OidcStorageAccount) {
     $staticWebUrl = (az storage account show --name $oidcStorageAccountName `
         --resource-group $resourceGroup --query "primaryEndpoints.web" -o tsv).TrimEnd('/')
     $issuerUrl = "$staticWebUrl/$containerName"
+    $newOidcAccountCreated = $true
 }
 
 Write-Host "Issuer URL: $issuerUrl" -ForegroundColor Yellow
+
+if ($newOidcAccountCreated) {
+    Write-Host "Waiting 60 seconds for RBAC role assignment to propagate..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 60
+}
 
 # -- Step 2: Build and upload OpenID configuration --------------------------------
 $openidConfig = @{
