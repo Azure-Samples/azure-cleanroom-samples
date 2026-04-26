@@ -11,8 +11,8 @@ param(
     [string]$UserRole = "Viewer"
 )
 
-$GrafanaSecretName = "cleanroom-spark-grafana"
-$GrafanaNamespace = "telemetry"
+$GrafanaSecretName = "cleanroom-grafana"
+$GrafanaNamespace = "observability"
 $AdminUserNameKey = "admin-user"
 $AdminPasswordKey = "admin-password"
 
@@ -89,7 +89,7 @@ catch {
 }
 
 $createUserUrl = "$GrafanaUrl/api/admin/users"
-Write-Host "Creating Grafana user '$UserName'..."
+Write-Host "Creating Grafana user '$UserName' with password '$PlainPassword'..."
 $createBody = @{
     name     = $UserName
     login    = $UserName
