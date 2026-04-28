@@ -627,7 +627,19 @@ Auto-detects SSE/CPK mode from metadata. Pass `-JobId` to filter to a specific r
 
 ### 12.1 Get Readonly Kubeconfig `[EACH COLLABORATOR]`
 
+> The owner shares the collaboration name and resource group with each collaborator.
+
 ```powershell
+# Set ARM variables (collaboration name and RG from the owner)
+$collabName = "<collaboration-name>"           # from owner
+$collabRg = "<collaboration-resource-group>"   # from owner
+$subscription = (az account show -o json | ConvertFrom-Json).id
+$armEndpoint = "https://eastus2euap.management.azure.com"
+$armApiVersion = "2025-10-31-preview"
+$armResource = "https://management.azure.com/"
+$collabArmUrl = "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName"
+
+# Get readonly kubeconfig
 $kc = az rest --method POST `
     --url "$collabArmUrl/getReadonlyKubeConfig`?api-version=$armApiVersion" `
     --resource $armResource -o json | ConvertFrom-Json
@@ -637,17 +649,20 @@ $bytes = [Convert]::FromBase64String($kc.kubeconfig)
     Out-File "./readonly.kubeconfig" -Encoding utf8
 ```
 
-### 12.2 Port-Forward to Grafana `[EACH COLLABORATOR]`
+### 12.2 Port-Forward to Grafana `[Woodgrove/Northwind]`
 
-Keep this terminal open while accessing Grafana.
+> Keep this terminal open while accessing Grafana.
+> If port 3000 is already in use (e.g., another collaborator on the same machine),
+> use a different local port.
 
 ```powershell
+# Woodgrove (or Northwind)
 kubectl --kubeconfig ./readonly.kubeconfig `
     port-forward svc/cleanroom-grafana 3000:80 -n observability
 ```
 
-The Grafana service listens on port 80 internally. The port-forward maps
-`localhost:3000` to the service.
+Each collaborator accesses Grafana at their chosen local port (e.g.,
+`http://localhost:3000` or `http://localhost:3001`).
 
 ### 12.3 Create Viewer Account `[OWNER]`
 
@@ -655,8 +670,10 @@ Run in a separate terminal while port-forward is active (Step 12.2). The owner
 creates viewer accounts and shares credentials with collaborators out-of-band
 (Teams, email, etc.).
 
+> Use the same port as your port-forward in Step 12.2 (default: 3000).
+
 ```powershell
-./scripts/create-grafana-user.ps1 `
+./demos/analytics-using-managedcleanroom/scripts/create-grafana-user.ps1 `
     -KubeConfigPath "./readonly.kubeconfig" `
     -GrafanaUrl "http://localhost:3000" `
     -UserName "<viewer-username>" `
