@@ -122,29 +122,3 @@ Invoke-RestMethod -Uri $assignRoleUrl `
     -Body $roleBody
 
 Write-Host "Successfully assigned role '$UserRole' to user '$UserName'."
-
-$UserSecretName = "grafana-user-$UserName"
-
-Write-Host "Creating Kubernetes secret '$UserSecretName' in namespace '$GrafanaNamespace'..."
-
-kubectl --kubeconfig=$KubeConfigPath get secret $UserSecretName -n $GrafanaNamespace -o json 2>$null
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "Secret '$UserSecretName' already exists. Deleting it first..."
-    kubectl --kubeconfig=$KubeConfigPath delete secret $UserSecretName -n $GrafanaNamespace
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning "Failed to delete existing secret, but continuing..."
-    }
-}
-
-# Create the secret
-kubectl --kubeconfig=$KubeConfigPath create secret generic $UserSecretName `
-    -n $GrafanaNamespace `
-    --from-literal=username=$UserName `
-    --from-literal=password=$PlainPassword
-
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "Successfully created secret '$UserSecretName' with user credentials."
-}
-else {
-    Write-Warning "Failed to create secret '$UserSecretName'. User was created in Grafana but secret creation failed."
-}
