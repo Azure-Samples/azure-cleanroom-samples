@@ -52,13 +52,15 @@ $containerImages += $resources.properties.initContainers |`
     ForEach-Object { $_.properties.image } |`
     Select-Object -Unique
 
-$containerTag = $resources.tags."accr-version"
-if ($null -eq $containerTag) {
-    $containerTag = "5.0.0"
-}
-
 if(!$disableGithubAttestation)
 {
+    $containerTag = $resources.tags."accr-version"
+    if ($null -eq $containerTag) {
+        $containerTag = "5.0.0"
+    }
+
+    Write-Log Verbose `
+        "Verifying clean room attestation for release '$containerTag'..."
     Assert-CleanroomAttestation `
         -containerImages $containerImages `
         -tempDir $privateDir `
@@ -146,7 +148,7 @@ Write-Log OperationStarted `
 
 Write-Log Verbose `
     "Enumerating all documents..."
-$documentIds = @(az cleanroom governance document show `
+$documentIds = @(az cleanroom governance member-document show `
     --governance-client $cgsClient `
     --query "[*].id" `
     --output json | ConvertFrom-Json)
@@ -155,7 +157,7 @@ foreach ($documentId in $documentIds)
 {
     Write-Log Verbose `
         "Fetching document '$documentId'..."
-    $document = (az cleanroom governance document show `
+    $document = (az cleanroom governance member-document show `
         --id $documentId `
         --governance-client $cgsClient `
         --output json | ConvertFrom-Json)
@@ -166,7 +168,7 @@ foreach ($documentId in $documentIds)
             "Document '$documentId' for contract '$contractId' is in state '$($document.state)':"
         Write-Log Information `
             "$($document.data)"
-        az cleanroom governance document vote `
+        az cleanroom governance member-document vote `
             --id $documentId `
             --proposal-id $document.proposalId `
             --action accept `

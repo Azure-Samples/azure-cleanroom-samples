@@ -58,7 +58,7 @@ az cleanroom config add-application `
     --cleanroom-config $configResult.contractFragment `
     --name demoapp-$demo `
     --image $image `
-    --command "python3.10 ./analytics.py" `
+    --command "python3 ./analytics.py" `
     --datasources "fabrikam-input=/mnt/remote/fabrikam-input" `
              "contosso-input=/mnt/remote/contosso-input" `
     --env-vars STORAGE_PATH_1=/mnt/remote/fabrikam-input `
