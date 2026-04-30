@@ -149,22 +149,13 @@ az provider register --namespace Microsoft.CleanRoom
 ```
 
 > [!WARNING]
-> For now the owner must have **Contributor** and **User Access Administrator**
-> role assignments on the RP's App in their subscription. An ARM manifest update
-> is in progress and this step will be removed once it completes.
+> For now the owner must assign a **Contributor** role assignment on the RP's App
+> in their subscription. We are investigating this ARM side issue and will remove this shortly.
 >
 > ```powershell
-> # Contributor role
 > az role assignment create \
 >   --assignee "d76bde86-0387-4db5-af46-51a9e31e6666" \
 >   --role "Contributor" \
->   --scope "/subscriptions/$subscription" \
->   --subscription $subscription
->
-> # User Access Administrator role
-> az role assignment create \
->   --assignee "d76bde86-0387-4db5-af46-51a9e31e6666" \
->   --role "User Access Administrator" \
 >   --scope "/subscriptions/$subscription" \
 >   --subscription $subscription
 > ```
