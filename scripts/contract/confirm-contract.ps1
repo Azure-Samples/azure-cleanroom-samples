@@ -54,19 +54,19 @@ if (Test-Path -Path $documentPath)
         $data = Get-Content $document
         $documentId = "$demo-$persona-$($document.Name)-$contractId".ToLower()
 
-        az cleanroom governance document create `
+        az cleanroom governance member-document create `
             --data $data `
             --id $documentId `
             --contract-id $contractId `
             --governance-client $cgsClient
     
-        $version = az cleanroom governance document show `
+        $version = az cleanroom governance member-document show `
             --id $documentId `
             --governance-client $cgsClient `
         | jq -r ".version"
     
         # Submitting a document proposal.
-        $proposalId = az cleanroom governance document propose `
+        $proposalId = az cleanroom governance member-document propose `
             --version $version `
             --id $documentId `
             --governance-client $cgsClient `

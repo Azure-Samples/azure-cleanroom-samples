@@ -31,11 +31,12 @@ $ccfName = $persona + "-ccf"
 # Create a CCF instance.
 #
 $subscriptionId = az account show --query id --output tsv
-
+$tenantId = az account show --query "tenantId" -o tsv
 @"
 {
     "location": "$resourceGroupLocation",
     "subscriptionId": "$subscriptionId",
+    "tenantId": "$tenantId",
     "resourceGroupName": "$resourceGroup",
     "azureFiles": {
         "storageAccountId": "$sa"

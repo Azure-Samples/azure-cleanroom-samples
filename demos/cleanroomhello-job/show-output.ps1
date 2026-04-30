@@ -69,8 +69,6 @@ foreach ($dir in $dirs)
         "Downloaded data for datasink '$datasinkName' ('$datastoreName') to" `
         "'$datastoreFolder'."
 
-    # TODO: Understand why this is being copied into a nested folder.
-    $datastoreFolder = "$datastoreFolder/**"
     Write-Log Information `
         "Output for datasink '$datasinkName' ('$datastoreName'):"
     Write-Log Verbose `

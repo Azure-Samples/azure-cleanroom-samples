@@ -1,8 +1,8 @@
-FROM python:3.10
+FROM mcr.microsoft.com/mirror/docker/library/python:3.11
 
 RUN apt-get update -y && \
     apt-get -y --no-install-recommends install \
-    software-properties-common openjdk-17-jdk
+    default-jdk
 
 WORKDIR /app
 RUN chmod -R 777 /app
@@ -10,4 +10,3 @@ COPY *.py .
 COPY requirements.txt .
 
 RUN pip install -r requirements.txt
-ENTRYPOINT ["python3", "./analytics.py"]
