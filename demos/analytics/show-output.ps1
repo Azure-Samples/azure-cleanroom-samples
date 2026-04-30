@@ -41,14 +41,14 @@ Write-Log OperationStarted `
 
 # TODO: Get rid of this filtering logic once the CGS endpoint sends contract ID as
 # part of the list output.
-$allDocs = (az cleanroom governance document show `
+$allDocs = (az cleanroom governance member-document show `
     --governance-client $cgsClient `
     --output json) | ConvertFrom-Json
 $candidateDocs = [Ordered]@{}
 $index = 1
 foreach ($docId in $allDocs)
 {
-    $doc = (az cleanroom governance document show `
+    $doc = (az cleanroom governance member-document show `
         --id $docId.id `
         --governance-client $cgsClient `
         --output json) | ConvertFrom-Json
