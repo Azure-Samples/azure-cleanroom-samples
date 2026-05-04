@@ -52,7 +52,7 @@ providing your own data and query.
 | 09 — Execute query | &#10003; | | Woodgrove triggers execution |
 | 10 — Monitor query | &#10003; | &#10003; | Any collaborator can poll |
 | 11 — Results & audit | &#10003; | &#10003; | Woodgrove downloads; both view audit |
-| 12 — Grafana dashboards | &#10003; | &#10003; | Owner creates viewer account; all can view |
+| 12 — Grafana dashboards | &#10003; | | Owner monitors via admin credentials |
 
 ---
 
@@ -71,7 +71,7 @@ providing your own data and query.
 - [Step 09: Execute Query](#step-09-execute-query) `[WOODGROVE]`
 - [Step 10: Monitor Query](#step-10-monitor-query) `[ANY]`
 - [Step 11: Results & Audit](#step-11-results--audit) `[WOODGROVE]`
-- [Step 12: Grafana Dashboards](#step-12-grafana-dashboards) `[OWNER → COLLABORATOR]`
+- [Step 12: Grafana Dashboards](#step-12-grafana-dashboards) `[OWNER]`
 - [Appendix A: Federated Credential Subject Reference](#appendix-a-federated-credential-subject-reference)
 - [Appendix B: Troubleshooting](#appendix-b-troubleshooting)
 - [Appendix C: CPK Deep Dive](#appendix-c-cpk-deep-dive)
@@ -619,27 +619,14 @@ Auto-detects SSE/CPK mode from metadata. Pass `-JobId` to filter to a specific r
 
 ---
 
-## Step 12: Grafana Dashboards `[OWNER → COLLABORATOR]`
+## Step 12: Grafana Dashboards `[OWNER]`
 
-> Grafana dashboards let collaborators monitor Spark query execution, resource
-> usage, and logs in real time. The clean room cluster includes a pre-configured
-> Grafana instance with Prometheus, Loki, and Tempo as data sources.
+> Grafana dashboards let the owner monitor Spark query execution,
+> resource usage, and logs in real time.
 
-### 12.1 Get Readonly Kubeconfig `[EACH COLLABORATOR]`
-
-> The owner shares the collaboration name and resource group with each collaborator.
+### 12.1 Get Readonly Kubeconfig
 
 ```powershell
-# Set ARM variables (collaboration name and RG from the owner)
-$collabName = "<collaboration-name>"           # from owner
-$collabRg = "<collaboration-resource-group>"   # from owner
-$subscription = (az account show -o json | ConvertFrom-Json).id
-$armEndpoint = "https://eastus2euap.management.azure.com"
-$armApiVersion = "2025-10-31-preview"
-$armResource = "https://management.azure.com/"
-$collabArmUrl = "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Private.CleanRoom/Collaborations/$collabName"
-
-# Get readonly kubeconfig
 $kc = az rest --method POST `
     --url "$collabArmUrl/getReadonlyKubeConfig`?api-version=$armApiVersion" `
     --resource $armResource -o json | ConvertFrom-Json
@@ -649,51 +636,33 @@ $bytes = [Convert]::FromBase64String($kc.kubeconfig)
     Out-File "./readonly.kubeconfig" -Encoding utf8
 ```
 
-### 12.2 Port-Forward to Grafana `[Woodgrove/Northwind]`
+### 12.2 Port-Forward to Grafana
 
-> Keep this terminal open while accessing Grafana.
-> If port 3000 is already in use (e.g., another collaborator on the same machine),
-> use a different local port.
+Keep this terminal open while accessing Grafana.
 
 ```powershell
-# Woodgrove (or Northwind)
 kubectl --kubeconfig ./readonly.kubeconfig `
     port-forward svc/cleanroom-grafana 3000:80 -n observability
 ```
 
-Each collaborator accesses Grafana at their chosen local port (e.g.,
-`http://localhost:3000` or `http://localhost:3001`).
-
-### 12.3 Create Viewer Account `[OWNER]`
-
-Run in a separate terminal while port-forward is active (Step 12.2). The owner
-creates viewer accounts and shares credentials with collaborators out-of-band
-(Teams, email, etc.).
-
-> Use the same port as your port-forward in Step 12.2 (default: 3000).
+### 12.3 Get Admin Credentials
 
 ```powershell
-./demos/analytics-using-managedcleanroom/scripts/create-grafana-user.ps1 `
-    -KubeConfigPath "./readonly.kubeconfig" `
-    -GrafanaUrl "http://localhost:3000" `
-    -UserName "<viewer-username>" `
-    -UserPassword (ConvertTo-SecureString "<password>" -AsPlainText) `
-    -UserRole "Viewer"
+$encoded = kubectl --kubeconfig ./readonly.kubeconfig `
+    get secret cleanroom-grafana -n observability `
+    -o jsonpath="{.data.admin-password}"
+$password = [System.Text.Encoding]::UTF8.GetString(
+    [Convert]::FromBase64String($encoded))
+Write-Host "Admin password: $password"
 ```
 
-The script reads the Grafana admin credentials from a Kubernetes secret, creates
-a viewer account via the Grafana API, and stores the credentials in a Kubernetes
-secret for reference.
+Username is `admin`.
 
-### 12.4 Access Dashboards `[EACH COLLABORATOR]`
+### 12.4 Access Dashboards
 
-1. Ensure port-forward is running (Step 12.2)
-2. Open `http://localhost:3000` in your browser
-3. Login with the viewer credentials provided by the owner
-4. Navigate to **Dashboards** to view pre-configured Spark monitoring dashboards
-
-Dashboards show Spark driver/executor pod status, CPU/memory usage, query
-execution progress, and application logs.
+1. Open `http://localhost:3000`
+2. Login with `admin` / password from Step 12.3
+3. Navigate to **Dashboards** for Spark monitoring
 
 ---
 
