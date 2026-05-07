@@ -98,7 +98,6 @@ providing your own data and query.
 | PowerShell | 7.x+ |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) |
-| EUAP access | Go to [aka.ms/lionrock](https://aka.ms/lionrock) → **On Demand Quota** → Enter service and subscription details → Select region as **EastUS2EUAP** → Select **ARM access without quota** in the next page |
 
 > **Quota check:** This sample deploys an AKS cluster and Confidential ACI
 > container groups in the **West US** region. Ensure your subscription has the
@@ -114,7 +113,7 @@ providing your own data and query.
 > removed after query execution completes. Multiple queries can run
 > concurrently — add 4 vCPUs of Confidential ACI quota per additional concurrent query.
 >
-> You can get the required quota for the region by going to [aka.ms/lionrock](https://aka.ms/lionrock) → **On Demand Quota** and entering the relevant details.
+> For test purposes, if you have insufficient quota, you can get the required quota for the region by going to [aka.ms/lionrock](https://aka.ms/lionrock) → **On Demand Quota** and entering the relevant details.
 
 ### 1.2 Terminal T1 (Owner) — Variables
 
