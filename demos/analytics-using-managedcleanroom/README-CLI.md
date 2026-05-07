@@ -94,13 +94,13 @@ providing your own data and query.
 | Requirement | Details |
 |---|---|
 | Azure CLI | 2.75.0+ |
-| `managedcleanroom` extension | `az extension add --name managedcleanroom` (v1.0.0b5+) |
+| `managedcleanroom` extension | `az extension add --name managedcleanroom --version 1.0.0b6` |
 | PowerShell | 7.x+ |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) |
 
 > **Quota check:** This sample deploys an AKS cluster and Confidential ACI
-> container groups in the **West US** region. Ensure your subscription has the
+> container groups in the `$resourceLocation` region (**West US** by default). Ensure your subscription has the
 > following minimum quota in that region before proceeding:
 >
 > | Resource | Minimum vCPUs | SKU / Family |
@@ -121,21 +121,21 @@ $account = az account show -o json | ConvertFrom-Json
 $subscription = $account.id
 $tenantId = $account.tenantId
 
-$location = "eastus2euap"
+$rpLocation = "westus"
+$resourceLocation = "westus"   # Location where AKS, Container Groups, and all required resources are created
+# Supported resourceLocation values:
+# centralindia, eastasia, eastus, eastus2, germanywestcentral, italynorth,
+# japaneast, northeurope, southcentralus, southeastasia, switzerlandnorth,
+# uaenorth, westeurope, westus, westus2
 $collabName = "<collaboration-name>"
 $collabRg = "<collaboration-resource-group>"
 ```
 
 ### 1.3 One-Time Owner Setup
 
-Register the resource provider and feature flags (only needed once per subscription):
+Register the resource provider (only needed once per subscription):
 
 ```powershell
-az feature register --namespace Microsoft.Resources --name EUAPParticipation
-
-# Check registration status (wait until it shows "Registered")
-az feature show --namespace Microsoft.Resources --name EUAPParticipation --query properties.state -o tsv
-
 az provider register --namespace Microsoft.CleanRoom
 ```
 
@@ -160,7 +160,7 @@ $account = az account show -o json | ConvertFrom-Json
 $subscription = $account.id
 $tenantId = $account.tenantId
 
-$location = "eastus2euap"
+$location = "westus"
 $EncryptionMode = "SSE"    # "SSE" or "CPK"
 $iteration = 0
 
@@ -170,7 +170,7 @@ $personaEmail = "<your-email>"
 
 az group create --name $personaRg --location $location -o none 2>$null
 
-$frontend = "https://prod.workload-frontendcentraluseuap.cleanroom.cloudapp.azure.net"
+$frontend = "https://prod.workload-frontendwestus.cleanroom.cloudapp.azure.net"
 $oidcStorageAccount = "cleanroomoidc"   # MSFT tenant; omit for other tenants
 ```
 
@@ -226,21 +226,22 @@ az managedcleanroom frontend configure --endpoint $frontend
 ### 2.1 Create Collaboration & Enable Workload
 
 ```powershell
-az group create --name $collabRg --location $location -o none
+az group create --name $collabRg --location $rpLocation -o none
 
 $collaboratorEmail = "<woodgrove-email>"
 az managedcleanroom collaboration create `
     --collaboration-name $collabName `
     --resource-group $collabRg `
-    --location $location `
+    --location $rpLocation `
+    --resource-location $resourceLocation `
     --collaborators "[{UserIdentifier:'$collaboratorEmail'}]"
 ```
 
 > The `--collaborators` flag adds collaborators at creation time itself.
 > To add more collaborators later, see [Step 2.2](#22-add-more-collaborators-optional).
 
-> **NOTE**: `--location` must be `eastus2euap` — this is where the Microsoft.CleanRoom RP is deployed.
-> Actual resources (AKS cluster, CACI instances) are created in `westus`. Configurable region support is coming soon.
+> **NOTE**: `--location` is the ARM RP location (`$rpLocation`). `--resource-location` controls where
+> actual resources (AKS cluster, CACI instances) are deployed — set via `$resourceLocation`.
 
 **Runtime**: ~25 minutes. Poll `provisioningState` until `Succeeded`:
 
@@ -258,20 +259,20 @@ do {
 az managedcleanroom collaboration enable-workload `
     --collaboration-name $collabName `
     --resource-group $collabRg `
-    --workload-type analytics
+    --workload-type Analytics
 ```
 
-**Runtime**: ~7 minutes. Poll `collaborationState` until `Provisioned`:
+**Runtime**: ~7 minutes. Poll until the workload endpoint is populated:
 
 ```powershell
 do {
     $collab = az managedcleanroom collaboration show `
         --collaboration-name $collabName `
         --resource-group $collabRg -o json | ConvertFrom-Json
-    $wl = $collab.workloads | Where-Object { $_.workloadType -eq "analytics" }
-    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] collaborationState: $($collab.collaborationState) | workload: $($wl.endpoint)"
+    $wl = $collab.workloads | Where-Object { $_.workloadType -eq "Analytics" }
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] provisioningState: $($collab.provisioningState) | workload endpoint: $($wl.endpoint)"
     Start-Sleep -Seconds 30
-} while ($collab.collaborationState -notin @("Provisioned", "Failed"))
+} while (-not $wl.endpoint -and $collab.provisioningState -ne "Failed")
 ```
 
 Then wait for `healthState` to become `Ok`:
@@ -747,10 +748,10 @@ az identity federated-credential create --name "Analytics-$personaOid-federation
 |---|---|---|
 | `SPARK_JOB_FAILED: ExitCode 1` | Federated credential subject mismatch | See [Appendix A](#appendix-a-federated-credential-subject-reference) |
 | `AADSTS700211: No matching federated identity record` | Wrong issuer URL in dataset or stale FIC | Republish dataset; delete/recreate FIC |
-| `SSL certificate verify failed` | EUAP endpoint cert mismatch | Set `$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"` |
+| `SSL certificate verify failed` | Endpoint cert mismatch | Set `$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"` |
 | `404 Not Found` on frontend | Using ARM ID instead of frontend UUID | Use UUID from `frontend collaboration list` |
 | `ContractNotFound` | Stale CCF endpoint | Create new collaboration |
-| `Python 3.13 tuple error` | CLI extension bug | Upgrade to v1.0.0b5+ |
+| `Python 3.13 tuple error` | CLI extension bug | Upgrade to v1.0.0b6+ |
 | `Already voted / Conflict` | Idempotent vote | Safe to ignore |
 | `PENDING_RERUN` | Normal scheduling | Keep polling |
 
