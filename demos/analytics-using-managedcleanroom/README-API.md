@@ -113,8 +113,6 @@ providing your own data and query.
 > executors, each using 1 vCPU). Spark pods are provisioned at runtime and
 > removed after query execution completes. Multiple queries can run
 > concurrently — add 4 vCPUs of Confidential ACI quota per additional concurrent query.
->
-> You can get the required quota for the region by going to [aka.ms/lionrock](https://aka.ms/lionrock) → **On Demand Quota** and entering the relevant details.
 
 > The `managedcleanroom` CLI extension is **not required** for this guide.
 
