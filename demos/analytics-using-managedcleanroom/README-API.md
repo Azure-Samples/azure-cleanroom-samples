@@ -681,7 +681,7 @@ $result | ConvertTo-Json -Depth 10
 > collaboration health for pod-level or capacity issues:
 >
 > ```powershell
-> az rest --method GET --resource "https://management.azure.com/" `
+> az rest --method GET --resource $armEndpoint `
 >     --url "$collabArmUrl`?api-version=$armApiVersion" `
 >     | ConvertFrom-Json | % { $_.properties.health } | ConvertTo-Json -Depth 5
 > ```
@@ -751,7 +751,7 @@ az identity federated-credential create --name "Analytics-$personaOid-federation
 |---|---|---|
 | `SPARK_JOB_FAILED: ExitCode 1` | Federated credential subject mismatch | See [Appendix A](#appendix-a-federated-credential-subject-reference) |
 | `AADSTS700211: No matching federated identity record` | Wrong issuer URL or stale FIC | Republish dataset; delete/recreate FIC |
-| `SSL certificate verify failed` | EUAP endpoint cert mismatch | Use `-SkipCertificateCheck` on `Invoke-RestMethod` |
+| `SSL certificate verify failed` | Endpoint cert mismatch | Use `-SkipCertificateCheck` on `Invoke-RestMethod` |
 | `404 Not Found` on frontend | Using ARM resource ID instead of frontend UUID | Use UUID from `Invoke-Frontend -Path ""` |
 | `ContractNotFound` | Stale CCF endpoint | Create new collaboration |
 | `Already voted / Conflict` | Idempotent vote | Safe to ignore |
@@ -814,7 +814,7 @@ Both are defined in the query segments. Edit the thresholds before publishing th
 
 ### ARM API (via `az rest`)
 
-Base: `https://eastus2euap.management.azure.com`
+Base: `https://management.azure.com`
 API version: `2026-04-30-preview`
 
 | Operation | Method | URL |
