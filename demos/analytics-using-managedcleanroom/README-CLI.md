@@ -234,7 +234,7 @@ az managedcleanroom collaboration create `
     --resource-group $collabRg `
     --location $rpLocation `
     --resource-location $resourceLocation `
-    --collaborators "[{UserIdentifier:'$collaboratorEmail'}]"
+    --collaborators "[{UserIdentifier:'$collaboratorEmail'}]" `
     --no-wait
 ```
 
@@ -260,7 +260,7 @@ do {
 az managedcleanroom collaboration enable-workload `
     --collaboration-name $collabName `
     --resource-group $collabRg `
-    --workload-type analytics `
+    --workload-type Analytics `
     --no-wait
 ```
 
