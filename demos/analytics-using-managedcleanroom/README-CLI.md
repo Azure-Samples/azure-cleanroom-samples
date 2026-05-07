@@ -112,8 +112,6 @@ providing your own data and query.
 > executors, each using 1 vCPU). Spark pods are provisioned at runtime and
 > removed after query execution completes. Multiple queries can run
 > concurrently — add 4 vCPUs of Confidential ACI quota per additional concurrent query.
->
-> For test purposes, if you have insufficient quota, you can get the required quota for the region by going to [aka.ms/lionrock](https://aka.ms/lionrock) → **On Demand Quota** and entering the relevant details.
 
 ### 1.2 Terminal T1 (Owner) — Variables
 
