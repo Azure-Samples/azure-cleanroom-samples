@@ -52,6 +52,7 @@ providing your own data and query.
 | 09 — Execute query | &#10003; | | Woodgrove triggers execution |
 | 10 — Monitor query | &#10003; | &#10003; | Any collaborator can poll |
 | 11 — Results & audit | &#10003; | &#10003; | Woodgrove downloads; both view audit |
+| 12 — Grafana dashboards | &#10003; | | Owner monitors via admin credentials |
 
 ---
 
@@ -78,6 +79,7 @@ providing your own data and query.
 - [Step 09: Execute Query](#step-09-execute-query) `[WOODGROVE]`
 - [Step 10: Monitor Query](#step-10-monitor-query) `[ANY]`
 - [Step 11: Results & Audit](#step-11-results--audit) `[WOODGROVE]`
+- [Step 12: Grafana Dashboards](#step-12-grafana-dashboards) `[OWNER]`
 - [Appendix A: Federated Credential Subject Reference](#appendix-a-federated-credential-subject-reference)
 - [Appendix B: Troubleshooting](#appendix-b-troubleshooting)
 - [Appendix C: CPK Deep Dive](#appendix-c-cpk-deep-dive)
@@ -98,6 +100,7 @@ providing your own data and query.
 | PowerShell | 7.x+ |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) |
+| kubectl | Latest stable |
 | Resource provider | `Microsoft.CleanRoom` registered in the owner's subscription |
 | Feature flags | `EUAPParticipation` (see below) |
 
@@ -722,6 +725,53 @@ Auto-detects SSE/CPK mode from metadata. Pass `-JobId` to filter to a specific r
 
 ---
 
+## Step 12: Grafana Dashboards `[OWNER]`
+
+> Grafana dashboards let the owner monitor Spark query execution,
+> resource usage, and logs in real time.
+
+### 12.1 Get Readonly Kubeconfig
+
+```powershell
+$kc = az rest --method POST `
+    --url "$collabArmUrl/getReadonlyKubeConfig`?api-version=$armApiVersion" `
+    --resource $armResource -o json | ConvertFrom-Json
+
+$bytes = [Convert]::FromBase64String($kc.kubeconfig)
+[System.Text.Encoding]::UTF8.GetString($bytes) |
+    Out-File "./readonly.kubeconfig" -Encoding utf8
+```
+
+### 12.2 Port-Forward to Grafana
+
+Keep this terminal open while accessing Grafana.
+
+```powershell
+kubectl --kubeconfig ./readonly.kubeconfig `
+    port-forward svc/cleanroom-grafana 3000:80 -n observability
+```
+
+### 12.3 Get Admin Credentials
+
+```powershell
+$encoded = kubectl --kubeconfig ./readonly.kubeconfig `
+    get secret cleanroom-grafana -n observability `
+    -o jsonpath="{.data.admin-password}"
+$password = [System.Text.Encoding]::UTF8.GetString(
+    [Convert]::FromBase64String($encoded))
+Write-Host "Admin password: $password"
+```
+
+Username is `admin`.
+
+### 12.4 Access Dashboards
+
+1. Open `http://localhost:3000`
+2. Login with `admin` / password from Step 12.3
+3. Navigate to **Dashboards** for Spark monitoring
+
+---
+
 ## Appendix A: Federated Credential Subject Reference
 
 Format: `{contractId}-{ownerId}` where `contractId` = `"Analytics"` (capital A)
@@ -820,6 +870,7 @@ API version: `2026-03-31-preview`
 | Show collaboration | GET | `.../providers/Microsoft.CleanRoom/Collaborations/{name}` |
 | Enable workload | POST | `.../Collaborations/{name}/enableWorkload` |
 | Add collaborator | POST | `.../Collaborations/{name}/addCollaborator` |
+| Get readonly kubeconfig | POST | `.../Collaborations/{name}/getReadonlyKubeConfig` |
 
 ### Frontend API (via `Invoke-RestMethod`)
 
