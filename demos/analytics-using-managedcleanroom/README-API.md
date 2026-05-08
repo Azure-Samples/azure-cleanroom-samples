@@ -636,20 +636,11 @@ $bytes = [Convert]::FromBase64String($kc.kubeconfig)
     Out-File "./readonly.kubeconfig" -Encoding utf8
 ```
 
-### 12.2 Port-Forward to Grafana
-
-Keep this terminal open while accessing Grafana.
-
-```powershell
-kubectl --kubeconfig ./readonly.kubeconfig `
-    port-forward svc/cleanroom-grafana 3000:80 -n observability
-```
-
-### 12.3 Get Admin Credentials
+### 12.2 Get Admin Credentials
 
 ```powershell
 $encoded = kubectl --kubeconfig ./readonly.kubeconfig `
-    get secret cleanroom-grafana -n observability `
+    get secret cleanroom-spark-grafana -n telemetry `
     -o jsonpath="{.data.admin-password}"
 $password = [System.Text.Encoding]::UTF8.GetString(
     [Convert]::FromBase64String($encoded))
@@ -658,10 +649,19 @@ Write-Host "Admin password: $password"
 
 Username is `admin`.
 
+### 12.3 Port-Forward to Grafana
+
+Keep this terminal open while accessing Grafana.
+
+```powershell
+kubectl --kubeconfig ./readonly.kubeconfig `
+    port-forward svc/cleanroom-spark-grafana 3000:80 -n telemetry
+```
+
 ### 12.4 Access Dashboards
 
 1. Open `http://localhost:3000`
-2. Login with `admin` / password from Step 12.3
+2. Login with `admin` / password from Step 12.2
 3. Navigate to **Dashboards** for Spark monitoring
 
 ---
