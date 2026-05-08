@@ -112,7 +112,7 @@ providing your own data and query.
 > The above covers a single query execution (1 Spark driver + up to 3
 > executors, each using 1 vCPU). Spark pods are provisioned at runtime and
 > removed after query execution completes. Multiple queries can run
-> concurrently — add 4 vCPUs of Ddsv5 quota per additional concurrent query.
+> concurrently — add 4 vCPUs of Confidential ACI quota per additional concurrent query.
 
 > The `managedcleanroom` CLI extension is **not required** for this guide.
 

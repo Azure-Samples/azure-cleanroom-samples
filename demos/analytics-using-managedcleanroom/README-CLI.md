@@ -111,7 +111,7 @@ providing your own data and query.
 > The above covers a single query execution (1 Spark driver + up to 3
 > executors, each using 1 vCPU). Spark pods are provisioned at runtime and
 > removed after query execution completes. Multiple queries can run
-> concurrently — add 4 vCPUs of Ddsv5 quota per additional concurrent query.
+> concurrently — add 4 vCPUs of Confidential ACI quota per additional concurrent query.
 
 ### 1.2 Terminal T1 (Owner) — Variables
 
@@ -234,7 +234,8 @@ az managedcleanroom collaboration create `
     --resource-group $collabRg `
     --location $rpLocation `
     --resource-location $resourceLocation `
-    --collaborators "[{UserIdentifier:'$collaboratorEmail'}]"
+    --collaborators "[{UserIdentifier:'$collaboratorEmail'}]" `
+    --no-wait
 ```
 
 > The `--collaborators` flag adds collaborators at creation time itself.
@@ -259,7 +260,8 @@ do {
 az managedcleanroom collaboration enable-workload `
     --collaboration-name $collabName `
     --resource-group $collabRg `
-    --workload-type Analytics
+    --workload-type Analytics `
+    --no-wait
 ```
 
 **Runtime**: ~7 minutes. Poll until the workload endpoint is populated:
