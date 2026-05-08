@@ -63,8 +63,9 @@ providing your own data and query.
 - [Step 01: Prerequisites](#step-01-prerequisites) `[ALL]`
   - [1.1 Requirements](#11-requirements)
   - [1.2 Terminal T1 (Owner) — Variables](#12-terminal-t1-owner--variables)
-  - [1.3 Each Collaborator Terminal — Variables](#13-each-collaborator-terminal--variables)
-  - [1.4 Acquire Token & Extract OID](#14-acquire-token--extract-oid-each-collaborator) `[EACH COLLABORATOR]`
+  - [1.3 One-Time Owner Setup](#13-one-time-owner-setup)
+  - [1.4 Each Collaborator Terminal — Variables](#14-each-collaborator-terminal--variables)
+  - [1.5 Acquire Token & Extract OID](#15-acquire-token--extract-oid-each-collaborator) `[EACH COLLABORATOR]`
 - [Step 02: Create Collaboration](#step-02-create-collaboration) `[OWNER]`
   - [2.1 Create Resource Group](#21-create-resource-group)
   - [2.2 Create Collaboration](#22-create-collaboration)
@@ -100,21 +101,9 @@ providing your own data and query.
 | PowerShell | 7.x+ |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) |
-| kubectl | Latest stable |
-| Resource provider | `Microsoft.CleanRoom` registered in the owner's subscription |
-| Feature flags | `EUAPParticipation` (see below) |
-
-```powershell
-az feature register --namespace Microsoft.Resources --name EUAPParticipation
-
-# Check registration status (wait until all show "Registered")
-az feature show --namespace Microsoft.Resources --name EUAPParticipation --query properties.state -o tsv
-
-az provider register --namespace Microsoft.CleanRoom
-```
 
 > **Quota check:** This sample deploys an AKS cluster and Confidential ACI
-> container groups in the **West US** region. Ensure your subscription has the
+> container groups in the `$resourceLocation` region (**West US** by default). Ensure your subscription has the
 > following minimum quota in that region before proceeding:
 >
 > | Resource | Minimum vCPUs | SKU / Family |
@@ -125,7 +114,7 @@ az provider register --namespace Microsoft.CleanRoom
 > The above covers a single query execution (1 Spark driver + up to 3
 > executors, each using 1 vCPU). Spark pods are provisioned at runtime and
 > removed after query execution completes. Multiple queries can run
-> concurrently — add 4 vCPUs of Ddsv5 quota per additional concurrent query.
+> concurrently — add 4 vCPUs of Confidential ACI quota per additional concurrent query.
 
 > The `managedcleanroom` CLI extension is **not required** for this guide.
 
@@ -137,31 +126,43 @@ $account = az account show -o json | ConvertFrom-Json
 $subscription = $account.id
 $tenantId = $account.tenantId
 
-$location = "eastus2euap"
+$rpLocation = "westus"
+$resourceLocation = "westus"   # Location where AKS, Container Groups, and all required resources are created
+# Supported resourceLocation values:
+# centralindia, eastasia, eastus, eastus2, germanywestcentral, italynorth,
+# japaneast, northeurope, southcentralus, southeastasia, switzerlandnorth,
+# uaenorth, westeurope, westus, westus2
 $collabName = "<collaboration-name>"
 $collabRg = "<collaboration-resource-group>"
 
 # ARM API
-$armEndpoint = "https://eastus2euap.management.azure.com"
-$armApiVersion = "2026-03-31-preview"
-$armResource = "https://management.azure.com/"   # az rest needs explicit resource for EUAP endpoint
+$armEndpoint = "https://management.azure.com"
+$armApiVersion = "2026-04-30-preview"
 $collabArmUrl = "$armEndpoint/subscriptions/$subscription/resourceGroups/$collabRg/providers/Microsoft.CleanRoom/Collaborations/$collabName"
 ```
 
+### 1.3 One-Time Owner Setup
+
+Register the resource provider (only needed once per subscription):
+
+```powershell
+az provider register --namespace Microsoft.CleanRoom
+```
+
 > [!WARNING]
-> For now the owner must have an **Owner** role assignment on the RP's App in
-> their subscription. An ARM manifest update is in progress and this step will
-> be removed once it completes.
+> For now the owner must assign a **User Access Administrator** role assignment on the RP's App
+> in their subscription. We are investigating this ARM side issue and will remove this shortly.
 >
 > ```powershell
+> # User Access Administrator role
 > az role assignment create \
 >   --assignee "d76bde86-0387-4db5-af46-51a9e31e6666" \
->   --role "Owner" \
+>   --role "User Access Administrator" \
 >   --scope "/subscriptions/$subscription" \
 >   --subscription $subscription
 > ```
 
-### 1.3 Each Collaborator Terminal — Variables
+### 1.4 Each Collaborator Terminal — Variables
 
 ```powershell
 az login
@@ -169,7 +170,7 @@ $account = az account show -o json | ConvertFrom-Json
 $subscription = $account.id
 $tenantId = $account.tenantId
 
-$location = "eastus2euap"
+$location = "westus"
 $EncryptionMode = "SSE"    # "SSE" or "CPK"
 $iteration = 0
 
@@ -179,7 +180,7 @@ $personaEmail = "<your-email>"
 
 az group create --name $personaRg --location $location -o none 2>$null
 
-$frontend = "https://prod.workload-frontendcentraluseuap.cleanroom.cloudapp.azure.net"
+$frontend = "https://prod.workload-frontendwestus.cleanroom.cloudapp.azure.net"
 $feApiVersion = "2026-03-01-preview"
 $oidcStorageAccount = "cleanroomoidc"   # MSFT tenant; omit for other tenants
 
@@ -200,9 +201,9 @@ function Invoke-Frontend {
 }
 ```
 
-### 1.4 Acquire Token & Extract OID `[EACH COLLABORATOR]`
+### 1.5 Acquire Token & Extract OID `[EACH COLLABORATOR]`
 
-#### 1.4.1 Acquire Token
+#### 1.5.1 Acquire Token
 
 **Option A — MSAL device-code flow** (external / MSA accounts):
 
@@ -221,7 +222,7 @@ $personaTokenFile = Join-Path ([System.IO.Path]::GetTempPath()) "msal-idtoken-$p
 az account get-access-token --resource "https://management.azure.com/" --query accessToken -o tsv | Out-File -FilePath $personaTokenFile -NoNewline
 ```
 
-#### 1.4.2 Extract OID from Token
+#### 1.5.2 Extract OID from Token
 
 ```powershell
 $tokenB64 = (Get-Content $personaTokenFile -Raw).Split('.')[1]
@@ -242,7 +243,7 @@ Write-Host "JWT oid: $personaOid"
 ### 2.1 Create Resource Group
 
 ```powershell
-az group create --name $collabRg --location $location -o none
+az group create --name $collabRg --location $rpLocation -o none
 ```
 
 ### 2.2 Create Collaboration
@@ -250,15 +251,16 @@ az group create --name $collabRg --location $location -o none
 ```powershell
 $collaboratorEmail = "<woodgrove-email>"
 $createBody = @{
-    location = $location
+    location = $rpLocation
     properties = @{
         collaborators = @(@{ userIdentifier = $collaboratorEmail })
+        resourceLocation = $resourceLocation
     }
 } | ConvertTo-Json -Depth 5
 [System.IO.File]::WriteAllText("$PWD/body.json", $createBody)
 az rest --method PUT `
     --url "$collabArmUrl`?api-version=$armApiVersion" `
-    --resource $armResource `
+    --resource $armEndpoint `
     --headers "Content-Type=application/json" `
     --body "@body.json"
 ```
@@ -266,14 +268,14 @@ az rest --method PUT `
 > The `collaborators` array adds collaborators at creation time itself.
 > To add more collaborators later, see [Step 2.4](#24-add-more-collaborators-optional).
 
-> **NOTE**: `location` must be `eastus2euap` — this is where the Microsoft.CleanRoom RP is deployed.
-> Actual resources (AKS cluster, CACI instances) are created in `westus`. Configurable region support is coming soon.
+> **NOTE**: `location` is the ARM RP location (`$rpLocation`). `resourceLocation` controls where
+> actual resources (AKS cluster, CACI instances) are deployed — set via `$resourceLocation`.
 
 **Runtime**: ~25 minutes. Poll `provisioningState` until `Succeeded`:
 
 ```powershell
 do {
-    $collab = az rest --method GET --url "$collabArmUrl`?api-version=$armApiVersion" --resource $armResource -o json | ConvertFrom-Json
+    $collab = az rest --method GET --url "$collabArmUrl`?api-version=$armApiVersion" --resource $armEndpoint -o json | ConvertFrom-Json
     Write-Host "[$(Get-Date -Format 'HH:mm:ss')] provisioningState: $($collab.properties.provisioningState)"
     Start-Sleep -Seconds 60
 } while ($collab.properties.provisioningState -notin @("Succeeded", "Failed"))
@@ -282,31 +284,31 @@ do {
 ### 2.3 Enable Analytics Workload
 
 ```powershell
-$enableBody = @{ workloadType = "analytics" } | ConvertTo-Json
+$enableBody = @{ workloadType = "Analytics" } | ConvertTo-Json
 [System.IO.File]::WriteAllText("$PWD/body.json", $enableBody)
 az rest --method POST `
     --url "$collabArmUrl/enableWorkload`?api-version=$armApiVersion" `
-    --resource $armResource `
+    --resource $armEndpoint `
     --headers "Content-Type=application/json" `
     --body "@body.json"
 ```
 
-**Runtime**: ~7 minutes. Poll `collaborationState` until `Provisioned`:
+**Runtime**: ~7 minutes. Poll until the workload endpoint is populated:
 
 ```powershell
 do {
-    $collab = az rest --method GET --url "$collabArmUrl`?api-version=$armApiVersion" --resource $armResource -o json | ConvertFrom-Json
-    $wl = $collab.properties.workloads | Where-Object { $_.workloadType -eq "analytics" }
-    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] collaborationState: $($collab.properties.collaborationState) | workload: $($wl.endpoint)"
+    $collab = az rest --method GET --url "$collabArmUrl`?api-version=$armApiVersion" --resource $armEndpoint -o json | ConvertFrom-Json
+    $wl = $collab.properties.workloads | Where-Object { $_.workloadType -eq "Analytics" }
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] provisioningState: $($collab.properties.provisioningState) | workload endpoint: $($wl.endpoint)"
     Start-Sleep -Seconds 30
-} while ($collab.properties.collaborationState -notin @("Provisioned", "Failed"))
+} while (-not $wl.endpoint -and $collab.properties.provisioningState -ne "Failed")
 ```
 
 Then wait for `healthState` to become `Ok`:
 
 ```powershell
 do {
-    $collab = az rest --method GET --url "$collabArmUrl`?api-version=$armApiVersion" --resource $armResource -o json | ConvertFrom-Json
+    $collab = az rest --method GET --url "$collabArmUrl`?api-version=$armApiVersion" --resource $armEndpoint -o json | ConvertFrom-Json
     Write-Host "[$(Get-Date -Format 'HH:mm:ss')] healthState: $($collab.properties.health.healthState)"
     if ($collab.properties.health.healthState -ne "Ok" -and $collab.properties.health.healthIssues) {
         $collab.properties.health.healthIssues | ForEach-Object { Write-Host "  Issue: $($_ | ConvertTo-Json -Compress)" }
@@ -330,7 +332,7 @@ $addBody = @{ collaborator = @{ userIdentifier = $collaboratorEmail } } | Conver
 [System.IO.File]::WriteAllText("$PWD/body.json", $addBody)
 az rest --method POST `
     --url "$collabArmUrl/addCollaborator`?api-version=$armApiVersion" `
-    --resource $armResource `
+    --resource $armEndpoint `
     --headers "Content-Type=application/json" `
     --body "@body.json"
 ```
@@ -340,7 +342,7 @@ az rest --method POST `
 
 **Verify**:
 ```powershell
-az rest --method GET --url "$collabArmUrl`?api-version=$armApiVersion" --resource $armResource -o json
+az rest --method GET --url "$collabArmUrl`?api-version=$armApiVersion" --resource $armEndpoint -o json
 ```
 
 ---
@@ -681,7 +683,7 @@ $result | ConvertTo-Json -Depth 10
 > collaboration health for pod-level or capacity issues:
 >
 > ```powershell
-> az rest --method GET --resource "https://management.azure.com/" `
+> az rest --method GET --resource $armEndpoint `
 >     --url "$collabArmUrl`?api-version=$armApiVersion" `
 >     | ConvertFrom-Json | % { $_.properties.health } | ConvertTo-Json -Depth 5
 > ```
@@ -798,7 +800,7 @@ az identity federated-credential create --name "Analytics-$personaOid-federation
 |---|---|---|
 | `SPARK_JOB_FAILED: ExitCode 1` | Federated credential subject mismatch | See [Appendix A](#appendix-a-federated-credential-subject-reference) |
 | `AADSTS700211: No matching federated identity record` | Wrong issuer URL or stale FIC | Republish dataset; delete/recreate FIC |
-| `SSL certificate verify failed` | EUAP endpoint cert mismatch | Use `-SkipCertificateCheck` on `Invoke-RestMethod` |
+| `SSL certificate verify failed` | Endpoint cert mismatch | Use `-SkipCertificateCheck` on `Invoke-RestMethod` |
 | `404 Not Found` on frontend | Using ARM resource ID instead of frontend UUID | Use UUID from `Invoke-Frontend -Path ""` |
 | `ContractNotFound` | Stale CCF endpoint | Create new collaboration |
 | `Already voted / Conflict` | Idempotent vote | Safe to ignore |
@@ -861,8 +863,8 @@ Both are defined in the query segments. Edit the thresholds before publishing th
 
 ### ARM API (via `az rest`)
 
-Base: `https://eastus2euap.management.azure.com`
-API version: `2026-03-31-preview`
+Base: `https://management.azure.com`
+API version: `2026-04-30-preview`
 
 | Operation | Method | URL |
 |---|---|---|
@@ -908,7 +910,7 @@ $recoverBody = @{ forceRecover = $true } | ConvertTo-Json
 [System.IO.File]::WriteAllText("$PWD/body.json", $recoverBody)
 az rest --method POST `
     --url "$collabArmUrl/recover`?api-version=$armApiVersion" `
-    --resource $armResource `
+    --resource $armEndpoint `
     --headers "Content-Type=application/json" `
     --body "@body.json"
 ```
@@ -921,7 +923,7 @@ az rest --method POST `
 ```powershell
 az rest --method DELETE `
     --url "$collabArmUrl`?api-version=$armApiVersion" `
-    --resource $armResource
+    --resource $armEndpoint
 ```
 
 > Permanently deletes the collaboration and all associated resources.

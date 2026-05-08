@@ -62,8 +62,9 @@ providing your own data and query.
 - [Step 01: Prerequisites](#step-01-prerequisites) `[ALL]`
   - [1.1 Requirements](#11-requirements)
   - [1.2 Terminal T1 (Owner) — Variables](#12-terminal-t1-owner--variables)
-  - [1.3 Each Collaborator Terminal — Variables](#13-each-collaborator-terminal--variables)
-  - [1.4 Acquire Token, Extract OID & Configure CLI](#14-acquire-token-extract-oid--configure-cli-each-collaborator) `[EACH COLLABORATOR]`
+  - [1.3 One-Time Owner Setup](#13-one-time-owner-setup)
+  - [1.4 Each Collaborator Terminal — Variables](#14-each-collaborator-terminal--variables)
+  - [1.5 Acquire Token, Extract OID & Configure CLI](#15-acquire-token-extract-oid--configure-cli-each-collaborator) `[EACH COLLABORATOR]`
 - [Step 02: Create Collaboration](#step-02-create-collaboration) `[OWNER]`
   - [2.1 Create Collaboration & Enable Workload](#21-create-collaboration--enable-workload)
   - [2.2 Add More Collaborators (Optional)](#22-add-more-collaborators-optional)
@@ -93,24 +94,13 @@ providing your own data and query.
 | Requirement | Details |
 |---|---|
 | Azure CLI | 2.75.0+ |
-| `managedcleanroom` extension | `az extension add --name managedcleanroom` (v1.0.0b5+) |
+| `managedcleanroom` extension | `az extension add --name managedcleanroom --version 1.0.0b6` |
 | PowerShell | 7.x+ |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) |
-| Resource provider | `Microsoft.CleanRoom` registered in the owner's subscription |
-| Feature flags | `EUAPParticipation` (see below) |
-
-```powershell
-az feature register --namespace Microsoft.Resources --name EUAPParticipation
-
-# Check registration status (wait until all show "Registered")
-az feature show --namespace Microsoft.Resources --name EUAPParticipation --query properties.state -o tsv
-
-az provider register --namespace Microsoft.CleanRoom
-```
 
 > **Quota check:** This sample deploys an AKS cluster and Confidential ACI
-> container groups in the **West US** region. Ensure your subscription has the
+> container groups in the `$resourceLocation` region (**West US** by default). Ensure your subscription has the
 > following minimum quota in that region before proceeding:
 >
 > | Resource | Minimum vCPUs | SKU / Family |
@@ -121,7 +111,7 @@ az provider register --namespace Microsoft.CleanRoom
 > The above covers a single query execution (1 Spark driver + up to 3
 > executors, each using 1 vCPU). Spark pods are provisioned at runtime and
 > removed after query execution completes. Multiple queries can run
-> concurrently — add 4 vCPUs of Ddsv5 quota per additional concurrent query.
+> concurrently — add 4 vCPUs of Confidential ACI quota per additional concurrent query.
 
 ### 1.2 Terminal T1 (Owner) — Variables
 
@@ -131,25 +121,38 @@ $account = az account show -o json | ConvertFrom-Json
 $subscription = $account.id
 $tenantId = $account.tenantId
 
-$location = "eastus2euap"
+$rpLocation = "westus"
+$resourceLocation = "westus"   # Location where AKS, Container Groups, and all required resources are created
+# Supported resourceLocation values:
+# centralindia, eastasia, eastus, eastus2, germanywestcentral, italynorth,
+# japaneast, northeurope, southcentralus, southeastasia, switzerlandnorth,
+# uaenorth, westeurope, westus, westus2
 $collabName = "<collaboration-name>"
 $collabRg = "<collaboration-resource-group>"
 ```
 
+### 1.3 One-Time Owner Setup
+
+Register the resource provider (only needed once per subscription):
+
+```powershell
+az provider register --namespace Microsoft.CleanRoom
+```
+
 > [!WARNING]
-> For now the owner must have an **Owner** role assignment on the RP's App in
-> their subscription. An ARM manifest update is in progress and this step will
-> be removed once it completes.
+> For now the owner must assign a **User Access Administrator** role assignment on the RP's App
+> in their subscription. We are investigating this ARM side issue and will remove this shortly.
 >
 > ```powershell
+> # User Access Administrator role
 > az role assignment create \
 >   --assignee "d76bde86-0387-4db5-af46-51a9e31e6666" \
->   --role "Owner" \
+>   --role "User Access Administrator" \
 >   --scope "/subscriptions/$subscription" \
 >   --subscription $subscription
 > ```
 
-### 1.3 Each Collaborator Terminal — Variables
+### 1.4 Each Collaborator Terminal — Variables
 
 ```powershell
 az login
@@ -157,7 +160,7 @@ $account = az account show -o json | ConvertFrom-Json
 $subscription = $account.id
 $tenantId = $account.tenantId
 
-$location = "eastus2euap"
+$location = "westus"
 $EncryptionMode = "SSE"    # "SSE" or "CPK"
 $iteration = 0
 
@@ -167,13 +170,13 @@ $personaEmail = "<your-email>"
 
 az group create --name $personaRg --location $location -o none 2>$null
 
-$frontend = "https://prod.workload-frontendcentraluseuap.cleanroom.cloudapp.azure.net"
+$frontend = "https://prod.workload-frontendwestus.cleanroom.cloudapp.azure.net"
 $oidcStorageAccount = "cleanroomoidc"   # MSFT tenant; omit for other tenants
 ```
 
-### 1.4 Acquire Token, Extract OID & Configure CLI `[EACH COLLABORATOR]`
+### 1.5 Acquire Token, Extract OID & Configure CLI `[EACH COLLABORATOR]`
 
-#### 1.4.1 Acquire Token
+#### 1.5.1 Acquire Token
 
 **Option A — MSAL device-code flow** (external / MSA accounts):
 
@@ -192,7 +195,7 @@ $personaTokenFile = Join-Path ([System.IO.Path]::GetTempPath()) "msal-idtoken-$p
 az account get-access-token --resource "https://management.azure.com/" --query accessToken -o tsv | Out-File -FilePath $personaTokenFile -NoNewline
 ```
 
-#### 1.4.2 Extract OID from Token
+#### 1.5.2 Extract OID from Token
 
 ```powershell
 $tokenB64 = (Get-Content $personaTokenFile -Raw).Split('.')[1]
@@ -206,7 +209,7 @@ Write-Host "JWT oid: $personaOid"
 > **CRITICAL**: Always use the JWT `oid`, NOT `az ad signed-in-user show --query id`.
 > For MSA accounts these differ. See [Appendix A](#appendix-a-federated-credential-subject-reference).
 
-#### 1.4.3 Configure CLI Extension
+#### 1.5.3 Configure CLI Extension
 
 ```powershell
 $env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
@@ -223,21 +226,23 @@ az managedcleanroom frontend configure --endpoint $frontend
 ### 2.1 Create Collaboration & Enable Workload
 
 ```powershell
-az group create --name $collabRg --location $location -o none
+az group create --name $collabRg --location $rpLocation -o none
 
 $collaboratorEmail = "<woodgrove-email>"
 az managedcleanroom collaboration create `
     --collaboration-name $collabName `
     --resource-group $collabRg `
-    --location $location `
-    --collaborators "[{UserIdentifier:'$collaboratorEmail'}]"
+    --location $rpLocation `
+    --resource-location $resourceLocation `
+    --collaborators "[{UserIdentifier:'$collaboratorEmail'}]" `
+    --no-wait
 ```
 
 > The `--collaborators` flag adds collaborators at creation time itself.
 > To add more collaborators later, see [Step 2.2](#22-add-more-collaborators-optional).
 
-> **NOTE**: `--location` must be `eastus2euap` — this is where the Microsoft.CleanRoom RP is deployed.
-> Actual resources (AKS cluster, CACI instances) are created in `westus`. Configurable region support is coming soon.
+> **NOTE**: `--location` is the ARM RP location (`$rpLocation`). `--resource-location` controls where
+> actual resources (AKS cluster, CACI instances) are deployed — set via `$resourceLocation`.
 
 **Runtime**: ~25 minutes. Poll `provisioningState` until `Succeeded`:
 
@@ -255,20 +260,21 @@ do {
 az managedcleanroom collaboration enable-workload `
     --collaboration-name $collabName `
     --resource-group $collabRg `
-    --workload-type analytics
+    --workload-type Analytics `
+    --no-wait
 ```
 
-**Runtime**: ~7 minutes. Poll `collaborationState` until `Provisioned`:
+**Runtime**: ~7 minutes. Poll until the workload endpoint is populated:
 
 ```powershell
 do {
     $collab = az managedcleanroom collaboration show `
         --collaboration-name $collabName `
         --resource-group $collabRg -o json | ConvertFrom-Json
-    $wl = $collab.workloads | Where-Object { $_.workloadType -eq "analytics" }
-    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] collaborationState: $($collab.collaborationState) | workload: $($wl.endpoint)"
+    $wl = $collab.workloads | Where-Object { $_.workloadType -eq "Analytics" }
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] provisioningState: $($collab.provisioningState) | workload endpoint: $($wl.endpoint)"
     Start-Sleep -Seconds 30
-} while ($collab.collaborationState -notin @("Provisioned", "Failed"))
+} while (-not $wl.endpoint -and $collab.provisioningState -ne "Failed")
 ```
 
 Then wait for `healthState` to become `Ok`:
@@ -744,10 +750,10 @@ az identity federated-credential create --name "Analytics-$personaOid-federation
 |---|---|---|
 | `SPARK_JOB_FAILED: ExitCode 1` | Federated credential subject mismatch | See [Appendix A](#appendix-a-federated-credential-subject-reference) |
 | `AADSTS700211: No matching federated identity record` | Wrong issuer URL in dataset or stale FIC | Republish dataset; delete/recreate FIC |
-| `SSL certificate verify failed` | EUAP endpoint cert mismatch | Set `$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"` |
+| `SSL certificate verify failed` | Endpoint cert mismatch | Set `$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"` |
 | `404 Not Found` on frontend | Using ARM ID instead of frontend UUID | Use UUID from `frontend collaboration list` |
 | `ContractNotFound` | Stale CCF endpoint | Create new collaboration |
-| `Python 3.13 tuple error` | CLI extension bug | Upgrade to v1.0.0b5+ |
+| `Python 3.13 tuple error` | CLI extension bug | Upgrade to v1.0.0b6+ |
 | `Already voted / Conflict` | Idempotent vote | Safe to ignore |
 | `PENDING_RERUN` | Normal scheduling | Keep polling |
 
