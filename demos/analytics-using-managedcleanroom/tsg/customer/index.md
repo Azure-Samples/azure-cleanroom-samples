@@ -11,7 +11,7 @@ Issues extracted from the [REST API guide](../../README-API.md) and [CLI guide](
 |---|---|---|---|---|---|
 | 1 | Quota insufficient | Collaboration creation or query execution fails | Subscription lacks minimum vCPU quota in the `$resourceLocation` region | Ensure at least 8 vCPUs Ddsv5 (AKS) + 6 vCPUs Confidential ACI. Add 4 Ddsv5 per additional concurrent query. | Step 01 |
 | 2 | RP role assignment required | ARM operations fail due to missing permissions | RP App requires User Access Administrator on the subscription | `az role assignment create --assignee "d76bde86-0387-4db5-af46-51a9e31e6666" --role "User Access Administrator" --scope "/subscriptions/$subscription"` | Step 01 |
-| 3 | Python 3.13 tuple error (CLI only) | CLI commands fail with tuple error | CLI extension bug in older versions | Upgrade to `managedcleanroom` extension v1.0.0b5+ | Any CLI step |
+| 3 | Python 3.13 tuple error (CLI only) | CLI commands fail with tuple error | CLI extension bug in older versions | Upgrade to `managedcleanroom` extension v1.0.0b6+ | Any CLI step |
 
 ## Identity & Federated Credentials
 
@@ -33,7 +33,7 @@ Issues extracted from the [REST API guide](../../README-API.md) and [CLI guide](
 
 | # | Issue | Error / Symptom | Cause | Fix | Step |
 |---|---|---|---|---|---|
-| 10 | SSL certificate verify failed | `SSL certificate verify failed` | EUAP endpoint cert mismatch | **API**: `-SkipCertificateCheck` (in `Invoke-Frontend`). **CLI**: `$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"` | Any frontend call |
+| 10 | SSL certificate verify failed | `SSL certificate verify failed` | Endpoint cert mismatch | **API**: `-SkipCertificateCheck` (in `Invoke-Frontend`). **CLI**: `$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"` | Any frontend call |
 | 11 | NSG blocking AKS endpoint | Query execution times out | Tenant NSGs block inbound port 443 to AKS | Contact ACCR team with `tenantId` to whitelist tenant | Step 09 |
 | 12 | AVNM blocking connectivity | Query execution times out | Azure Virtual Network Manager tenant policy blocks port 443 | Tenant admin must create AVNM rule to allow port 443 from internet | Step 09 |
 
