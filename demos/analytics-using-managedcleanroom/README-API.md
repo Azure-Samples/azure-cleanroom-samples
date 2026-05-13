@@ -180,7 +180,7 @@ az group create --name $personaRg --location $location -o none 2>$null
 
 $frontend = "https://prod.workload-frontendwestus.cleanroom.cloudapp.azure.net"
 $feApiVersion = "2026-03-01-preview"
-$oidcStorageAccount = "cleanroomoidc"   # MSFT tenant; omit for other tenants
+$oidcStorageAccount = "cleanroomoidc"   # Required for tenants where Federated Identity Credentials with MI are blocked by policy; specify a whitelisted pre-provisioned storage account name. For other tenants, leave blank ("") and a new storage account will be provisioned by the scripts.
 
 # Helper for all frontend REST calls (used throughout this guide)
 function Invoke-Frontend {

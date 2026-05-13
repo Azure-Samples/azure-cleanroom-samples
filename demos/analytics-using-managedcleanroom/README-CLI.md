@@ -171,7 +171,7 @@ $personaEmail = "<your-email>"
 az group create --name $personaRg --location $location -o none 2>$null
 
 $frontend = "https://prod.workload-frontendwestus.cleanroom.cloudapp.azure.net"
-$oidcStorageAccount = "cleanroomoidc"   # MSFT tenant; omit for other tenants
+$oidcStorageAccount = "cleanroomoidc"   # Required for tenants where Federated Identity Credentials with MI are blocked by policy; specify a whitelisted pre-provisioned storage account name. For other tenants, leave blank ("") and a new storage account will be provisioned by the scripts.
 ```
 
 ### 1.5 Acquire Token, Extract OID & Configure CLI `[EACH COLLABORATOR]`
