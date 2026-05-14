@@ -27,8 +27,9 @@
 .PARAMETER JwksFile
     Path to the JWKS JSON file (previously fetched from the frontend).
 
-.PARAMETER OidcStorageAccount
-    Optional: pre-existing whitelisted OIDC storage account name.
+.PARAMETER OidcStorageUrl
+    Optional: the full static-website endpoint URL of a pre-existing
+    whitelisted OIDC storage account (e.g. https://<account>.z22.web.core.windows.net).
     If omitted, creates a new SA in the resource group.
 
 .PARAMETER outDir
@@ -48,7 +49,7 @@ param(
     [Parameter(Mandatory)]
     [string]$JwksFile,
 
-    [string]$OidcStorageAccount,
+    [string]$OidcStorageUrl,
 
     [string]$outDir = "./generated"
 )
@@ -87,10 +88,11 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 $subscriptionId = az account show --query id -o tsv
 
 $newOidcAccountCreated = $false
-if ($OidcStorageAccount) {
-    $oidcStorageAccountName = $OidcStorageAccount
+if ($OidcStorageUrl) {
+    $staticWebUrl = $OidcStorageUrl.TrimEnd('/')
+    # Extract storage account name from the static-website hostname (e.g. <account>.z22.web.core.windows.net).
+    $oidcStorageAccountName = ([Uri]$staticWebUrl).Host.Split('.')[0]
     $containerName = $collaborationId
-    $staticWebUrl = "https://${oidcStorageAccountName}.z22.web.core.windows.net"
     $issuerUrl = "$staticWebUrl/$containerName"
     Write-Host "Using pre-existing OIDC storage account '$oidcStorageAccountName'." -ForegroundColor Cyan
 } else {

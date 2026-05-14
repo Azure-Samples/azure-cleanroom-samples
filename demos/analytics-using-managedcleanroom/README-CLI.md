@@ -171,7 +171,7 @@ $personaEmail = "<your-email>"
 az group create --name $personaRg --location $location -o none 2>$null
 
 $frontend = "https://prod.workload-frontendwestus.cleanroom.cloudapp.azure.net"
-$oidcStorageAccount = "cleanroomoidc"   # Required for tenants where Federated Identity Credentials with MI are blocked by policy; specify a whitelisted pre-provisioned storage account name. For other tenants, leave blank ("") and a new storage account will be provisioned by the scripts.
+$oidcStorageUrl = "https://cleanroomoidc.z22.web.core.windows.net"   # Required for tenants where Federated Identity Credentials with MI are blocked by policy; specify a whitelisted pre-provisioned storage account name. For other tenants, leave blank ("") and a new storage account will be provisioned by the scripts.
 ```
 
 ### 1.5 Acquire Token, Extract OID & Configure CLI `[EACH COLLABORATOR]`
@@ -421,7 +421,7 @@ $oidcParams = @{
     collaborationId = $collabId
     JwksFile        = "generated/$personaRg/jwks.json"
 }
-if ($oidcStorageAccount) { $oidcParams["OidcStorageAccount"] = $oidcStorageAccount }
+if ($oidcStorageUrl) { $oidcParams["OidcStorageUrl"] = $oidcStorageUrl }
 
 ./scripts/06-setup-oidc-storage.ps1 @oidcParams
 ```
