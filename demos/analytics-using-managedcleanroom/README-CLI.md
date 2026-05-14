@@ -52,6 +52,7 @@ providing your own data and query.
 | 09 — Execute query | &#10003; | | Woodgrove triggers execution |
 | 10 — Monitor query | &#10003; | &#10003; | Any collaborator can poll |
 | 11 — Results & audit | &#10003; | &#10003; | Woodgrove downloads; both view audit |
+| 12 — Grafana dashboards | &#10003; | | Owner monitors via admin credentials |
 
 ---
 
@@ -77,6 +78,7 @@ providing your own data and query.
 - [Step 09: Execute Query](#step-09-execute-query) `[WOODGROVE]`
 - [Step 10: Monitor Query](#step-10-monitor-query) `[ANY]`
 - [Step 11: Results & Audit](#step-11-results--audit) `[WOODGROVE]`
+- [Step 12: Grafana Dashboards](#step-12-grafana-dashboards) `[OWNER]`
 - [Appendix A: Federated Credential Subject Reference](#appendix-a-federated-credential-subject-reference)
 - [Appendix B: Troubleshooting](#appendix-b-troubleshooting)
 - [Appendix C: CPK Deep Dive](#appendix-c-cpk-deep-dive)
@@ -98,6 +100,7 @@ providing your own data and query.
 | PowerShell | 7.x+ |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) |
+| kubectl | Latest stable |
 
 > **Quota check:** This sample deploys an AKS cluster and Confidential ACI
 > container groups in the `$resourceLocation` region (**West US** by default). Ensure your subscription has the
@@ -721,6 +724,35 @@ Auto-detects SSE/CPK mode from metadata. Pass `-JobId` to filter to a specific r
 ```
 
 > Output CSVs are saved to `generated/output/`. Without `-JobId`, downloads the latest.
+
+---
+
+## Step 12: Grafana Dashboards `[OWNER]`
+
+> Grafana dashboards let the owner monitor Spark query execution,
+> resource usage, and logs in real time.
+
+### 12.1 Get Readonly Kubeconfig
+
+```powershell
+$kc = az managedcleanroom collaboration get-readonly-kube-config `
+    --collaboration-name $collabName `
+    --resource-group $collabRg -o json | ConvertFrom-Json
+
+$bytes = [Convert]::FromBase64String($kc.kubeconfig)
+[System.Text.Encoding]::UTF8.GetString($bytes) |
+    Out-File "./readonly.kubeconfig" -Encoding utf8
+```
+
+### 12.2 Open Grafana Dashboard
+
+Retrieves admin credentials, opens the browser, and port-forwards to Grafana.
+
+```powershell
+./demos/analytics-using-managedcleanroom/scripts/12-open-grafana-dashboard.ps1 -KubeConfigPath "./readonly.kubeconfig"
+```
+
+Login with `admin` and the password printed by the script.
 
 ---
 
