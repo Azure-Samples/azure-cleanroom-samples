@@ -294,8 +294,8 @@ Expose as resource logs (Diagnostic Settings on Collaboration resource):
 | Alert | Source | Purpose | Status |
 |---|---|---|---|
 | Customer collaboration stuck in Provisioning > 60 min | RP Worker telemetry | Proactive customer outreach | Planned |
-| Customer query stuck in SUBMITTED > 15 min | Frontend Service telemetry | CACI capacity or scheduling issue | Planned |
-| Customer enableWorkload failure | RP Worker telemetry | Federated credential / quota issues | Planned |
+| Customer query stuck in SUBMITTED > 15 min | Frontend Service telemetry and RP monitoring | CACI capacity or scheduling issue | Planned |
+| Customer enableWorkload failure | RP Worker telemetry | Quota / capacity issue | Planned |
 | Multiple collaborations failing in same region | Geneva aggregation | Regional platform issue | Planned |
 
 ---
@@ -309,33 +309,31 @@ Expose as resource logs (Diagnostic Settings on Collaboration resource):
 ```
 Issue Reported
     │
-    ├─── 1. Check RP worker logs
-    │        kubectl logs deployment/cleanroom-worker -n cleanroom-ns --tail=500
+    ├─── 1. Check RP worker logs/metrics in Kusto
     │        → Match operationId from ARM operation
+    │        → Query RP worker logs for collaboration lifecycle events
     │
-    ├─── 2. Check syncops worker (for long-running ops)
-    │        kubectl logs deployment/cleanroom-syncopsworker -n cleanroom-ns -c cleanroomsyncopsworker --tail=500
+    ├─── 2. Check syncops worker logs in Kusto (for long-running ops)
     │        → CreateCluster, UpdateCluster, CCF operations
+    │        → Filter by collaborationName, taskName, workflowName
     │
-    ├─── 3. Check sidecar containers (syncops pod has 6 containers)
-    │        -c ccf-provider-client     → CCF/CACI operations
-    │        -c cluster-provider-client → AKS cluster operations
-    │        -c cgs-client              → Contract governance
-    │        -c cleanroom-client        → Clean room operations
-    │        -c cleanroominternalapi    → Internal API
+    ├─── 3. Check sidecar logs in Kusto (syncops pod has 6 containers)
+    │        ccf-provider-client     → CCF/CACI operations
+    │        cluster-provider-client → AKS cluster operations
+    │        cgs-client              → Contract governance
+    │        cleanroom-client        → Clean room operations
+    │        cleanroominternalapi    → Internal API
     │
-    ├─── 4. Check frontend service
-    │        kubectl logs deployment/workload-frontend-service -n frontendns -c frontend-service --tail=500
+    ├─── 4. Check frontend service logs/metrics in Kusto
     │        → Frontend API errors, auth issues
     │
-    ├─── 5. Check consortium manager
-    │        kubectl logs deployment/consortiummanagerservice -n consortiummanager-ns -c ccf-consortium-manager --tail=500
+    ├─── 5. Check consortium manager logs in Kusto
     │        → CCF network operations
     │
-    ├─── 6. Check customer collaboration cluster (if accessible)
-    │        az aks get-credentials --resource-group CleanRoom_Collaborations_{name} --name {name}-aks
-    │        kubectl get pods -A  → Check analytics namespace, cleanroom-system
-    │        → Note: Deny assignments may block access, need RP MI credentials
+    ├─── 6. Check customer collaboration cluster
+    │        → Use readonly kubeconfig (via getReadonlyKubeConfig API)
+    │        → Check pods across analytics namespace, cleanroom-system
+    │        → Access Grafana dashboards for Spark execution details
     │
     ├─── 7. Check Cosmos DB (membership/state)
     │        Account: cleanroomdbgbl-{env}
@@ -343,7 +341,6 @@ Issue Reported
     │        → Use AAD token auth (local auth disabled)
     │
     └─── 8. Check ARM Activity Log
-             az monitor activity-log list --resource-group {rg} --offset 2h
              → ARM operation status, MOBO operations
 ```
 
@@ -398,7 +395,6 @@ CSS should use the [Customer TSG](customer/index.md) plus these additional tools
 
 | Pattern | Root Cause | Detection | Auto-Mitigation | Status |
 |---|---|---|---|---|
-| Attestation mismatch | Mixed image tags (68672ff vs 3c15c68) | ccr-proxy VerifySnpAttestationFailed | Enforce consistent tag in deployment pipeline | Available (fixed) |
 | MOBO InternalError | MOBO service intermittent failure | ARM InternalError on MRG creation | Recovery handler checks MRG existence (canaryConsort9 fix) | Available (fixed) |
 | RBAC propagation race | Azure RBAC eventual consistency | 403 on role assignment operations | WaitForRbacPropagation (12×15s) checking all 3 roles | Available (fixed) |
 | VN2 K8s version mismatch | AKS default K8s > VN2 kubelet version | VN2 node fails to register | Pin K8s version (1.33), WaitForVN2NodeReady | Available (fixed) |
@@ -407,7 +403,6 @@ CSS should use the [Customer TSG](customer/index.md) plus these additional tools
 | cluster-provider-client OOM | 200Mi memory limit too low | OOMKilled event | Increased to 512Mi | Available (fixed) |
 | Prometheus NFS blocked by deny | Observability installed before deny assignment | prometheus-server pod stuck | Reordered workflow: CreateCluster → DenyAssignment → EnableObservability | Available (fixed) |
 | Helm upgrade kills operations | Pod restart during active provisioning | Syncops operation aborted | Never deploy during active provisioning; maxSurge:0 | Available (documented) |
-| configmap reset on helm upgrade | --reuse-values resets ConsortiumManagerEndpoint | Frontend 5xx | Re-patch configmap after every helm upgrade | Available (documented) |
 
 ---
 
