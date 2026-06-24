@@ -140,6 +140,7 @@ Register the resource provider (only needed once per subscription):
 
 ```powershell
 az provider register --namespace Microsoft.CleanRoom
+az provider register --namespace Microsoft.ContainerService
 ```
 
 ### 1.4 Each Collaborator Terminal — Variables
