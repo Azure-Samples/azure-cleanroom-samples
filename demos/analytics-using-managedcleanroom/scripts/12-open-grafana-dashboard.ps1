@@ -4,9 +4,9 @@ param(
     [int]$LocalPort = 3000
 )
 
-$GrafanaSecretName = "cleanroom-spark-grafana"
-$GrafanaNamespace = "telemetry"
-$GrafanaService = "cleanroom-spark-grafana"
+$GrafanaSecretName = "cleanroom-grafana"
+$GrafanaNamespace = "observability"
+$GrafanaService = "cleanroom-grafana"
 
 # Get admin credentials
 Write-Host "Reading Grafana admin credentials..."
