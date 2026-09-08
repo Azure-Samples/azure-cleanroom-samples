@@ -1,0 +1,76 @@
+name: validate-managed-cleanroom
+
+# Static (offline) validation for the managed clean-room Bicep + scripts.
+# No Azure login, no resources, no cost. Runs Tier-1 checks + dry-run smoke.
+
+on:
+  pull_request:
+    paths:
+      - 'demos/analytics-using-managedcleanroom/scripts/**'
+      - '.github/workflows/validate-managed-cleanroom.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DEMO: demos/analytics-using-managedcleanroom
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bicep build + lint
+        run: |
+          az bicep install
+          az bicep build --file "$env:DEMO/scripts/bicep/managed-cleanroom.bicep"
+          az bicep lint  --file "$env:DEMO/scripts/bicep/managed-cleanroom.bicep"
+          Remove-Item "$env:DEMO/scripts/bicep/managed-cleanroom.json" -ErrorAction SilentlyContinue
+          Write-Host "Bicep OK"
+
+      - name: PowerShell syntax (AST parse)
+        run: |
+          $failed = 0
+          Get-ChildItem "$env:DEMO/scripts" -Filter *.ps1 -Recurse | ForEach-Object {
+            $t = $null; $e = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$t, [ref]$e) | Out-Null
+            if ($e.Count) {
+              $failed++
+              Write-Host "::error file=$($_.FullName)::$($e.Count) parse error(s)"
+              $e | ForEach-Object { Write-Host "  $($_.Message)" }
+            } else {
+              Write-Host "OK  $($_.Name)"
+            }
+          }
+          if ($failed) { throw "$failed file(s) with parse errors" }
+
+      - name: PSScriptAnalyzer
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          $results = Invoke-ScriptAnalyzer -Path "$env:DEMO/scripts" -Recurse -Severity Warning,Error
+          if ($results) {
+            $results | Format-Table RuleName, Severity, ScriptName, Line -AutoSize
+            $errors = @($results | Where-Object Severity -eq 'Error')
+            if ($errors.Count) { throw "$($errors.Count) PSScriptAnalyzer error(s)" }
+            Write-Host "PSScriptAnalyzer: warnings only (non-blocking)"
+          } else {
+            Write-Host "PSScriptAnalyzer: clean"
+          }
+
+      - name: Dry-run smoke (offline, no network)
+        working-directory: demos/analytics-using-managedcleanroom/scripts/frontend
+        run: |
+          ./03-accept-invitation.ps1 -Persona woodgrove -CollaborationId cid -InvitationId iid -DryRun
+          ./05-set-issuer-url.ps1    -Persona woodgrove -CollaborationId cid -DryRun
+          ./06-publish-dataset.ps1   -Persona woodgrove -CollaborationId cid -DocumentId doc -BodyFile none.json -DryRun
+          ./07-publish-query.ps1     -Persona woodgrove -CollaborationId cid -QueryName q -BodyFile none.json -DryRun
+          ./08-approve-query.ps1     -Persona woodgrove -CollaborationId cid -QueryName q -DryRun
+          ./09-run-query.ps1         -Persona woodgrove -CollaborationId cid -QueryName q -DryRun
+          ./10-monitor-query.ps1     -Persona woodgrove -CollaborationId cid -JobId job -DryRun
+          ./11-results-audit.ps1     -Persona woodgrove -CollaborationId cid -QueryName q -DryRun
+          Write-Host "Dry-run smoke OK"
