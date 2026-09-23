@@ -56,13 +56,6 @@ if (-not (Test-Path $identityMetadataFile)) {
 }
 $identityMeta = Get-Content $identityMetadataFile -Raw | ConvertFrom-Json
 
-$issuerUrlFile = Join-Path $outDir $resourceGroup "issuer-url.txt"
-if (-not (Test-Path $issuerUrlFile)) {
-    Write-Host "ERROR: '$issuerUrlFile' not found." -ForegroundColor Red
-    exit 1
-}
-$oidcIssuerUrl = (Get-Content $issuerUrlFile -Raw).Trim()
-
 $isCpk = ($datastoreMeta.input.encryptionMode -eq "CPK")
 $encryptionMode = if ($isCpk) { "CPK" } else { "SSE" }
 
@@ -71,7 +64,6 @@ function New-DatasetPublishBody {
     param(
         [PSCustomObject]$Meta,
         [PSCustomObject]$Identity,
-        [string]$IssuerUrl,
         [string]$AccessMode,
         [string[]]$AllowedFields,
         [string]$EncMode,
@@ -100,7 +92,6 @@ function New-DatasetPublishBody {
             name      = $Identity.identityName
             clientId  = $Identity.clientId
             tenantId  = $Identity.tenantId
-            issuerUrl = $IssuerUrl
         }
     }
 
@@ -141,7 +132,7 @@ $inputAllowedFields = if ($persona -eq "northwind") {
 }
 
 $inputBody = New-DatasetPublishBody -Meta $inputMeta -Identity $identityMeta `
-    -IssuerUrl $oidcIssuerUrl -AccessMode "read" -AllowedFields $inputAllowedFields `
+    -AccessMode "read" -AllowedFields $inputAllowedFields `
     -EncMode $encryptionMode -Maa $maaUrl -Subdirectory $subdirectory
 
 $inputFile = Join-Path $publishDir "$persona-input-dataset.json"
@@ -151,7 +142,7 @@ Write-Host "Input dataset body: $inputFile" -ForegroundColor Green
 # Output dataset (Woodgrove only)
 if ($persona -eq "woodgrove" -and $datastoreMeta.output) {
     $outputBody = New-DatasetPublishBody -Meta $datastoreMeta.output -Identity $identityMeta `
-        -IssuerUrl $oidcIssuerUrl -AccessMode "write" -AllowedFields @("user_id") `
+        -AccessMode "write" -AllowedFields @("user_id") `
         -EncMode $encryptionMode -Maa $maaUrl
 
     $outputFile = Join-Path $publishDir "woodgrove-output-dataset.json"
