@@ -57,8 +57,15 @@ if (-not $InvitationId) {
         $InvitationId = "<invitation-id>"
     }
     else {
-        $invitations = (Invoke-Frontend -Context $fe -Path "$CollaborationId/invitations" -Method GET).invitations
-        if (-not $invitations) { throw "No pending invitations for '$Persona' on $CollaborationId." }
+        $invitations = (Invoke-Frontend -Context $fe -Path "$CollaborationId/invitations?pendingOnly=true" -Method GET).invitations
+        if (-not $invitations) {
+            $collabs = (Invoke-Frontend -Context $fe -Path "" -Method GET).collaborations
+            if (($collabs | Where-Object collaborationId -eq $CollaborationId).userStatus -eq "Active") {
+                Write-Host "Already active in collaboration $CollaborationId."
+                return
+            }
+            throw "No pending invitations for '$Persona' on $CollaborationId."
+        }
         $invitations | Format-Table invitationId, accountType, status
         $InvitationId = $invitations[0].invitationId
     }

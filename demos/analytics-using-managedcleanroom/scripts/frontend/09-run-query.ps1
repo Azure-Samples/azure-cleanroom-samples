@@ -51,3 +51,4 @@ $runResult = Invoke-Frontend -Context $fe -Path "$CollaborationId/analytics/quer
 $jobId = $runResult.id
 Write-Host "Run submitted. Job ID: $jobId"
 Write-Host "Track with: ./10-monitor-query.ps1 -Persona $Persona -CollaborationId $CollaborationId -JobId $jobId"
+return $jobId

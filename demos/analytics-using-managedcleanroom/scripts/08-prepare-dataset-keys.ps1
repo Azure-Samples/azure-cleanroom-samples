@@ -124,7 +124,7 @@ function Get-SkrPolicy {
     # Fallback to REST
     $token = if ($TokenFile) { (Get-Content $TokenFile -Raw).Trim() } else { az account get-access-token --query accessToken -o tsv }
     $headers = @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" }
-    $url = "$feBase/collaborations/$collaborationId/analytics/datasets/$DatasetName/skr-policy?api-version=2026-03-01-preview"
+    $url = "$feBase/collaborations/$collaborationId/analytics/datasets/$DatasetName/skrpolicy?api-version=2026-03-01-preview"
     return Invoke-RestMethod -Uri $url -Headers $headers -Method Get -SkipCertificateCheck
 }
 
