@@ -94,12 +94,12 @@ See [scripts/frontend/run-collaborator.ps1](frontend/run-collaborator.ps1).
     -consumerInputDataset  woodgrove-input-csv-v1 `
     -outputDataset         woodgrove-output-csv-v1
 
-./scripts/frontend/run-query.ps1 -Persona woodgrove -QueryName query1-v1 `
-    -BodyFile generated/publish/query1-v1.json -SkipMonitor -SkipResults
+./scripts/frontend/07-publish-query.ps1 -Persona woodgrove -CollaborationId $collabId -QueryName query1-v1 `
+    -BodyFile generated/publish/query1-v1.json
 ```
 
-`-SkipMonitor -SkipResults` because collaborators still need to approve (Phase 3)
-before the query can actually run.
+Publishing casts the publisher's accept vote; remaining affected collaborators
+approve (Phase 3) before execution.
 
 ---
 
@@ -126,7 +126,7 @@ Re-run any time by repeating Phase 5 — no re-setup needed.
 | Owner | 1 Create | `./scripts/bicep/deploy-managed-cleanroom.ps1 ...` |
 | Both  | 2 Provision + OIDC | `04-prepare-resources` → OIDC helpers |
 | Collaborator | 3 Join + approve | `./scripts/frontend/run-collaborator.ps1 -Persona <p> -QueryName <q>` |
-| Owner | 4 Publish query | `./scripts/frontend/run-query.ps1 -Persona woodgrove -QueryName <q> -BodyFile <f> -SkipMonitor -SkipResults` |
+| Owner | 4 Publish query | `./scripts/frontend/07-publish-query.ps1 -Persona woodgrove -CollaborationId <id> -QueryName <q> -BodyFile <f>` |
 | Owner | 5 Run query | `./scripts/frontend/run-query.ps1 -Persona woodgrove -QueryName <q>` |
 
 > Every script supports `-DryRun` to print the planned requests without calling

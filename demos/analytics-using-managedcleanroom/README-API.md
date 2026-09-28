@@ -217,7 +217,7 @@ az account get-access-token --resource "https://management.azure.com/" --query a
 #### 1.5.2 Extract OID from Token
 
 ```powershell
-$tokenB64 = (Get-Content $personaTokenFile -Raw).Split('.')[1]
+$tokenB64 = (Get-Content $personaTokenFile -Raw).Split('.')[1].Replace('-', '+').Replace('_', '/')
 $padLen = (4 - $tokenB64.Length % 4) % 4
 $padded = $tokenB64 + ('=' * $padLen)
 $claims = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($padded)) | ConvertFrom-Json
@@ -355,12 +355,15 @@ Write-Host "Selected: $collabId"
 ### 3.2 Accept Invitation
 
 ```powershell
-$invitations = (Invoke-Frontend -Path "$collabId/invitations" -Method GET).invitations
+$invitations = (Invoke-Frontend -Path "$collabId/invitations?pendingOnly=true" -Method GET).invitations
 $invitations | Format-Table invitationId, accountType, status
 
-$invitationId = $invitations[0].invitationId
-
-Invoke-Frontend -Path "$collabId/invitations/$invitationId/accept" -Method POST
+if ($invitations) {
+    $invitationId = $invitations[0].invitationId
+    Invoke-Frontend -Path "$collabId/invitations/$invitationId/accept" -Method POST
+} elseif (($collabs | Where-Object collaborationId -eq $collabId).userStatus -ne "Active") {
+    throw "No pending invitation and collaborator is not Active."
+}
 ```
 
 ---
@@ -495,7 +498,7 @@ if ($persona -eq "woodgrove") {
 > [Optional dataset parameters](#optional-dataset-parameters) in Appendix D.
 
 > **Bring your own data**: If you want to provide your own datasets, upload your data directly to the
-> storage accounts created for your persona and update the `schema` and `accessPolicy` in the dataset
+> storage accounts created for your persona and update `datasetSchema` and `datasetAccessPolicy` in the dataset
 > body files: `generated/publish/$persona-input-dataset.json` and `generated/publish/$persona-output-dataset.json`.
 
 ### 6.2 Publish Input Dataset
@@ -569,7 +572,7 @@ Invoke-Frontend -Path "$collabId/analytics/datasets/$persona-input-csv$suffix" |
 > Get Northwind's exact dataset name (Northwind's suffix may differ from yours):
 > ```powershell
 > $datasets = Invoke-Frontend -Path "$collabId/analytics/datasets" -Method GET
-> $datasets.datasets | Where-Object { $_.id -match "northwind" } | ForEach-Object { Write-Host $_.id }
+> $datasets.value | Where-Object { $_.id -match "northwind" } | ForEach-Object { Write-Host $_.id }
 > ```
 
 ```powershell
@@ -597,9 +600,9 @@ Invoke-Frontend -Path "$collabId/analytics/queries/$queryName/publish" `
 
 ## Step 08: Approve Query `[EACH COLLABORATOR]`
 
-> **Single-collaborator**: Only Woodgrove votes (one vote → `Accepted`).
+> **Single-collaborator**: Publishing casts Woodgrove's accept vote; no separate vote is required.
 >
-> **Multi-collaborator**: Both collaborators must vote. Northwind needs the
+> **Multi-collaborator**: Only the remaining affected collaborators must vote. Northwind needs the
 > `$queryName` from Woodgrove (or list queries to find it).
 
 Each collaborator runs in their own terminal:
@@ -612,8 +615,10 @@ $proposalId = $queryInfo.proposalId
 Write-Host "Proposal ID: $proposalId"
 
 # Vote
-Invoke-Frontend -Path "$collabId/analytics/queries/$queryName/vote" `
-    -Method POST -Body @{ voteAction = "accept"; proposalId = $proposalId }
+if ($persona -ne "woodgrove" -and $queryInfo.state -ne "Accepted") {
+    Invoke-Frontend -Path "$collabId/analytics/queries/$queryName/vote" `
+        -Method POST -Body @{ voteAction = "accept"; proposalId = $proposalId }
+}
 ```
 
 > **Northwind**: If you don't have `$queryName`, list published queries and set it:
@@ -755,7 +760,7 @@ $bytes = [Convert]::FromBase64String($kc.kubeconfig)
 Retrieves admin credentials, opens the browser, and port-forwards to Grafana.
 
 ```powershell
-./demos/analytics-using-managedcleanroom/scripts/12-open-grafana-dashboard.ps1 -KubeConfigPath "./readonly.kubeconfig"
+./scripts/12-open-grafana-dashboard.ps1 -KubeConfigPath "./readonly.kubeconfig"
 ```
 
 Login with `admin` and the password printed by the script.
@@ -791,7 +796,7 @@ az identity federated-credential create --name "Analytics-$personaOid-federation
 | `SSL certificate verify failed` | Endpoint cert mismatch | Use `-SkipCertificateCheck` on `Invoke-RestMethod` |
 | `404 Not Found` on frontend | Using ARM resource ID instead of frontend UUID | Use UUID from `Invoke-Frontend -Path ""` |
 | `ContractNotFound` | Stale CCF endpoint | Create new collaboration |
-| `Already voted / Conflict` | Idempotent vote | Safe to ignore |
+| `Already voted / Conflict` | Publisher already voted | Check query state; skip an accept vote if already Accepted. Do not ignore other conflicts |
 | `PENDING_RERUN` | Normal scheduling | Keep polling |
 
 ---
@@ -822,7 +827,7 @@ Runtime:  SKR release → KEK private → unwrap DEK → CPK header → Storage 
 | Dataset | Fields | Allowed Fields |
 |---|---|---|
 | **Northwind input** | `audience_id` (string), `hashed_email` (string), `annual_income` (long), `region` (string) | `hashed_email`, `annual_income`, `region` |
-| **Woodgrove input** | `user_id` (string), `hashed_email` (string), `purchase_history` (string) | `hashed_email`, `purchase_history` |
+| **Woodgrove input** | `user_id` (string), `hashed_email` (string), `purchase_history` (string) | `user_id`, `hashed_email`, `purchase_history` |
 | **Woodgrove output** | `user_id` (string) | `user_id` |
 
 Fields not in `allowedFields` are excluded from query access — prevents PII exposure.
@@ -840,9 +845,9 @@ Supported formats: `csv`, `parquet`, `json`.
 
 | Section | Purpose |
 |---|---|
-| `queryData.segments[]` | Ordered SQL statements with `executionSequence`, `data`, `preConditions`, `postFilters` |
-| `inputDatasets[]` | Maps `datasetDocumentId` to SQL view names |
-| `outputDataset` | Where results are written |
+| `queryData[]` | SQL segments with integer `executionSequence` and string `data`, `preConditions`, `postFilters` |
+| `inputDatasets` | Comma-separated string of `datasetDocumentId:viewName` bindings |
+| `outputDataset` | String: `datasetDocumentId:output` |
 
 **Privacy controls**:
 

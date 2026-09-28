@@ -42,6 +42,10 @@ $fe = Get-FrontendContext -Persona $Persona -Frontend $Frontend -TokenFile $Toke
 # Resolve the proposal id from the query.
 $queryInfo = Invoke-Frontend -Context $fe -Path "$CollaborationId/analytics/queries/$QueryName"
 $proposalId = $queryInfo.proposalId
+if (-not $DryRun -and $VoteAction -eq "accept" -and $queryInfo.state -eq "Accepted") {
+    Write-Host "Query '$QueryName' is already Accepted."
+    return
+}
 if (-not $proposalId -and -not $DryRun) {
     # A missing proposal usually means the query is already decided, not unpublished.
     Write-Host "Query '$QueryName' has no open proposal (state='$($queryInfo.state)'); nothing to vote on."
@@ -49,7 +53,7 @@ if (-not $proposalId -and -not $DryRun) {
 }
 Write-Host "Proposal ID: $proposalId"
 
-# Vote. (Re-voting is idempotent; a Conflict/'already voted' response is safe.)
+# Vote.
 Invoke-Frontend -Context $fe -Path "$CollaborationId/analytics/queries/$QueryName/vote" -Method POST `
     -Body @{ voteAction = $VoteAction; proposalId = $proposalId }
 
