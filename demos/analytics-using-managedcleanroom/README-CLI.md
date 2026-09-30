@@ -62,6 +62,7 @@ providing your own data and query.
 - [Overview](#overview)
 - [Step 01: Prerequisites](#step-01-prerequisites) `[ALL]`
   - [1.1 Requirements](#11-requirements)
+    - [IMPORTANT: Capacity planning for query execution](#important-capacity-planning-for-query-execution)
   - [1.2 Terminal T1 (Owner) — Variables](#12-terminal-t1-owner--variables)
   - [1.3 One-Time Owner Setup](#13-one-time-owner-setup)
   - [1.4 Each Collaborator Terminal — Variables](#14-each-collaborator-terminal--variables)
@@ -108,23 +109,58 @@ providing your own data and query.
 | azcopy | v10+ (CPK mode only) |
 | kubectl | Latest stable |
 
-> **Quota check:** This sample deploys an AKS cluster and Confidential ACI
-> container groups in the `$resourceLocation` region (**West US** by default). Ensure your subscription has the
-> following minimum quota in that region before proceeding:
->
-> | Resource | Minimum vCPUs | SKU / Family |
-> |---|---|---|
-> | AKS node pool | 12 | 3 x Standard_D4ds_v5 (Ddsv5 family) |
-> | Confidential ACI | 6 | Confidential container groups |
->
-> The above covers a single `small` query execution (1 Spark driver + up to 5
-> executors, with the chart defaults of 1 vCPU each). Spark pods are provisioned at runtime and
-> removed after query execution completes. Multiple queries can run
-> concurrently - allow up to 6 vCPUs of Confidential ACI quota per additional
-> concurrent `small` query with those defaults. Larger scale SKUs or deployment
-> overrides require more quota; see [Scale SKU configuration](#scale-sku-configuration).
-> If you change the AKS SKU or node count below, recalculate the corresponding
-> VM-family and regional vCPU quota and leave headroom for upgrades.
+#### IMPORTANT: Capacity planning for query execution
+
+Complete capacity planning in `$resourceLocation` before creating the
+collaboration. The AKS SKU and node-pool size are creation-time settings and
+cannot be updated later.
+
+**1. Select a query scale SKU based on input data size.**
+
+| Input data processed by the query | `scaleSku` |
+|---|---|
+| Less than 300 GB | `small` |
+| 300–600 GB | `medium` |
+| More than 600 GB | `large` |
+
+> **Preview:** `large` is not ready for production use. Validate it with your
+> workload before relying on it.
+
+**2. Decide the required maximum parallel queries and select the collaboration
+configuration.**
+
+The service derives the internal scheduling capacity from `$aksSku` and
+`$nodePoolSize`. Customers must configure both values on the collaboration at
+creation time and ensure the required Ddsv5 quota is available in the
+subscription in `$resourceLocation`. Select a configuration whose maximum
+parallel queries meets your requirement for the `scaleSku` chosen in step 1:
+
+| `aksSku` | `nodePoolSize` | Max `small` queries | Max `medium` queries | Max `large` queries | Required Ddsv5 quota |
+|---|---:|---:|---:|---:|---:|
+| `Standard_D4ds_v5` | 3 | 10 | 5 | 3 | 12 vCPUs |
+| `Standard_D4ds_v5` | 4 | 15 | 8 | 5 | 16 vCPUs |
+| `Standard_D8ds_v5` | 3 | 20 | 10 | 6 | 24 vCPUs |
+
+\* Higher configurations are possible but are not yet validated or supported.
+
+**3. Calculate the Confidential ACI quota required for query execution.**
+
+Let `N` be the maximum number of parallel queries you plan to run. Ensure the
+subscription has the following Confidential ACI quota in `$resourceLocation`:
+
+| `scaleSku` | Pods per query | Confidential vCPUs per query | Required Confidential vCPU quota | Required Confidential Container Groups quota |
+|---|---:|---:|---:|---:|
+| `small` | 6 | 34 | `34 × N` | `6 × N` |
+| `medium` | 11 | 64 | `64 × N` | `11 × N` |
+| `large` | 21 | 124 | `124 × N` | `21 × N` |
+
+Actual runnable parallelism is the lower of the collaboration capacity above and
+the available Confidential ACI quota. Leave headroom for retries,
+terminating pods, other subscription workloads, and regional Confidential ACI
+availability; these values are planning ceilings, not throughput guarantees.
+
+> [!NOTE]
+> Upcoming scheduler updates will raise query scheduling density.
 
 The examples below target the **production RP and frontend** in `westus`, with
 collaboration resources in `westus`. Choose a supported resource region where your
@@ -278,7 +314,7 @@ the AKS node pool at creation time:
 
 | Option | Supported values | Default |
 |---|---|---|
-| `aks-sku` | `Standard_D4ds_v5`, `Standard_D8ds_v5`, `Standard_D16ds_v5`, `Standard_D32ds_v5` | `Standard_D4ds_v5` |
+| `aks-sku` | `Standard_D4ds_v5`, `Standard_D8ds_v5` | `Standard_D4ds_v5` |
 | `node-pool-size` | Integer from `3` through `10` | `3` |
 
 Both `aks-sku` and `node-pool-size` are optional. When omitted, they default to
@@ -742,18 +778,23 @@ Do not combine `--body` with `--start-date`, `--end-date`, `--dry-run`, or
 
 The current Spark frontend profiles map the run's `scaleSku` as follows:
 
-| `scaleSku` | Driver memory | Memory per executor | Maximum executors |
-|---|---|---|---|
-| `small` (default) | `4g` | `8g` | 5 |
-| `medium` | `8g` | `16g` | 10 |
-| `large` | `12g` | `24g` | 20 |
+| `scaleSku` | Driver memory | Memory per executor | Maximum executors | Input data guidance |
+|---|---|---|---:|---|
+| `small` (default) | `4g` | `8g` | 5 | Less than 300 GB |
+| `medium` | `8g` | `16g` | 10 | 300–600 GB |
+| `large` (preview) | `12g` | `24g` | 20 | More than 600 GB |
+
+`large` is not ready for production use. See
+[IMPORTANT: Capacity planning for query execution](#important-capacity-planning-for-query-execution)
+before choosing a scale SKU or collaboration size.
 
 Memory values use Spark's notation. Driver cores, executor cores, and minimum
 executors are inherited from the deployment configuration, not set by these
 profiles. The chart defaults are **1 driver core, 1 core per executor, and
 1 minimum executor**; deployments can override them. Maximum executors is a
-scaling limit, not a fixed count. Account for memory overhead and available
-regional capacity in addition to CPU quota.
+scaling limit, not a fixed count. Spark container cores do not represent the
+Confidential ACI group quota used in the capacity calculation above. Account for
+memory overhead and available regional capacity in addition to CPU quota.
 
 To inspect the effective settings without executing the query, send
 `dryRun: true` in the same request body and inspect `skuSettings` in the response.
