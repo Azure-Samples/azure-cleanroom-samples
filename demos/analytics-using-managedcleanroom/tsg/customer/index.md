@@ -9,7 +9,7 @@ Issues extracted from the [REST API guide](../../README-API.md) and [CLI guide](
 
 | # | Issue | Error / Symptom | Cause | Fix | Step |
 |---|---|---|---|---|---|
-| 1 | Quota insufficient | Collaboration creation or query execution fails | Subscription lacks minimum vCPU quota in the `$resourceLocation` region | Ensure at least 12 vCPUs Ddsv5 (AKS) + 6 vCPUs Confidential ACI. Allow up to 6 additional Confidential ACI vCPUs per concurrent `small` query. | Step 01 |
+| 1 | Quota insufficient | Collaboration creation or query execution fails | Subscription lacks Ddsv5 quota for the selected `aksSku`/`nodePoolSize`, or Confidential ACI vCPU/container-group quota for the planned query concurrency | Use the capacity-planning table to calculate both quotas in `$resourceLocation` before creating the collaboration. | Step 01 |
 | 2 | RP role assignment required | ARM operations fail due to missing permissions | RP App requires User Access Administrator on the subscription | `az role assignment create --assignee "d76bde86-0387-4db5-af46-51a9e31e6666" --role "User Access Administrator" --scope "/subscriptions/$subscription"` | Step 01 |
 | 3 | Python 3.13 tuple error (CLI only) | CLI commands fail with tuple error | CLI extension bug in older versions | Upgrade to `managedcleanroom` extension `1.0.0b10` | Any CLI step |
 
@@ -39,31 +39,89 @@ Issues extracted from the [REST API guide](../../README-API.md) and [CLI guide](
 
 ## Query Execution
 
+Start with the detailed run result, not run history. Run history is a summary
+and can omit `events[]`.
+
+First, list the detailed query events to see execution progress, warnings, and
+failures. Then inspect the application state and error:
+
+```powershell
+$result.events |
+    Select-Object type, reason, message, firstTimestamp, lastTimestamp, count |
+    Format-Table -Wrap
+
+$result.status.applicationState | ConvertTo-Json -Depth 5
+```
+
+If the run events indicate a collaboration-wide workload or endpoint problem,
+check collaboration health:
+
+```powershell
+# CLI guide
+az managedcleanroom collaboration show `
+    --collaboration-name $collabName `
+    --resource-group $collabRg `
+    --query "health"
+
+# REST API guide
+az rest --method GET --resource $armEndpoint `
+    --url "$collabArmUrl`?api-version=$armApiVersion" `
+    | ConvertFrom-Json | ForEach-Object { $_.properties.health } |
+    ConvertTo-Json -Depth 5
+```
+
+- `healthState: Ok`: the collaboration workload is healthy; continue with the
+  individual run's error and events.
+- `healthState: Error`: preserve `healthIssues` and the run ID when contacting
+  support.
+- `AnalyticsEndpointUnreachable`: verify NSG/AVNM port 443 requirements. If
+  networking is correct and the issue persists, contact support.
+
 | # | Issue | Error / Symptom | Cause | Fix | Step |
 |---|---|---|---|---|---|
-| 13 | Spark job failed | `SPARK_JOB_FAILED: ExitCode 1` | Federated credential subject mismatch | Delete/recreate FIC with correct `Analytics-{oid}` subject | Step 09 / 10 |
-| 14 | Query fails or times out | `FAILED` / `SUBMISSION_FAILED` or stuck in `SUBMITTED`/`RUNNING` | CACI capacity shortage, executor pods stuck, container crashes | Check `properties.health.healthIssues` for pod-level failures | Step 10 |
-| 15 | PENDING_RERUN state | Query shows `PENDING_RERUN` | Normal scheduling behavior | Keep polling — transitions to `SUBMITTED` automatically | Step 10 |
-| 16 | Already voted / Conflict | `Already voted` or `Conflict` on vote | Idempotent vote — already voted | Safe to ignore | Step 08 |
+| 13 | Pending rerun | `PENDING_RERUN` | Normal scheduling state | Keep polling; it transitions to `SUBMITTED` automatically. | Step 10 |
+| 14 | Transient driver mount warning | One early `FailedMount` for `spark-drv-...-conf-map`, followed by progress | Driver pod was created immediately before its Spark configuration map | No action. Do not cancel or resubmit the run. | Step 10 |
+| 15 | Confidential ACI placement failure | `FailedCreatePodSandBox: resource is not available in the location ... Resource requested: N CPU M GB`; executors remain in `Init`/`PENDING` | Confidential ACI platform capacity is unavailable for the requested container-group size in the region; this can occur even when subscription quota is sufficient. The warning is surfaced as a query-pod warning in detailed `events[]`. An upcoming monitoring update will persist all query-pod warnings after the pod or Kubernetes event is deleted; until it reaches `$resourceLocation`, the warning may only be visible while the run and affected pod are active. | If the warning persists, use [Cancel a Query](../../README-CLI.md#cancel-a-query), reduce concurrent runs, verify Confidential ACI quota, and retry later. If a stuck run has no useful warning, check collaboration health and preserve the run ID. If the issue continues, contact the Azure Container Instances (ACI) team with the region, requested CPU/memory, run ID, and event message. | Step 09 / 10 |
+| 16 | Collaboration scheduling capacity exhausted | `FailedScheduling: all schedulable Spark nodes are at their per-node pod limit` | Concurrent runs exceed the scheduling capacity selected when the collaboration was created | Reduce concurrent runs. If required concurrency is higher, create a collaboration with a larger supported `aksSku`/`nodePoolSize`; these values cannot be updated later. | Step 01 / 10 |
+| 17 | Executor starvation | Driver `ExitCode: 11`; all executors fail; `Initial job has not accepted any resources` repeats | Executors cannot acquire Confidential ACI capacity | Check `events[]` for `FailedCreatePodSandBox`, then follow issue 15. | Step 10 |
+| 18 | Dataset identity failure | `SPARK_JOB_FAILED: ExitCode 1` with `AADSTS700211: No matching federated identity record` | Incorrect federated-credential subject or stale dataset issuer | Recreate the FIC with subject `Analytics-{token oid}` and republish the dataset if its issuer is stale. Never substitute `az ad signed-in-user show --query id` for the token `oid`. | Step 05 / 06 / 10 |
+| 19 | Insufficient shuffle/spill space | `java.io.IOException: No space left on device` during a wide join or shuffle | The selected `scaleSku` is too small for the workload | Retry with `medium` when using `small`. `large` is preview-only and is not ready for production use. | Step 09 / 10 |
+| 20 | Executor start-then-crash | Executor reaches `Running`, then fails with `ExitCode: 1` and no useful message | Unknown runtime failure after successful placement; this alone does not prove a capacity shortage | Do not classify it as capacity unless `FailedCreatePodSandBox` is also present. Retry once; if it recurs, preserve the run ID and events and contact support. | Step 10 |
+| 21 | Container or image failure | Persistent `Failed`/`BackOff`, image-pull, container-crash, or pod-init errors | Collaboration workload or service infrastructure failure | Check collaboration health. If the issue persists, preserve the run ID and `healthIssues` and contact support. | Step 10 |
+| 22 | Query submission timeout | `AnalyticsRequestFailed`, 100-second timeout, or no run appears in run history | Analytics endpoint unreachable, unhealthy AKS workload, or NSG/AVNM blocking port 443 | Check run history before resubmitting, then check collaboration health and networking. Preserve the run ID, if created, and contact support when health remains in `Error`. | Step 09 / 10 |
+| 23 | Already voted / Conflict | `Already voted` or `Conflict` on vote | Idempotent vote — already voted | Safe to ignore only when the query already records that collaborator's vote. Do not ignore unrelated conflicts. | Step 08 |
+
+A single early warning is not necessarily fatal. Treat it as blocking when the
+query stops making progress and the same warning persists, or when the run
+reaches `FAILED` or `SUBMISSION_FAILED`.
+
+For any unresolved query-execution issue, contact the ACCR team and provide:
+
+1. Collaboration resource ID.
+2. Run ID.
+3. Run events.
+4. `healthIssues`, when available.
+5. [Read-only kubeconfig](../../README-CLI.md#121-get-readonly-kubeconfig)
+   through an approved secure support channel.
 
 ## Dataset & Schema
 
 | # | Issue | Error / Symptom | Cause | Fix | Step |
 |---|---|---|---|---|---|
-| 17 | Schema incompatible | `is_schema_compatible: Missing field` | Output `allowedFields` missing query output columns | Ensure output dataset `allowedFields` includes all columns the query produces | Step 06 / 07 |
-| 18 | CPK data corruption | Decryption failures in CPK mode | User manually encrypted files before upload | CPK is server-side encryption — upload plaintext via `azcopy copy --cpk-by-value` | Step 04 |
+| 24 | Schema incompatible | `is_schema_compatible: Missing field` | Output `allowedFields` missing query output columns | Ensure output dataset `allowedFields` includes all columns the query produces | Step 06 / 07 |
+| 25 | CPK data corruption | Decryption failures in CPK mode | User manually encrypted files before upload | CPK is server-side encryption — upload plaintext via `azcopy copy --cpk-by-value` | Step 04 |
 
 ## Frontend API
 
 | # | Issue | Error / Symptom | Cause | Fix | Step |
 |---|---|---|---|---|---|
-| 19 | 404 Not Found on frontend | `404 Not Found` | Using ARM resource ID instead of frontend UUID | **API**: Use UUID from `Invoke-Frontend -Path ""`. **CLI**: Use UUID from `frontend collaboration list` | Step 03+ |
-| 20 | BOM encoding in body JSON | ARM API rejects body JSON | PowerShell `Out-File` adds BOM | Use `[System.IO.File]::WriteAllText()` instead of `Out-File` | Step 02 |
+| 26 | 404 Not Found on frontend | `404 Not Found` | Using ARM resource ID instead of frontend UUID | **API**: Use UUID from `Invoke-Frontend -Path ""`. **CLI**: Use UUID from `frontend collaboration list` | Step 03+ |
+| 27 | BOM encoding in body JSON | ARM API rejects body JSON | PowerShell `Out-File` adds BOM | Use `[System.IO.File]::WriteAllText()` instead of `Out-File` | Step 02 |
 
 ## SPN / App-Based Authentication
 
 | # | Issue | Error / Symptom | Cause | Fix | Step |
 |---|---|---|---|---|---|
-| 21 | Certificate not registered | `AADSTS700027: certificate not registered` | Using `az login` cert auth instead of MSAL SNI | Use Python MSAL with `public_certificate` via `get-sp-token-sni.ps1` | SPN auth |
-| 22 | Credential lifetime error | `Credential lifetime exceeds max value` | Certificate lifetime too long | Use OneCert + `trustedCertificateSubjects` in app manifest | SPN auth |
-| 23 | Invalid collaborator identifier | `InvalidCollaboratorIdentifier` | Missing `--object-id` and `--tenant-id` | Add `--object-id` (Enterprise App, not app reg) and `--tenant-id` to `add-collaborator` | SPN setup |
+| 28 | Certificate not registered | `AADSTS700027: certificate not registered` | Using `az login` cert auth instead of MSAL SNI | Use Python MSAL with `public_certificate` via `get-sp-token-sni.ps1` | SPN auth |
+| 29 | Credential lifetime error | `Credential lifetime exceeds max value` | Certificate lifetime too long | Use OneCert + `trustedCertificateSubjects` in app manifest | SPN auth |
+| 30 | Invalid collaborator identifier | `InvalidCollaboratorIdentifier` | Missing `--object-id` and `--tenant-id` | Add `--object-id` (Enterprise App, not app reg) and `--tenant-id` to `add-collaborator` | SPN setup |

@@ -83,7 +83,9 @@ providing your own data and query.
 - [Step 07: Publish Query](#step-07-publish-query) `[WOODGROVE]`
 - [Step 08: Approve Query](#step-08-approve-query) `[EACH COLLABORATOR]`
 - [Step 09: Execute Query](#step-09-execute-query) `[WOODGROVE]`
+- [Cancel a Query](#cancel-a-query) `[WOODGROVE]`
 - [Step 10: Monitor Query](#step-10-monitor-query) `[ANY]`
+  - [10.1 Query execution troubleshooting](#101-query-execution-troubleshooting)
 - [Step 11: Results & Audit](#step-11-results--audit) `[WOODGROVE]`
 - [Step 12: Grafana Dashboards](#step-12-grafana-dashboards) `[OWNER]`
 - [Appendix A: Federated Credential Subject Reference](#appendix-a-federated-credential-subject-reference)
@@ -771,15 +773,14 @@ Write-Host "Job ID: $jobId"
 
 The current Spark frontend profiles map the run's `scaleSku` as follows:
 
-| `scaleSku` | Driver memory | Memory per executor | Maximum executors | Input data guidance |
-|---|---|---|---:|---|
-| `small` (default) | `4g` | `8g` | 5 | Less than 300 GB |
-| `medium` | `8g` | `16g` | 10 | 300–600 GB |
-| `large` (preview) | `12g` | `24g` | 20 | More than 600 GB |
+| `scaleSku` | Driver memory | Memory per executor | Maximum executors |
+|---|---|---|---:|
+| `small` (default) | `4g` | `8g` | 5 |
+| `medium` | `8g` | `16g` | 10 |
+| `large` | `12g` | `24g` | 20 |
 
-`large` is not ready for production use. See
-[IMPORTANT: Capacity planning for query execution](#important-capacity-planning-for-query-execution)
-before choosing a scale SKU or collaboration size.
+Use [capacity planning](#important-capacity-planning-for-query-execution) to
+select the `scaleSku` and collaboration size.
 
 Memory values use Spark's notation. Driver cores, executor cores, and minimum
 executors are inherited from the deployment configuration, not set by these
@@ -798,16 +799,6 @@ actual execution.
 > 1. **NSG (Network Security Group)**: If your tenant has NSGs blocking inbound internet access to the AKS Analytics endpoint on port 443, the query will fail. Contact the ACCR team with the `tenantId` of the collaboration so we can whitelist your tenant — an NSG rule will be updated to allow port 443 access to the AKS cluster.
 > 2. **[AVNM (Azure Virtual Network Manager)](https://learn.microsoft.com/en-us/azure/virtual-network-manager/)**: This is a tenant-level policy. Your tenant admin needs to create an AVNM rule to allow port 443 access from the internet by following the documentation linked above.
 
-**Optional: cancel a run.** After submitting a query, use the following command
-only if you want to cancel it before completion:
-
-```powershell
-az managedcleanroom frontend analytics query cancel-run `
-    --collaboration-id $collabId `
-    --document-id $queryName `
-    --run-id $jobId
-```
-
 > **Date-range filtering**: To read datasets within a specific date range, pass
 > `--start-date` and `--end-date` alongside `--scale-sku`:
 >
@@ -820,6 +811,32 @@ az managedcleanroom frontend analytics query cancel-run `
 >     --end-date "2025-09-02" -o json | ConvertFrom-Json
 > $jobId = $runResult.id
 > ```
+
+---
+
+## Cancel a Query
+
+> **Persona:** Woodgrove
+
+Cancel a non-terminal query when a persistent fatal error prevents progress or
+when its capacity should be released before the job timeout. Do not cancel a run
+for a single transient warning such as an early `FailedMount`.
+
+```powershell
+$cancelResult = az managedcleanroom frontend analytics query cancel-run `
+    --collaboration-id $collabId `
+    --document-id $queryName `
+    --run-id $jobId -o json | ConvertFrom-Json
+
+$cancelResult | ConvertTo-Json -Depth 5
+```
+
+A successful request returns the run ID with `status: "cancelled"` and deletes
+the Spark application so its driver and executor capacity can be released.
+Consequently, a subsequent lookup for that run returns `404 Not Found`; this is
+the expected confirmation that cancellation completed. Cancelling an unknown
+or already-deleted run also returns 404, so confirm the run ID before submitting
+the request.
 
 ---
 
@@ -847,22 +864,67 @@ $result | ConvertTo-Json -Depth 10
 
 > `PENDING_RERUN` is normal — transitions to `SUBMITTED` automatically.
 
-> **Query fails or times out?** If the query stays in `SUBMITTED` or `RUNNING` for
-> an extended period, or transitions to `FAILED`/`SUBMISSION_FAILED`, check the
-> collaboration health for pod-level or capacity issues:
->
-> ```powershell
-> az managedcleanroom collaboration show `
->     --collaboration-name $collabName `
->     --resource-group $collabRg `
->     --query "health"
-> ```
->
-> If `healthState` is `Error`, the `healthIssues` array will list specific pod
-> failures — such as CACI capacity shortages in the region (e.g.,
-> `FailedCreatePodSandBox: resource not available`), executor pods stuck in init,
-> or container crashes. These issues indicate infrastructure-level problems that
-> prevent Spark executors from starting.
+### 10.1 Query execution troubleshooting
+
+If a query remains in `SUBMITTED` or `RUNNING` beyond its expected duration, or
+transitions to `FAILED` or `SUBMISSION_FAILED`, inspect the run before retrying.
+Use the detailed `runresult show` response from the monitoring loop above, not
+`runhistory list`; run history is a summary and can omit `events[]`.
+
+First, list the detailed query events to see execution progress, warnings, and
+failures. Then inspect the application state and error:
+
+```powershell
+$result.events |
+    Select-Object type, reason, message, firstTimestamp, lastTimestamp, count |
+    Format-Table -Wrap
+
+$result.status.applicationState | ConvertTo-Json -Depth 5
+```
+
+| Error or symptom | Likely cause | Resolution |
+|---|---|---|
+| `PENDING_RERUN` | Normal scheduling state | Keep polling; it transitions to `SUBMITTED` automatically. |
+| One early `FailedMount` for `spark-drv-...-conf-map`, followed by progress | Transient driver-startup race | No action. Do not cancel or resubmit the run. |
+| `FailedCreatePodSandBox: resource is not available in the location ... Resource requested: N CPU M GB`; executors remain in `Init`/`PENDING` | Confidential ACI platform capacity is unavailable for the requested container-group size in the region. This can occur even when subscription quota is sufficient. The warning is surfaced as a query-pod warning in detailed `events[]`. An upcoming monitoring update will persist all query-pod warnings after the pod or Kubernetes event is deleted; until it reaches `$resourceLocation`, the warning may only be visible while the run and affected pod are active. | If the warning persists, [cancel the run](#cancel-a-query), reduce concurrent runs, verify the Confidential ACI quota calculated in [capacity planning](#important-capacity-planning-for-query-execution), and retry later. If a stuck run has no useful warning, check collaboration health and preserve the run ID. If the issue continues, contact the Azure Container Instances (ACI) team with the region, requested CPU/memory, run ID, and event message. |
+| `FailedScheduling: all schedulable Spark nodes are at their per-node pod limit` | Concurrent runs exceed the collaboration's query-scheduling capacity. | Reduce concurrent runs. If this recurs at the required concurrency, create a collaboration with a larger supported `aksSku`/`nodePoolSize`; these settings cannot be changed after creation. |
+| Driver `ExitCode: 11`, all executors fail, or the error repeats `Initial job has not accepted any resources` | Executor starvation, usually caused by Confidential ACI placement failure. | Check `events[]` for `FailedCreatePodSandBox`, then follow the capacity resolution above. |
+| `SPARK_JOB_FAILED: ExitCode 1` with `AADSTS700211: No matching federated identity record` | The dataset identity has an incorrect issuer or federated-credential subject. | Recreate the federated credential with subject `Analytics-$personaOid`, using the `oid` from the persona token, then republish the dataset if its issuer is stale. See [Appendix A](#appendix-a-federated-credential-subject-reference). |
+| `java.io.IOException: No space left on device` during a wide join or shuffle | The selected `scaleSku` is too small for the query's shuffle/spill requirements. | Retry with `medium` when using `small`. `large` is preview-only and is not ready for production use. |
+| Executor reaches `Running` and then fails with `ExitCode: 1` and no useful message | The executor started and then crashed; this alone does not prove a capacity shortage. | Do not classify it as capacity unless `FailedCreatePodSandBox` is also present. Retry once; if it recurs, preserve the run ID and events and contact support. |
+| Persistent `Failed`/`BackOff`, image-pull, container-crash, or pod-init errors | Collaboration workload or service infrastructure failure. | Check collaboration health below. If the issue persists, preserve the run ID and `healthIssues` and contact support. |
+| Query submission returns `AnalyticsRequestFailed` or a 100-second timeout, or no run appears in run history | The analytics endpoint is unreachable, an AKS workload is unhealthy, or NSG/AVNM policy blocks port 443. | Check collaboration health and the [network-connectivity requirements](#step-09-execute-query). Do not repeatedly submit the same query until you confirm whether a run was created. |
+
+A single early warning is not necessarily fatal. Treat an issue as blocking when
+the query stops making progress and the same warning persists or the run reaches
+a terminal failure state.
+
+Check collaboration-wide health after reviewing the run events:
+
+```powershell
+az managedcleanroom collaboration show `
+    --collaboration-name $collabName `
+    --resource-group $collabRg `
+    --query "health"
+```
+
+- `healthState: Ok` means the collaboration workload is healthy; troubleshoot
+  the individual run using its error and events.
+- `healthState: Error` means `healthIssues` contains collaboration-wide pod,
+  container, endpoint, or infrastructure failures. Preserve `healthIssues` and
+  the run ID when contacting support.
+- `AnalyticsEndpointUnreachable` indicates the analytics workload cannot be
+  reached. Verify the documented NSG/AVNM requirements; if networking is not the
+  cause and the health issue persists, contact support.
+
+For any unresolved query-execution issue, contact the ACCR team and provide:
+
+1. Collaboration resource ID.
+2. Run ID.
+3. Run events.
+4. `healthIssues`, when available.
+5. [Read-only kubeconfig](#121-get-readonly-kubeconfig) through an approved
+   secure support channel.
 
 ---
 
