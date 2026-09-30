@@ -13,12 +13,12 @@
       2. (optional) Publish the query (07) when -BodyFile is supplied.
          NOTE: after publishing, every affected collaborator must approve it
          (run-collaborator.ps1 / 08-approve-query.ps1) before it can run.
-      3. Run the query (capturing the job id).
+      3. Verify the query is Accepted, then run it (capturing the job id).
       4. (optional) Monitor to a terminal state (10).
       5. (optional) Print run history + audit events (11).
 
     Output download (README Step 11.3) is left to ../11-download-output.ps1
-    because it needs the per-persona resource group.
+    because it needs the per-persona resource group and dataset suffix.
 
 .PARAMETER Persona
     Owner persona (selects the token file), e.g. woodgrove.
@@ -35,6 +35,9 @@
 
 .PARAMETER BodyFile
     Optional query body JSON to publish before running (invokes 07).
+
+.PARAMETER ScaleSku
+    Spark execution profile: small (default), medium, or large.
 
 .PARAMETER StartDate
     Optional dataset date-range lower bound (e.g. "2025-09-01").
@@ -62,7 +65,8 @@
     ./run-query.ps1 -Persona woodgrove -QueryName query1-v1
 
 .EXAMPLE
-    # Publish then run (remember collaborators must approve between the two)
+    # Publish then run a single-owner query (publication casts the owner's vote).
+    # A cross-party query must be published and approved separately before running.
     ./run-query.ps1 -Persona woodgrove -QueryName query1-v1 `
         -BodyFile generated/publish/query1-v1.json
 #>
@@ -72,6 +76,7 @@ param(
     [string]$CollaborationId,
     [string]$CollaborationName,
     [string]$BodyFile,
+    [ValidateSet("small", "medium", "large")][string]$ScaleSku = "small",
     [string]$StartDate,
     [string]$EndDate,
     [switch]$SkipMonitor,
@@ -101,16 +106,27 @@ if ($BodyFile) {
     Write-Host "==> Publishing query '$QueryName'..."
     & "$PSScriptRoot/07-publish-query.ps1" @childArgs -CollaborationId $CollaborationId `
         -QueryName $QueryName -BodyFile $BodyFile
-    Write-Host "    (collaborators must now approve via run-collaborator.ps1 / 08-approve-query.ps1)"
+    Write-Host "    (the publisher's vote is automatic; remaining affected collaborators must approve)"
 }
 
-# 3. Run the query (capture the job id).
+# 3. Check approval before submitting a run.
+if (-not $DryRun) {
+    $queryInfo = Invoke-Frontend -Context $fe -Path "$CollaborationId/analytics/queries/$QueryName"
+    if ($queryInfo.state -ne "Accepted") {
+        throw "Query '$QueryName' is not Accepted (state='$($queryInfo.state)'). Obtain the required approvals, then rerun without -BodyFile."
+    }
+}
+
+# Run the query (capture the job id).
 Write-Host "==> Running query '$QueryName'..."
-$runBody = @{ runId = [guid]::NewGuid().ToString() }
+$runBody = @{ runId = [guid]::NewGuid().ToString(); scaleSku = $ScaleSku.ToLowerInvariant() }
 if ($StartDate) { $runBody.startDate = $StartDate }
 if ($EndDate) { $runBody.endDate = $EndDate }
 $runResult = Invoke-Frontend -Context $fe -Path "$CollaborationId/analytics/queries/$QueryName/run" -Method POST -Body $runBody
 $jobId = if ($DryRun) { "<job-id>" } else { $runResult.id }
+if ([string]::IsNullOrWhiteSpace([string]$jobId)) {
+    throw "Frontend did not return a job ID for query '$QueryName'. Submission may have succeeded; check run history before retrying."
+}
 Write-Host "    Job ID: $jobId"
 
 # 4. Monitor (optional).
@@ -122,9 +138,17 @@ if (-not $SkipMonitor) {
 # 5. Results + audit (optional).
 if (-not $SkipResults) {
     Write-Host "==> Fetching run history + audit events..."
-    & "$PSScriptRoot/11-results-audit.ps1" @childArgs -CollaborationId $CollaborationId -QueryName $QueryName
+    if ($DryRun) {
+        & "$PSScriptRoot/11-results-audit.ps1" @childArgs -CollaborationId $CollaborationId -QueryName $QueryName | Out-Null
+    } else {
+        & "$PSScriptRoot/11-results-audit.ps1" @childArgs -CollaborationId $CollaborationId -QueryName $QueryName
+    }
 }
 
 Write-Host ""
+if ($DryRun) {
+    Write-Host "[DRY-RUN] Workflow preview complete; no query was submitted."
+    return $jobId
+}
 Write-Host "Query workflow complete for '$QueryName' (job $jobId) on collaboration $CollaborationId."
-Write-Host "Download output with: ../11-download-output.ps1 -resourceGroup <rg> -JobId $jobId"
+Write-Host "From the demo root, download with: .\scripts\11-download-output.ps1 -resourceGroup <rg> -datasetSuffix <suffix> -JobId $jobId"

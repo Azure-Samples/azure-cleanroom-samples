@@ -296,14 +296,16 @@ az rest --method PUT `
 The `properties.targetResourceConfiguration` object controls the AKS node pool
 at creation time:
 
-| Property | Supported values | Sample value |
+| Property | Supported values | Default |
 |---|---|---|
 | `aksSku` | `Standard_D4ds_v5`, `Standard_D8ds_v5`, `Standard_D16ds_v5`, `Standard_D32ds_v5` | `Standard_D4ds_v5` |
 | `nodePoolSize` | Integer from `3` through `10` | `3` |
 
-These are creation-time settings, not collaboration-update arguments.
+Both `aksSku` and `nodePoolSize` are optional. When omitted, they default to
+`Standard_D4ds_v5` and `3`, respectively. These are creation-time settings, not
+collaboration-update arguments.
 
-#### Optional public IP tagging (not used in this sample)
+#### Optional public IP tagging
 
 The same target configuration can also accept `iPTagConfiguration`, with both
 `type` and `value`, to tag public IP resources created for the collaboration.
@@ -314,11 +316,20 @@ These are networking IP tags, not ordinary ARM resource tags.
 | `FirstPartyUsage` | `/AzureCleanRoomsProd` | Approved Microsoft first-party production usage |
 | `FirstPartyUsage` | `/AzureCleanRoomsNonProd` | Approved Microsoft first-party non-production usage |
 
-Use only IP-tag values approved for your subscription and scenario. For example,
-the optional JSON member under `targetResourceConfiguration` is
-`"iPTagConfiguration": {"type": "FirstPartyUsage", "value": "/AzureCleanRoomsProd"}`.
-**Do not add it to the create body above for this sample**: the sample supplies
-only the AKS SKU and node count, without an IP-tag configuration.
+Use only IP-tag values approved for your subscription and scenario. To create a
+collaboration with IP tags, use the following value for
+`properties.targetResourceConfiguration` in the creation body:
+
+```json
+{
+  "iPTagConfiguration": {
+    "type": "FirstPartyUsage",
+    "value": "/AzureCleanRoomsProd"
+  }
+}
+```
+
+The JSON property name `iPTagConfiguration` is case-sensitive.
 
 **Runtime**: ~25 minutes. Poll `provisioningState` until `Succeeded`:
 
@@ -838,10 +849,10 @@ $audit | ConvertTo-Json -Depth 10
 
 ### 11.3 Download Output
 
-Auto-detects SSE/CPK mode from suffix-specific metadata. In SSE mode, `-JobId`
-filters downloads to that run. The CPK download currently includes all CSV
-outputs in the selected container; use the returned job ID to identify the
-matching run's files.
+Auto-detects SSE/CPK mode from suffix-specific output metadata and uses its
+container and, for CPK, local DEK file. In both modes, `-JobId` selects the exact
+run directory under `Analytics/<date>/<run-id>/` and downloads all its CSV
+partitions. Blob paths are preserved under the output directory.
 
 ```powershell
 ./scripts/11-download-output.ps1 -resourceGroup $personaRg `
@@ -873,7 +884,8 @@ $bytes = [Convert]::FromBase64String($kc.kubeconfig)
 
 ### 12.2 Open Grafana Dashboard
 
-Retrieves admin credentials, opens the browser, and port-forwards to Grafana.
+Uses the read-only kubeconfig to access diagnostics through Grafana, prints the
+URL to open manually in your browser, and port-forwards until you press Ctrl+C.
 
 ```powershell
 ./scripts/12-open-grafana-dashboard.ps1 -KubeConfigPath "./readonly.kubeconfig"

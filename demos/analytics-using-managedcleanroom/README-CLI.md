@@ -276,14 +276,16 @@ az managedcleanroom collaboration create `
 The `--target-resource-configuration` argument (alias `--target-config`) controls
 the AKS node pool at creation time:
 
-| Option | Supported values | Sample value |
+| Option | Supported values | Default |
 |---|---|---|
 | `aks-sku` | `Standard_D4ds_v5`, `Standard_D8ds_v5`, `Standard_D16ds_v5`, `Standard_D32ds_v5` | `Standard_D4ds_v5` |
 | `node-pool-size` | Integer from `3` through `10` | `3` |
 
-These are creation-time settings, not collaboration-update arguments.
+Both `aks-sku` and `node-pool-size` are optional. When omitted, they default to
+`Standard_D4ds_v5` and `3`, respectively. These are creation-time settings, not
+collaboration-update arguments.
 
-#### Optional public IP tagging (not used in this sample)
+#### Optional public IP tagging
 
 The same target configuration can also accept `i-p-tag-configuration`, with both
 `type` and `value`, to tag public IP resources created for the collaboration.
@@ -294,11 +296,12 @@ These are networking IP tags, not ordinary ARM resource `--tags`.
 | `FirstPartyUsage` | `/AzureCleanRoomsProd` | Approved Microsoft first-party production usage |
 | `FirstPartyUsage` | `/AzureCleanRoomsNonProd` | Approved Microsoft first-party non-production usage |
 
-Use only IP-tag values approved for your subscription and scenario. For example,
-the optional CLI shorthand member is
-`i-p-tag-configuration:{type:FirstPartyUsage,value:/AzureCleanRoomsProd}`.
-**Do not add it to the create command above for this sample**: the sample supplies
-only the AKS SKU and node count, without an IP-tag configuration.
+Use only IP-tag values approved for your subscription and scenario. Specify IP
+tags in `az managedcleanroom collaboration create` with this argument:
+
+```text
+    --target-resource-configuration "{i-p-tag-configuration:{type:FirstPartyUsage,value:/AzureCleanRoomsProd}}" `
+```
 
 **Runtime**: ~25 minutes. Poll `provisioningState` until `Succeeded`:
 
@@ -854,10 +857,10 @@ az managedcleanroom frontend analytics auditevent list `
 
 ### 11.3 Download Output
 
-Auto-detects SSE/CPK mode from suffix-specific metadata. In SSE mode, `-JobId`
-filters downloads to that run. The CPK download currently includes all CSV
-outputs in the selected container; use the returned job ID to identify the
-matching run's files.
+Auto-detects SSE/CPK mode from suffix-specific output metadata and uses its
+container and, for CPK, local DEK file. In both modes, `-JobId` selects the exact
+run directory under `Analytics/<date>/<run-id>/` and downloads all its CSV
+partitions. Blob paths are preserved under the output directory.
 
 ```powershell
 ./scripts/11-download-output.ps1 -resourceGroup $personaRg `
@@ -889,7 +892,8 @@ $bytes = [Convert]::FromBase64String($kc.kubeconfig)
 
 ### 12.2 Open Grafana Dashboard
 
-Retrieves admin credentials, opens the browser, and port-forwards to Grafana.
+Uses the read-only kubeconfig to access diagnostics through Grafana, prints the
+URL to open manually in your browser, and port-forwards until you press Ctrl+C.
 
 ```powershell
 ./scripts/12-open-grafana-dashboard.ps1 -KubeConfigPath "./readonly.kubeconfig"

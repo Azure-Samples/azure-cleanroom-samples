@@ -16,7 +16,8 @@
     Prerequisites:
     - 05-prepare-data.ps1 (generates datastore metadata)
     - 06-setup-oidc-storage.ps1 (generates identity metadata + issuer URL)
-    - 08-prepare-dataset-keys.ps1 (CPK only — generates KEKs, updates metadata)
+    For CPK, publish these dataset bodies before running 08-prepare-dataset-keys.ps1;
+    key preparation needs the SKR policy of the published dataset.
 #>
 param(
     [Parameter(Mandatory)]

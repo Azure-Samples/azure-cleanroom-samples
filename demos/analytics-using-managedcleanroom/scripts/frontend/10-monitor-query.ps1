@@ -4,8 +4,9 @@
 
 .DESCRIPTION
     Polls the run status until COMPLETED, FAILED, or SUBMISSION_FAILED.
-    On a non-Ok collaboration, also prints health issues to aid triage
-    (e.g. CACI capacity shortages, executor pods stuck in init).
+    On failure, attempts to print collaboration health issues to aid triage
+    (e.g. CACI capacity shortages, executor pods stuck in init), then throws.
+    A health lookup error does not replace the original terminal run failure.
 
     Mirrors README-API.md Step 10 "Monitor Query".
 
@@ -56,7 +57,12 @@ $result | ConvertTo-Json -Depth 10
 
 if ($state -ne "COMPLETED") {
     Write-Warning "Run ended in state '$state'. Checking collaboration health for pod-level/capacity issues..."
-    $collabs = (Invoke-Frontend -Context $fe -Path "" -Method GET).collaborations
-    $health = ($collabs | Where-Object { $_.collaborationId -eq $CollaborationId }).health
-    if ($health) { $health | ConvertTo-Json -Depth 5 }
+    try {
+        $collabs = (Invoke-Frontend -Context $fe -Path "" -Method GET).collaborations
+        $health = ($collabs | Where-Object { $_.collaborationId -eq $CollaborationId }).health
+        if ($health) { $health | ConvertTo-Json -Depth 5 }
+    } catch {
+        Write-Warning "Could not retrieve collaboration health: $($_.Exception.Message)"
+    }
+    throw "Query run '$JobId' ended in state '$state'."
 }
