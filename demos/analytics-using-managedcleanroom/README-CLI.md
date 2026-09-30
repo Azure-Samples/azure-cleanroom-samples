@@ -141,7 +141,7 @@ parallel queries meets your requirement for the `scaleSku` chosen in step 1:
 | `Standard_D4ds_v5` | 4 | 15 | 8 | 5 | 16 vCPUs |
 | `Standard_D8ds_v5` | 3 | 20 | 10 | 6 | 24 vCPUs |
 
-\* Higher configurations are possible but are not yet validated or supported.
+> Higher configurations are possible but are not yet validated or supported.
 
 **3. Calculate the Confidential ACI quota required for query execution.**
 
