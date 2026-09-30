@@ -67,12 +67,18 @@ providing your own data and query.
   - [1.4 Each Collaborator Terminal — Variables](#14-each-collaborator-terminal--variables)
   - [1.5 Acquire Token, Extract OID & Configure CLI](#15-acquire-token-extract-oid--configure-cli-each-collaborator) `[EACH COLLABORATOR]`
 - [Step 02: Create Collaboration](#step-02-create-collaboration) `[OWNER]`
-  - [2.1 Create Collaboration & Enable Workload](#21-create-collaboration--enable-workload)
-  - [2.2 Add More Collaborators (Optional)](#22-add-more-collaborators-optional)
+  - [2.1 Create Resource Group](#21-create-resource-group)
+  - [2.2 Create Collaboration](#22-create-collaboration)
+  - [2.3 Enable Analytics Workload](#23-enable-analytics-workload)
+  - [2.4 Add More Collaborators (Optional)](#24-add-more-collaborators-optional)
 - [Step 03: Accept Invitations](#step-03-accept-invitations) `[EACH COLLABORATOR]`
 - [Step 04: Provision Resources & Upload Data](#step-04-provision-resources--upload-data) `[EACH COLLABORATOR]`
 - [Step 05: OIDC Identity & Access](#step-05-oidc-identity--access) `[EACH COLLABORATOR]`
 - [Step 06: Publish Datasets](#step-06-publish-datasets) `[EACH COLLABORATOR]`
+  - [6.1 Build Dataset Body JSON](#61-build-dataset-body-json)
+  - [6.2 Publish Input Dataset](#62-publish-input-dataset)
+  - [6.3 Publish Output Dataset (Woodgrove only)](#63-publish-output-dataset-woodgrove-only)
+  - [6.4 Prepare CPK Keys (CPK mode only)](#64-prepare-cpk-keys-cpk-mode-only)
 - [Step 07: Publish Query](#step-07-publish-query) `[WOODGROVE]`
 - [Step 08: Approve Query](#step-08-approve-query) `[EACH COLLABORATOR]`
 - [Step 09: Execute Query](#step-09-execute-query) `[WOODGROVE]`
@@ -96,7 +102,7 @@ providing your own data and query.
 | Requirement | Details |
 |---|---|
 | Azure CLI | 2.75.0+ |
-| `managedcleanroom` extension | `az extension add --name managedcleanroom --version 1.0.0b6` |
+| `managedcleanroom` extension | `az extension add --name managedcleanroom --version 1.0.0b9 --upgrade` |
 | PowerShell | 7.x+ |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) |
@@ -108,17 +114,29 @@ providing your own data and query.
 >
 > | Resource | Minimum vCPUs | SKU / Family |
 > |---|---|---|
-> | AKS node pool | 8 | Standard_D4ds_v5 (Ddsv5 family) |
+> | AKS node pool | 12 | 3 x Standard_D4ds_v5 (Ddsv5 family) |
 > | Confidential ACI | 6 | Confidential container groups |
 >
-> The above covers a single query execution (1 Spark driver + up to 3
-> executors, each using 1 vCPU). Spark pods are provisioned at runtime and
+> The above covers a single `small` query execution (1 Spark driver + up to 5
+> executors, with the chart defaults of 1 vCPU each). Spark pods are provisioned at runtime and
 > removed after query execution completes. Multiple queries can run
-> concurrently — add 4 vCPUs of Confidential ACI quota per additional concurrent query.
+> concurrently - allow up to 6 vCPUs of Confidential ACI quota per additional
+> concurrent `small` query with those defaults. Larger scale SKUs or deployment
+> overrides require more quota; see [Scale SKU configuration](#scale-sku-configuration).
+> If you change the AKS SKU or node count below, recalculate the corresponding
+> VM-family and regional vCPU quota and leave headroom for upgrades.
+
+The examples below target the **production RP and frontend** in `westus`, with
+collaboration resources in `westus`. Choose a supported resource region where your
+subscription has sufficient quota. Extension `1.0.0b9` uses
+`2026-09-30-preview` for collaboration creation; the frontend API version is
+separate and remains `2026-03-01-preview`.
 
 ### 1.2 Terminal T1 (Owner) — Variables
 
 ```powershell
+$ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $true
 az login
 $account = az account show -o json | ConvertFrom-Json
 $subscription = $account.id
@@ -126,6 +144,8 @@ $tenantId = $account.tenantId
 
 $rpLocation = "westus"
 $resourceLocation = "westus"   # Location where AKS, Container Groups, and all required resources are created
+$aksSku = "Standard_D4ds_v5"
+$nodePoolSize = 3
 # Supported resourceLocation values:
 # centralindia, eastasia, eastus, eastus2, germanywestcentral, italynorth,
 # japaneast, northeurope, southcentralus, southeastasia, switzerlandnorth,
@@ -146,6 +166,8 @@ az provider register --namespace Microsoft.ContainerService
 ### 1.4 Each Collaborator Terminal — Variables
 
 ```powershell
+$ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $true
 az login
 $account = az account show -o json | ConvertFrom-Json
 $subscription = $account.id
@@ -161,9 +183,16 @@ $personaEmail = "<your-email>"
 
 az group create --name $personaRg --location $location -o none 2>$null
 
-$frontend = "https://prod.workload-frontendwestus.cleanroom.cloudapp.azure.net"
+$frontend = "https://prod-nonattested.workload-frontendwestus.cleanroom.cloudapp.azure.net"
 $oidcStorageUrl = "https://cleanroomoidc.z22.web.core.windows.net"   # Required for tenants where Federated Identity Credentials with MI are blocked by policy; specify a whitelisted pre-provisioned storage account name. For other tenants, leave blank ("") and a new storage account will be provisioned by the scripts.
 ```
+
+> The `-nonattested` frontend uses standard, CA-issued TLS. Keep certificate
+> verification enabled. TLS terminates outside the TEE at this endpoint, so it
+> does not provide the attestation guarantee of the primary frontend endpoint.
+> If you want TLS termination inside the TEE, set `$frontend` to the original
+> production frontend endpoint:
+> `https://prod.workload-frontendwestus.cleanroom.cloudapp.azure.net`.
 
 ### 1.5 Acquire Token, Extract OID & Configure CLI `[EACH COLLABORATOR]`
 
@@ -204,9 +233,13 @@ Write-Host "JWT oid: $personaOid"
 
 ```powershell
 $env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
-$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
+$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = $null
 az managedcleanroom frontend configure --endpoint $frontend
 ```
+
+> Run `frontend configure` explicitly when changing environments. Do not rely
+> solely on `MANAGEDCLEANROOM_ENDPOINT`: the `1.0.0b9` frontend client reads the
+> endpoint from Azure CLI configuration.
 
 ---
 
@@ -214,26 +247,58 @@ az managedcleanroom frontend configure --endpoint $frontend
 
 > **Terminal: T1 (Owner)**
 
-### 2.1 Create Collaboration & Enable Workload
+### 2.1 Create Resource Group
 
 ```powershell
 az group create --name $collabRg --location $rpLocation -o none
+```
 
+### 2.2 Create Collaboration
+
+```powershell
 $collaboratorEmail = "<woodgrove-email>"
 az managedcleanroom collaboration create `
     --collaboration-name $collabName `
     --resource-group $collabRg `
     --location $rpLocation `
     --resource-location $resourceLocation `
-    --collaborators "[{UserIdentifier:'$collaboratorEmail'}]" `
+    --target-resource-configuration "{aks-sku:$aksSku,node-pool-size:$nodePoolSize}" `
+    --collaborators "[{user-identifier:'$collaboratorEmail'}]" `
     --no-wait
 ```
 
 > The `--collaborators` flag adds collaborators at creation time itself.
-> To add more collaborators later, see [Step 2.2](#22-add-more-collaborators-optional).
+> To add more collaborators later, see [Step 2.4](#24-add-more-collaborators-optional).
 
 > **NOTE**: `--location` is the ARM RP location (`$rpLocation`). `--resource-location` controls where
 > actual resources (AKS cluster, CACI instances) are deployed — set via `$resourceLocation`.
+
+The `--target-resource-configuration` argument (alias `--target-config`) controls
+the AKS node pool at creation time:
+
+| Option | Supported values | Sample value |
+|---|---|---|
+| `aks-sku` | `Standard_D4ds_v5`, `Standard_D8ds_v5`, `Standard_D16ds_v5`, `Standard_D32ds_v5` | `Standard_D4ds_v5` |
+| `node-pool-size` | Integer from `3` through `10` | `3` |
+
+These are creation-time settings, not collaboration-update arguments.
+
+#### Optional public IP tagging (not used in this sample)
+
+The same target configuration can also accept `i-p-tag-configuration`, with both
+`type` and `value`, to tag public IP resources created for the collaboration.
+These are networking IP tags, not ordinary ARM resource `--tags`.
+
+| Type | Example value | Intended use |
+|---|---|---|
+| `FirstPartyUsage` | `/AzureCleanRoomsProd` | Approved Microsoft first-party production usage |
+| `FirstPartyUsage` | `/AzureCleanRoomsNonProd` | Approved Microsoft first-party non-production usage |
+
+Use only IP-tag values approved for your subscription and scenario. For example,
+the optional CLI shorthand member is
+`i-p-tag-configuration:{type:FirstPartyUsage,value:/AzureCleanRoomsProd}`.
+**Do not add it to the create command above for this sample**: the sample supplies
+only the AKS SKU and node count, without an IP-tag configuration.
 
 **Runtime**: ~25 minutes. Poll `provisioningState` until `Succeeded`:
 
@@ -246,6 +311,8 @@ do {
     Start-Sleep -Seconds 60
 } while ($collab.provisioningState -notin @("Succeeded", "Failed"))
 ```
+
+### 2.3 Enable Analytics Workload
 
 ```powershell
 az managedcleanroom collaboration enable-workload `
@@ -283,9 +350,9 @@ do {
 } while ($collab.health.healthState -ne "Ok")
 ```
 
-### 2.2 Add More Collaborators (Optional)
+### 2.4 Add More Collaborators (Optional)
 
-> The owner was already added as a collaborator during `create` (Step 2.1).
+> The owner was already added as a collaborator during `create` (Step 2.2).
 > Use this step to invite additional collaborators (e.g. Northwind in a multi-party scenario).
 
 > To add Service Principals (SPNs) instead of user email IDs for automation, see
@@ -314,7 +381,6 @@ az managedcleanroom collaboration show `
 
 ```powershell
 $env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
-$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 
 $collabs = (az managedcleanroom frontend collaboration list -o json | ConvertFrom-Json).collaborations
 $collabs | Format-Table @{L='#';E={[array]::IndexOf($collabs,$_)+1}}, collaborationName, collaborationId, userStatus
@@ -339,6 +405,13 @@ if ($invitations) {
 } elseif (($collabs | Where-Object collaborationId -eq $collabId).userStatus -ne "Active") {
     throw "No pending invitation and collaborator is not Active."
 }
+```
+
+List the active frontend collaborators:
+
+```powershell
+az managedcleanroom frontend collaborator list `
+    --collaboration-id $collabId -o table
 ```
 
 ---
@@ -375,6 +448,9 @@ $queryName = "query1$suffix"
 Write-Host "Iteration: $iteration | Suffix: '$suffix' | Query: '$queryName'"
 ```
 
+Use a distinct suffix for each dataset iteration. The scripts preserve
+datastore metadata by suffix so earlier outputs can still be downloaded.
+
 ### 4.4 Upload Data
 
 ```powershell
@@ -397,7 +473,6 @@ $variant = if ($EncryptionMode -eq "CPK") { "cpk" } else { "sse" }
 
 ```powershell
 $env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
-$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
 az managedcleanroom frontend configure --endpoint $frontend
 
 $jwksDir = "generated/$personaRg"
@@ -440,7 +515,7 @@ az managedcleanroom frontend oidc set-issuer-url `
 ```
 
 > **CRITICAL**: `contractId` must be `"Analytics"` (capital A). `-userId` must be
-> the JWT `oid` from Step 01.4.
+> the JWT `oid` from Step 1.5.2.
 
 **Verify**:
 ```powershell
@@ -460,8 +535,23 @@ az identity federated-credential list `
 ### 6.1 Build Dataset Body JSON
 
 ```powershell
-./scripts/08-build-dataset-body.ps1 -resourceGroup $personaRg -persona $persona
+if ($persona -eq "woodgrove") {
+    # Scope Woodgrove's input dataset to a subfolder inside its container.
+    ./scripts/08-build-dataset-body.ps1 -resourceGroup $personaRg -persona $persona `
+        -subdirectory "2025-09-01"
+} else {
+    # Northwind's input dataset maps to the entire container.
+    ./scripts/08-build-dataset-body.ps1 -resourceGroup $personaRg -persona $persona
+}
 ```
+
+> [!IMPORTANT]
+> The Woodgrove branch above passes `-subdirectory "2025-09-01"` so its input
+> dataset is scoped to a single date folder inside the container. Northwind's
+> input dataset is left at the container root and sees all four days produced
+> by `generate-data.ps1`. Omit `-subdirectory` to use the entire container.
+> For the full parameter reference, see
+> [Optional dataset parameters](#optional-dataset-parameters) in Appendix D.
 
 > **Bring your own data**: If you want to provide your own datasets, upload your data directly to the
 > storage accounts created for your persona and update `datasetSchema` and `datasetAccessPolicy` in the dataset
@@ -619,29 +709,83 @@ az managedcleanroom frontend analytics query show `
 
 ## Step 09: Execute Query `[WOODGROVE]`
 
+Set `scaleSku` in the run request to `small`, `medium`, or `large`. The service
+defaults to `small` when omitted. This query setting is separate from the AKS
+VM SKU and node count selected when creating the collaboration.
+
+Extension `1.0.0b9` does not expose a `--scale-sku` flag. Use a JSON request body:
+
 ```powershell
+$scaleSku = "small"
+$runBody = @{ scaleSku = $scaleSku }
+[System.IO.File]::WriteAllText("$PWD/generated/run-config.json", ($runBody | ConvertTo-Json))
+
 $runResult = az managedcleanroom frontend analytics query run `
     --collaboration-id $collabId `
-    --document-id $queryName -o json | ConvertFrom-Json
+    --document-id $queryName `
+    --body "@generated/run-config.json" -o json | ConvertFrom-Json
 
 $jobId = $runResult.id
 Write-Host "Job ID: $jobId"
 ```
 
+Do not combine `--body` with `--start-date`, `--end-date`, `--dry-run`, or
+`--use-optimizer`; include any of these settings in the JSON body instead.
+
 > The CLI auto-generates a run ID. Each invocation starts a new execution.
+> `"status": "success"` means accepted for scheduling, not completed. Takes 10-20 min.
+
+### Scale SKU configuration
+
+The current Spark frontend profiles map the run's `scaleSku` as follows:
+
+| `scaleSku` | Driver memory | Memory per executor | Maximum executors |
+|---|---|---|---|
+| `small` (default) | `4g` | `8g` | 5 |
+| `medium` | `8g` | `16g` | 10 |
+| `large` | `12g` | `24g` | 20 |
+
+Memory values use Spark's notation. Driver cores, executor cores, and minimum
+executors are inherited from the deployment configuration, not set by these
+profiles. The chart defaults are **1 driver core, 1 core per executor, and
+1 minimum executor**; deployments can override them. Maximum executors is a
+scaling limit, not a fixed count. Account for memory overhead and available
+regional capacity in addition to CPU quota.
+
+To inspect the effective settings without executing the query, send
+`dryRun: true` in the same request body and inspect `skuSettings` in the response.
+Omit `dryRun` (or set it to `false`) for actual execution.
 
 > **Network connectivity**: This step requires the ACCR Frontend Service to reach the Analytics Endpoint of the Collaboration. It can time out due to tenant-specific network configurations:
 >
 > 1. **NSG (Network Security Group)**: If your tenant has NSGs blocking inbound internet access to the AKS Analytics endpoint on port 443, the query will fail. Contact the ACCR team with the `tenantId` of the collaboration so we can whitelist your tenant — an NSG rule will be updated to allow port 443 access to the AKS cluster.
 > 2. **[AVNM (Azure Virtual Network Manager)](https://learn.microsoft.com/en-us/azure/virtual-network-manager/)**: This is a tenant-level policy. Your tenant admin needs to create an AVNM rule to allow port 443 access from the internet by following the documentation linked above.
 
+**Optional: cancel a run.** After submitting a query, use the following command
+only if you want to cancel it before completion:
+
+```powershell
+az managedcleanroom frontend analytics query cancel-run `
+    --collaboration-id $collabId `
+    --document-id $queryName `
+    --run-id $jobId
+```
+
 > **Date-range filtering**: To read datasets within a specific date range,
-> add `--start-date` and `--end-date`:
+> include `startDate` and `endDate` alongside `scaleSku` in the request body:
 >
 > ```powershell
+> $runBody = @{
+>     scaleSku = $scaleSku
+>     startDate = "2025-09-01"
+>     endDate = "2025-09-02"
+> }
+> [System.IO.File]::WriteAllText("$PWD/generated/run-config.json", ($runBody | ConvertTo-Json))
 > $runResult = az managedcleanroom frontend analytics query run `
 >     --collaboration-id $collabId `
->     --document-id $queryName --start-date "2025-09-01" --end-date "2025-09-02" -o json | ConvertFrom-Json
+>     --document-id $queryName `
+>     --body "@generated/run-config.json" -o json | ConvertFrom-Json
+> $jobId = $runResult.id
 > ```
 
 ---
@@ -710,14 +854,19 @@ az managedcleanroom frontend analytics auditevent list `
 
 ### 11.3 Download Output
 
-Auto-detects SSE/CPK mode from metadata. Pass `-JobId` to filter to a specific run.
+Auto-detects SSE/CPK mode from suffix-specific metadata. In SSE mode, `-JobId`
+filters downloads to that run. The CPK download currently includes all CSV
+outputs in the selected container; use the returned job ID to identify the
+matching run's files.
 
 ```powershell
 ./scripts/11-download-output.ps1 -resourceGroup $personaRg `
-    -datasetSuffix "$suffix" -JobId $jobId
+    -datasetSuffix "$suffix" -JobId $jobId `
+    -OutputDir "./generated/output/$EncryptionMode-$jobId"
 ```
 
-> Output CSVs are saved to `generated/output/`. Without `-JobId`, downloads the latest.
+> Use a distinct `-OutputDir` for each run. Without `-JobId`, the
+> script downloads all matching CSV outputs in the selected container.
 
 ---
 
@@ -753,7 +902,7 @@ Login with `admin` and the password printed by the script.
 ## Appendix A: Federated Credential Subject Reference
 
 Format: `{contractId}-{ownerId}` where `contractId` = `"Analytics"` (capital A)
-and `ownerId` = JWT `oid` from Step 01.4.
+and `ownerId` = JWT `oid` from Step 1.5.2.
 
 MSA accounts: JWT `oid` ≠ `az ad signed-in-user show --query id`. Always use JWT `oid`.
 
@@ -776,10 +925,10 @@ az identity federated-credential create --name "Analytics-$personaOid-federation
 |---|---|---|
 | `SPARK_JOB_FAILED: ExitCode 1` | Federated credential subject mismatch | See [Appendix A](#appendix-a-federated-credential-subject-reference) |
 | `AADSTS700211: No matching federated identity record` | Wrong issuer URL in dataset or stale FIC | Republish dataset; delete/recreate FIC |
-| `SSL certificate verify failed` | Endpoint cert mismatch | Set `$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"` |
+| `SSL certificate verify failed` | Wrong frontend endpoint or stale endpoint configuration | Re-run `az managedcleanroom frontend configure --endpoint $frontend`; do not disable TLS verification |
 | `404 Not Found` on frontend | Using ARM ID instead of frontend UUID | Use UUID from `frontend collaboration list` |
 | `ContractNotFound` | Stale CCF endpoint | Create new collaboration |
-| `Python 3.13 tuple error` | CLI extension bug | Upgrade to v1.0.0b6+ |
+| `Python 3.13 tuple error` | CLI extension bug | Upgrade to `managedcleanroom` extension `1.0.0b9` |
 | `Already voted / Conflict` | Publisher already voted | Check query state; skip an accept vote if already Accepted. Do not ignore other conflicts |
 | `PENDING_RERUN` | Normal scheduling | Keep polling |
 
@@ -817,6 +966,12 @@ Runtime:  SKR release → KEK private → unwrap DEK → CPK header → Storage 
 Fields not in `allowedFields` are excluded from query access — prevents PII exposure.
 Supported formats: `csv`, `parquet`, `json`.
 
+### Optional dataset parameters
+
+| Parameter | Description |
+|---|---|
+| `subdirectory` | Prefix inside the dataset's container to scope the dataset to a subfolder (e.g. `2025-09-01`). Optional, defaults to `""` (entire container). Pass it via the `-subdirectory` parameter of `scripts/08-build-dataset-body.ps1` - see [Step 6.1](#61-build-dataset-body-json). |
+
 ---
 
 ## Appendix E: Query Structure Reference
@@ -832,7 +987,7 @@ Supported formats: `csv`, `parquet`, `json`.
 - **Pre-conditions** enforce a minimum row count per view. If any view has fewer rows than `minRowCount`, the query aborts.
 - **Post-filters** remove groups from the output whose aggregation count is below a threshold, preventing identification of individuals.
 
-Both are defined in the query segments. Edit the thresholds before publishing the query (Step 08).
+Both are defined in the query segments. Edit the thresholds before publishing the query (Step 07).
 
 ---
 
@@ -883,17 +1038,24 @@ For CI/CD automation, service principals can replace interactive user login.
 # Use get-sp-token-sni.ps1 for MSAL SNI (x5c) auth
 $token = ./scripts/common/get-sp-token-sni.ps1 `
     -appId "<clientAppId>" -tenantId "<tenantId>" -certPemPath "<cert.pem>"
+$personaTokenFile = Join-Path ([System.IO.Path]::GetTempPath()) "msal-idtoken-$persona.txt"
+$token | Out-File -FilePath $personaTokenFile -NoNewline
 $env:CLEANROOM_FRONTEND_TOKEN = $token
+$env:MANAGEDCLEANROOM_ACCESS_TOKEN = $token
+az managedcleanroom frontend configure --endpoint $frontend
 ```
+
+Use this instead of interactive token acquisition in Step 1.5.1, then extract
+the token's `oid` as shown in Step 1.5.2.
 
 ### Add SPN as Collaborator
 
 ```powershell
 az managedcleanroom collaboration add-collaborator `
-    --collaboration-name <name> --resource-group <rg> `
-    --user-identifier <clientAppId> `
-    --object-id <spObjectId> `
-    --tenant-id <tenantId>
+    --collaboration-name $collabName --resource-group $collabRg `
+    --user-identifier "<clientAppId>" `
+    --object-id "<spObjectId>" `
+    --tenant-id "<tenantId>"
 ```
 
 > **Note**: `--object-id` must be from the **Enterprise Application** (service principal), not the app registration. SPNs auto-activate — no invitation acceptance needed.

@@ -58,6 +58,20 @@ param location string = resourceGroup().location
 ])
 param resourceLocation string = 'westus'
 
+@description('Virtual machine SKU for the AKS node pool.')
+@allowed([
+  'Standard_D4ds_v5'
+  'Standard_D8ds_v5'
+  'Standard_D16ds_v5'
+  'Standard_D32ds_v5'
+])
+param aksSku string = 'Standard_D4ds_v5'
+
+@description('Number of nodes in the AKS node pool.')
+@minValue(3)
+@maxValue(10)
+param nodePoolSize int = 3
+
 @description('Optional additional collaborators added at creation time. Each entry is { userIdentifier: "<email-or-appId>" }. The owner is derived from the caller token automatically. Add further collaborators later via the addCollaborator action (see deploy script).')
 param collaborators array = []
 
@@ -66,12 +80,16 @@ param collaborators array = []
 //   { location, properties: { resourceLocation, collaborators[] } })
 // -----------------------------------------------------------------------------
 #disable-next-line BCP081
-resource collaboration 'Microsoft.CleanRoom/collaborations@2026-04-30-preview' = {
+resource collaboration 'Microsoft.CleanRoom/collaborations@2026-09-30-preview' = {
   name: collaborationName
   location: location
   properties: {
     resourceLocation: resourceLocation
     collaborators: collaborators
+    targetResourceConfiguration: {
+      aksSku: aksSku
+      nodePoolSize: nodePoolSize
+    }
   }
 }
 

@@ -113,7 +113,7 @@ if ($existingKv) {
     $kvJson = $existingKv | ConvertFrom-Json
     Write-Host "Key Vault '$keyVaultName' already exists." -ForegroundColor Green
 } else {
-    $deletedKv = Invoke-AzSafe @("keyvault", "show-deleted", "--name", $keyVaultName)
+    $deletedKv = Invoke-AzSafe @("keyvault", "show-deleted", "--name", $keyVaultName, "--location", $location)
     if ($deletedKv) {
         Write-Host "Recovering soft-deleted Key Vault '$keyVaultName'..." -ForegroundColor Yellow
         $kvJson = az keyvault recover --name $keyVaultName --output json | ConvertFrom-Json

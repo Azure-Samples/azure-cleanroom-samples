@@ -64,7 +64,12 @@ if (-not (Test-Path $namesFile)) {
 . $namesFile
 
 # Detect encryption mode
-$datastoreMetadataFile = Join-Path $outDir "datastores" "$persona-datastore-metadata.json"
+$versionedMetadataFile = Join-Path $outDir "datastores" "$persona-datastore-metadata$datasetSuffix.json"
+$datastoreMetadataFile = if (Test-Path $versionedMetadataFile) {
+    $versionedMetadataFile
+} else {
+    Join-Path $outDir "datastores" "$persona-datastore-metadata.json"
+}
 if (-not (Test-Path $datastoreMetadataFile)) {
     Write-Host "ERROR: '$datastoreMetadataFile' not found." -ForegroundColor Red
     exit 1

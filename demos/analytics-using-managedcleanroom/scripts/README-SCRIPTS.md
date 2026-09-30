@@ -29,7 +29,8 @@ All paths are relative to `demos/analytics-using-managedcleanroom/`.
 # Deploy collaboration + enable Analytics workload + invite Northwind (one command).
 ./scripts/bicep/deploy-managed-cleanroom.ps1 `
     -resourceGroup cr-collab-rg -collaborationName collab1 `
-    -resourceLocation westus `
+    -location westus -resourceLocation westus `
+    -aksSku Standard_D4ds_v5 -nodePoolSize 3 `
     -additionalCollaborators northwind@contoso.com
 ```
 
@@ -55,9 +56,13 @@ $collabId  = "<frontend-collaboration-uuid>"   # from Phase 3 for collaborators
 ./scripts/frontend/05-fetch-jwks.ps1 -Persona $persona -CollaborationId $collabId -outDir "generated/$personaRg"
 ./scripts/06-setup-oidc-storage.ps1  -resourceGroup $personaRg -persona $persona -collaborationId $collabId -JwksFile "generated/$personaRg/jwks.json"
 ./scripts/frontend/05-set-issuer-url.ps1 -Persona $persona -CollaborationId $collabId -outDir "generated/$personaRg"
-./scripts/07-grant-access.ps1        -resourceGroup $personaRg -collaborationId $collabId -contractId "Analytics" -userId $personaOid
+./scripts/07-grant-access.ps1        -resourceGroup $personaRg -collaborationId $collabId -contractId "Analytics" -userId $personaOid -EncryptionMode SSE
 ./scripts/08-build-dataset-body.ps1  -resourceGroup $personaRg -persona $persona
 ```
+
+For CPK encryption instead, follow the CPK upload, access, and key-preparation
+steps in [README-API.md](../README-API.md). Use a distinct dataset suffix for
+each iteration and a separate output directory for each query run.
 
 ---
 

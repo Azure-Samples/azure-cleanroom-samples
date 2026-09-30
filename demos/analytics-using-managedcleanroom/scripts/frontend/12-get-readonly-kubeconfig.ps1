@@ -23,7 +23,7 @@
     Path to write the decoded kubeconfig (default: ./readonly.kubeconfig).
 
 .PARAMETER apiVersion
-    Microsoft.CleanRoom ARM API version (default: 2026-04-30-preview).
+    Microsoft.CleanRoom ARM API version (default: 2026-09-30-preview).
 
 .EXAMPLE
     ./12-get-readonly-kubeconfig.ps1 -resourceGroup cr-collab-rg -collaborationName collab1
@@ -32,7 +32,7 @@ param(
     [Parameter(Mandatory)][string]$resourceGroup,
     [Parameter(Mandatory)][string]$collaborationName,
     [string]$OutFile = "./readonly.kubeconfig",
-    [string]$apiVersion = "2026-04-30-preview",
+    [string]$apiVersion = "2026-09-30-preview",
     [switch]$DryRun
 )
 

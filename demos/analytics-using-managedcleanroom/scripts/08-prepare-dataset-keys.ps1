@@ -104,7 +104,6 @@ function Get-SkrPolicy {
     param([string]$DatasetName)
 
     # Try az CLI
-    $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
     if ($TokenFile) {
         $env:MANAGEDCLEANROOM_ACCESS_TOKEN = (Get-Content $TokenFile -Raw).Trim()
     }
@@ -125,7 +124,7 @@ function Get-SkrPolicy {
     $token = if ($TokenFile) { (Get-Content $TokenFile -Raw).Trim() } else { az account get-access-token --query accessToken -o tsv }
     $headers = @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" }
     $url = "$feBase/collaborations/$collaborationId/analytics/datasets/$DatasetName/skrpolicy?api-version=2026-03-01-preview"
-    return Invoke-RestMethod -Uri $url -Headers $headers -Method Get -SkipCertificateCheck
+    return Invoke-RestMethod -Uri $url -Headers $headers -Method Get
 }
 
 # -- Process each dataset ----------------------------------------------------------
