@@ -102,7 +102,7 @@ providing your own data and query.
 | Requirement | Details |
 |---|---|
 | Azure CLI | 2.75.0+ |
-| `managedcleanroom` extension | `az extension add --name managedcleanroom --version 1.0.0b9 --upgrade` |
+| `managedcleanroom` extension | `az extension add --name managedcleanroom --version 1.0.0b10 --upgrade` |
 | PowerShell | 7.x+ |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) |
@@ -128,7 +128,7 @@ providing your own data and query.
 
 The examples below target the **production RP and frontend** in `westus`, with
 collaboration resources in `westus`. Choose a supported resource region where your
-subscription has sufficient quota. Extension `1.0.0b9` uses
+subscription has sufficient quota. Extension `1.0.0b10` uses
 `2026-09-30-preview` for collaboration creation; the frontend API version is
 separate and remains `2026-03-01-preview`.
 
@@ -238,7 +238,7 @@ az managedcleanroom frontend configure --endpoint $frontend
 ```
 
 > Run `frontend configure` explicitly when changing environments. Do not rely
-> solely on `MANAGEDCLEANROOM_ENDPOINT`: the `1.0.0b9` frontend client reads the
+> solely on `MANAGEDCLEANROOM_ENDPOINT`: the `1.0.0b10` frontend client reads the
 > endpoint from Azure CLI configuration.
 
 ---
@@ -712,28 +712,21 @@ az managedcleanroom frontend analytics query show `
 
 ## Step 09: Execute Query `[WOODGROVE]`
 
-Set `scaleSku` in the run request to `small`, `medium`, or `large`. The service
+Set `--scale-sku` to `small`, `medium`, or `large`. The service
 defaults to `small` when omitted. This query setting is separate from the AKS
 VM SKU and node count selected when creating the collaboration.
 
-Extension `1.0.0b9` does not expose a `--scale-sku` flag. Use a JSON request body:
-
 ```powershell
 $scaleSku = "small"
-$runBody = @{ scaleSku = $scaleSku }
-[System.IO.File]::WriteAllText("$PWD/generated/run-config.json", ($runBody | ConvertTo-Json))
 
 $runResult = az managedcleanroom frontend analytics query run `
     --collaboration-id $collabId `
     --document-id $queryName `
-    --body "@generated/run-config.json" -o json | ConvertFrom-Json
+    --scale-sku $scaleSku -o json | ConvertFrom-Json
 
 $jobId = $runResult.id
 Write-Host "Job ID: $jobId"
 ```
-
-Do not combine `--body` with `--start-date`, `--end-date`, `--dry-run`, or
-`--use-optimizer`; include any of these settings in the JSON body instead.
 
 > The CLI auto-generates a run ID. Each invocation starts a new execution.
 > `"status": "success"` means accepted for scheduling, not completed. Takes 10-20 min.
@@ -755,9 +748,9 @@ profiles. The chart defaults are **1 driver core, 1 core per executor, and
 scaling limit, not a fixed count. Account for memory overhead and available
 regional capacity in addition to CPU quota.
 
-To inspect the effective settings without executing the query, send
-`dryRun: true` in the same request body and inspect `skuSettings` in the response.
-Omit `dryRun` (or set it to `false`) for actual execution.
+To inspect the effective settings without executing the query, add `--dry-run`
+to the command and inspect `skuSettings` in the response. Omit `--dry-run` for
+actual execution.
 
 > **Network connectivity**: This step requires the ACCR Frontend Service to reach the Analytics Endpoint of the Collaboration. It can time out due to tenant-specific network configurations:
 >
@@ -774,20 +767,16 @@ az managedcleanroom frontend analytics query cancel-run `
     --run-id $jobId
 ```
 
-> **Date-range filtering**: To read datasets within a specific date range,
-> include `startDate` and `endDate` alongside `scaleSku` in the request body:
+> **Date-range filtering**: To read datasets within a specific date range, pass
+> `--start-date` and `--end-date` alongside `--scale-sku`:
 >
 > ```powershell
-> $runBody = @{
->     scaleSku = $scaleSku
->     startDate = "2025-09-01"
->     endDate = "2025-09-02"
-> }
-> [System.IO.File]::WriteAllText("$PWD/generated/run-config.json", ($runBody | ConvertTo-Json))
 > $runResult = az managedcleanroom frontend analytics query run `
 >     --collaboration-id $collabId `
 >     --document-id $queryName `
->     --body "@generated/run-config.json" -o json | ConvertFrom-Json
+>     --scale-sku $scaleSku `
+>     --start-date "2025-09-01" `
+>     --end-date "2025-09-02" -o json | ConvertFrom-Json
 > $jobId = $runResult.id
 > ```
 
@@ -799,7 +788,7 @@ az managedcleanroom frontend analytics query cancel-run `
 do {
     $result = az managedcleanroom frontend analytics query runresult show `
         --collaboration-id $collabId `
-        --job-id $jobId -o json | ConvertFrom-Json
+        --run-id $jobId -o json | ConvertFrom-Json
     $state = $result.status.applicationState.state
     Write-Host "[$(Get-Date -Format 'HH:mm:ss')] State: $state"
     Start-Sleep -Seconds 30
@@ -932,7 +921,7 @@ az identity federated-credential create --name "Analytics-$personaOid-federation
 | `SSL certificate verify failed` | Wrong frontend endpoint or stale endpoint configuration | Re-run `az managedcleanroom frontend configure --endpoint $frontend`; do not disable TLS verification |
 | `404 Not Found` on frontend | Using ARM ID instead of frontend UUID | Use UUID from `frontend collaboration list` |
 | `ContractNotFound` | Stale CCF endpoint | Create new collaboration |
-| `Python 3.13 tuple error` | CLI extension bug | Upgrade to `managedcleanroom` extension `1.0.0b9` |
+| `Python 3.13 tuple error` | CLI extension bug | Upgrade to `managedcleanroom` extension `1.0.0b10` |
 | `Already voted / Conflict` | Publisher already voted | Check query state; skip an accept vote if already Accepted. Do not ignore other conflicts |
 | `PENDING_RERUN` | Normal scheduling | Keep polling |
 
