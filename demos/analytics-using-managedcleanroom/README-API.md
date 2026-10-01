@@ -119,6 +119,22 @@ Complete capacity planning in `$resourceLocation` before creating the
 collaboration. The AKS SKU and node-pool size are creation-time settings and
 cannot be updated later.
 
+Two distinct quota checks apply:
+
+- **Collaboration creation requires:**
+  - 12 Ddsv5 vCPUs for AKS.
+  - 4 Confidential ACI vCPUs.
+  - 2 Confidential container groups.
+  - 1 Standard ACI vCPU.
+  - 1 Standard container group.
+- **Query execution:** Requires additional Confidential ACI vCPU and container
+  group quota based on the selected `scaleSku` and planned query concurrency.
+
+The regional Confidential ACI placement failure described in the
+troubleshooting section primarily affects query runs. It is distinct from a
+collaboration creation failure caused by insufficient AKS or consortium CACI
+quota.
+
 **1. Select a query scale SKU based on input data size.**
 
 | Input data processed by the query | `scaleSku` |
@@ -130,22 +146,25 @@ cannot be updated later.
 > **Preview:** `large` is not ready for production use. Validate it with your
 > workload before relying on it.
 
-**2. Decide the required maximum parallel queries and select the collaboration
-configuration.**
+**2. Review the supported collaboration capacity.**
 
 The service derives the internal scheduling capacity from `$aksSku` and
-`$nodePoolSize`. Customers must configure both values on the collaboration at
-creation time and ensure the required Ddsv5 quota is available in the
-subscription in `$resourceLocation`. Select a configuration whose maximum
-parallel queries meets your requirement for the `scaleSku` chosen in step 1:
+`$nodePoolSize`. The currently supported configuration is
+`Standard_D4ds_v5` with three nodes. You can omit these settings to use their
+defaults or set them explicitly when creating the collaboration. Ensure that
+12 Ddsv5 vCPUs and the consortium-provisioning ACI quotas listed above are
+available in the subscription in `$resourceLocation`. Also confirm that the
+maximum parallel queries for the `scaleSku` chosen in step 1 meets your
+requirement:
 
 | `aksSku` | `nodePoolSize` | Max `small` queries | Max `medium` queries | Max `large` queries | Required Ddsv5 quota |
 |---|---:|---:|---:|---:|---:|
 | `Standard_D4ds_v5` | 3 | 10 | 5 | 3 | 12 vCPUs |
-| `Standard_D4ds_v5` | 4 | 15 | 8 | 5 | 16 vCPUs |
-| `Standard_D8ds_v5` | 3 | 20 | 10 | 6 | 24 vCPUs |
 
-> Higher configurations are possible but are not yet validated or supported.
+> [!IMPORTANT]
+> Higher configurations with larger AKS SKUs and `nodePoolSize` values are
+> possible but are not yet supported. Upcoming updates will enable greater
+> parallelism and higher scale.
 
 **3. Calculate the Confidential ACI quota required for query execution.**
 
@@ -162,9 +181,6 @@ Actual runnable parallelism is the lower of the collaboration capacity above and
 the available Confidential ACI quota. Leave headroom for retries,
 terminating pods, other subscription workloads, and regional Confidential ACI
 availability; these values are planning ceilings, not throughput guarantees.
-
-> [!NOTE]
-> Upcoming scheduler updates will raise query scheduling density.
 
 The examples below target the **production RP and frontend** in `westus`, with
 collaboration resources in `westus`. Choose a supported resource region where your
@@ -334,10 +350,10 @@ az rest --method PUT `
 The `properties.targetResourceConfiguration` object controls the AKS node pool
 at creation time:
 
-| Property | Supported values | Default |
-|---|---|---|
-| `aksSku` | `Standard_D4ds_v5`, `Standard_D8ds_v5` | `Standard_D4ds_v5` |
-| `nodePoolSize` | Integer from `3` through `10` | `3` |
+| Property | Default / supported value |
+|---|---|
+| `aksSku` | `Standard_D4ds_v5` |
+| `nodePoolSize` | `3` |
 
 Both `aksSku` and `nodePoolSize` are optional. When omitted, they default to
 `Standard_D4ds_v5` and `3`, respectively. These are creation-time settings, not
@@ -759,7 +775,7 @@ Write-Host "Query state: $state"
 
 Set `scaleSku` in the run request to `small`, `medium`, or `large`. The service
 defaults to `small` when omitted. This query setting is separate from the AKS
-VM SKU and node count selected when creating the collaboration.
+VM SKU and node count fixed when creating the collaboration.
 
 ```powershell
 $scaleSku = "small"
@@ -787,7 +803,8 @@ The current Spark frontend profiles map the run's `scaleSku` as follows:
 | `large` | `12g` | `24g` | 20 |
 
 Use [capacity planning](#important-capacity-planning-for-query-execution) to
-select the `scaleSku` and collaboration size.
+select the `scaleSku` and confirm that the supported collaboration capacity
+meets the required concurrency.
 
 Memory values use Spark's notation. Driver cores, executor cores, and minimum
 executors are inherited from the deployment configuration, not set by these
@@ -892,8 +909,8 @@ $result.status.applicationState | ConvertTo-Json -Depth 5
 |---|---|---|
 | `PENDING_RERUN` | Normal scheduling state | Keep polling; it transitions to `SUBMITTED` automatically. |
 | One early `FailedMount` for `spark-drv-...-conf-map`, followed by progress | Transient driver-startup race | No action. Do not cancel or resubmit the run. |
-| `FailedCreatePodSandBox: resource is not available in the location ... Resource requested: N CPU M GB`; executors remain in `Init`/`PENDING` | Confidential ACI platform capacity is unavailable for the requested container-group size in the region. This can occur even when subscription quota is sufficient. The warning is surfaced as a query-pod warning in detailed `events[]`. An upcoming monitoring update will persist all query-pod warnings after the pod or Kubernetes event is deleted; until it reaches `$resourceLocation`, the warning may only be visible while the run and affected pod are active. | If the warning persists, [cancel the run](#cancel-a-query), reduce concurrent runs, verify the Confidential ACI quota calculated in [capacity planning](#important-capacity-planning-for-query-execution), and retry later. If a stuck run has no useful warning, check collaboration health and preserve the run ID. If the issue continues, contact the Azure Container Instances (ACI) team with the region, requested CPU/memory, run ID, and event message. |
-| `FailedScheduling: all schedulable Spark nodes are at their per-node pod limit` | Concurrent runs exceed the collaboration's query-scheduling capacity. | Reduce concurrent runs. If this recurs at the required concurrency, create a collaboration with a larger supported `aksSku`/`nodePoolSize`; these settings cannot be changed after creation. |
+| `FailedCreatePodSandBox: resource is not available in the location ... Resource requested: N CPU M GB`; executors remain in `Init`/`PENDING` | During query execution, Confidential ACI platform capacity is unavailable for the requested container-group size in the region. This can occur even when subscription quota is sufficient and is distinct from the quota required to create the collaboration. The warning is surfaced as a query-pod warning in detailed `events[]`. | If the warning persists, [cancel the run](#cancel-a-query), reduce concurrent runs, verify the Confidential ACI quota calculated in [capacity planning](#important-capacity-planning-for-query-execution), and retry later. If a stuck run has no useful warning, check collaboration health and preserve the run ID. If the issue continues, contact the Azure Container Instances (ACI) team with the region, requested CPU/memory, AKS-VN2 resource ID, and event message. |
+| `FailedScheduling: all schedulable Spark nodes are at their per-node pod limit` | Concurrent runs exceed the collaboration's query-scheduling capacity. | Reduce concurrent runs. The current release supports only `Standard_D4ds_v5` with three nodes. Upcoming updates will enable higher capacity, but an existing collaboration cannot be resized; create a new collaboration after the required configuration becomes supported. |
 | Driver `ExitCode: 11`, all executors fail, or the error repeats `Initial job has not accepted any resources` | Executor starvation, usually caused by Confidential ACI placement failure. | Check `events[]` for `FailedCreatePodSandBox`, then follow the capacity resolution above. |
 | `SPARK_JOB_FAILED: ExitCode 1` with `AADSTS700211: No matching federated identity record` | The dataset identity has an incorrect issuer or federated-credential subject. | Recreate the federated credential with subject `Analytics-$personaOid`, using the `oid` from the persona token, then republish the dataset if its issuer is stale. See [Appendix A](#appendix-a-federated-credential-subject-reference). |
 | `java.io.IOException: No space left on device` during a wide join or shuffle | The selected `scaleSku` is too small for the query's shuffle/spill requirements. | Retry with `medium` when using `small`. `large` is preview-only and is not ready for production use. |
