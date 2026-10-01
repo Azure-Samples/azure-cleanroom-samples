@@ -839,21 +839,24 @@ Cancel a non-terminal query when a persistent fatal error prevents progress or
 when its capacity should be released before the job timeout. Do not cancel a run
 for a single transient warning such as an early `FailedMount`.
 
+The run response and run history return a job ID such as `cl-spark-<uuid>`.
+The cancellation endpoint expects the **bare run ID**, without `cl-spark-`.
+Use a separate variable for cancellation.
+
 ```powershell
+$cancelRunId = $jobId -creplace '^cl-spark-', ''
+
 $cancelResult = az managedcleanroom frontend analytics query cancel-run `
     --collaboration-id $collabId `
     --document-id $queryName `
-    --run-id $jobId -o json | ConvertFrom-Json
+    --run-id $cancelRunId -o json | ConvertFrom-Json
 
 $cancelResult | ConvertTo-Json -Depth 5
 ```
 
-A successful request returns the run ID with `status: "cancelled"` and deletes
+For an active run, successful cancellation returns the full job ID with
+`status: "cancelled"` and deletes
 the Spark application so its driver and executor capacity can be released.
-Consequently, a subsequent lookup for that run returns `404 Not Found`; this is
-the expected confirmation that cancellation completed. Cancelling an unknown
-or already-deleted run also returns 404, so confirm the run ID before submitting
-the request.
 
 ---
 

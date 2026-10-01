@@ -848,20 +848,23 @@ Cancel a non-terminal query when a persistent fatal error prevents progress or
 when its capacity should be released before the job timeout. Do not cancel a run
 for a single transient warning such as an early `FailedMount`.
 
+The run response and run history return a job ID such as `cl-spark-<uuid>`.
+The cancellation route expects the **bare run ID**, without `cl-spark-`.
+Use a separate variable for cancellation.
+
 ```powershell
+$cancelRunId = $jobId -creplace '^cl-spark-', ''
+
 $cancelResult = Invoke-Frontend `
-    -Path "$collabId/analytics/queries/$queryName/runs/$jobId/cancel" `
+    -Path "$collabId/analytics/queries/$queryName/runs/$cancelRunId/cancel" `
     -Method POST
 
 $cancelResult | ConvertTo-Json -Depth 5
 ```
 
-A successful request returns the run ID with `status: "cancelled"` and deletes
+For an active run, successful cancellation returns the full job ID with
+`status: "cancelled"` and deletes
 the Spark application so its driver and executor capacity can be released.
-Consequently, a subsequent lookup for that run returns `404 Not Found`; this is
-the expected confirmation that cancellation completed. Cancelling an unknown
-or already-deleted run also returns 404, so confirm the run ID before submitting
-the request.
 
 ---
 
@@ -1147,6 +1150,10 @@ API version: `2026-03-01-preview`
 | Run history | GET | `/{id}/analytics/queries/{docId}/runs` |
 | Cancel run | POST | `/{id}/analytics/queries/{docId}/runs/{runId}/cancel` |
 | Audit events | GET | `/{id}/analytics/auditevents` |
+
+For **Cancel run**, `{runId}` is the bare ID without `cl-spark-`. For
+**Run result**, `{jobId}` is the full ID returned by query submission.
+See [Cancel a Query](#cancel-a-query) for normalization and verification.
 
 ---
 
