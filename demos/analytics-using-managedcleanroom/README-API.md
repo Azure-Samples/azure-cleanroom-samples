@@ -865,6 +865,10 @@ $cancelResult | ConvertTo-Json -Depth 5
 For an active run, successful cancellation returns the full job ID with
 `status: "cancelled"` and deletes
 the Spark application so its driver and executor capacity can be released.
+Consequently, a subsequent lookup for that run returns `404 Not Found`; this is
+the expected confirmation that cancellation completed. Cancelling an unknown
+or already-deleted run also returns 404, so confirm the run ID before submitting
+the request.
 
 ---
 
