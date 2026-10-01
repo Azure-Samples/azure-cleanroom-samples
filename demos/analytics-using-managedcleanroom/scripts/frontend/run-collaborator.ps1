@@ -28,7 +28,7 @@
     Collaborator persona (selects the token file), e.g. northwind.
 
 .PARAMETER QueryName
-    The already-published query to vote on, e.g. "query1-v1".
+    The already-published cross-party query to vote on, e.g. "query2-v1".
 
 .PARAMETER CollaborationId
     Frontend collaboration UUID. If omitted, resolved via -CollaborationName or
@@ -59,8 +59,8 @@
     Print planned requests without calling the service.
 
 .EXAMPLE
-    # Northwind joins and approves an already-published query
-    ./run-collaborator.ps1 -Persona northwind -QueryName query1-v1
+    # Northwind approves an already-published cross-party query
+    ./run-collaborator.ps1 -Persona northwind -QueryName query2-v1 -SkipAccept
 
 .EXAMPLE
     # Also publish a dataset before voting
@@ -104,12 +104,7 @@ Write-Host "==> Collaboration: $CollaborationId"
 # ---------------------------------------------------------------------------
 if (-not $SkipAccept) {
     Write-Host "==> Accepting invitation..."
-    try {
-        & "$PSScriptRoot/03-accept-invitation.ps1" @childArgs -CollaborationId $CollaborationId
-    }
-    catch {
-        Write-Warning "Accept step skipped/failed (may already be accepted): $($_.Exception.Message)"
-    }
+    & "$PSScriptRoot/03-accept-invitation.ps1" @childArgs -CollaborationId $CollaborationId
 }
 
 # ---------------------------------------------------------------------------

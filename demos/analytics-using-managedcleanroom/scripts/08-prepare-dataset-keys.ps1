@@ -10,8 +10,8 @@
     4. Wraps the DEK with the KEK (RSA-OAEP-SHA256, client-side).
     5. Stores the wrapped DEK as a Key Vault secret.
 
-    This script makes frontend calls internally to fetch SKR policies.
-    The same script works regardless of whether the README uses AZ CLI or REST API.
+    This script uses HTTPS REST calls to fetch SKR policies; the managedcleanroom
+    CLI extension is not required and its configuration is not changed.
 
     Prerequisites:
     - 04-prepare-resources.ps1 must have been run.
@@ -36,7 +36,8 @@
     Output directory.
 
 .PARAMETER TokenFile
-    Token file for frontend authentication.
+    Token file for frontend authentication. If omitted, uses CLEANROOM_FRONTEND_TOKEN,
+    then MANAGEDCLEANROOM_ACCESS_TOKEN, then the current Azure CLI ARM access token.
 #>
 param(
     [Parameter(Mandatory)]
@@ -99,33 +100,53 @@ if ($feBase.EndsWith('/collaborations')) {
     $feBase = $feBase.Substring(0, $feBase.Length - '/collaborations'.Length)
 }
 
-# Try CLI first, fallback to REST
 function Get-SkrPolicy {
     param([string]$DatasetName)
 
-    # Try az CLI
-    $env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
+    $endpointUri = $null
+    if (-not [Uri]::TryCreate($feBase, [UriKind]::Absolute, [ref]$endpointUri) -or
+        $endpointUri.Scheme -ne "https" -or $endpointUri.Query -or $endpointUri.Fragment -or
+        $endpointUri.UserInfo) {
+        throw "frontendEndpoint must be an absolute HTTPS URL without credentials, query, or fragment."
+    }
+
     if ($TokenFile) {
-        $env:MANAGEDCLEANROOM_ACCESS_TOKEN = (Get-Content $TokenFile -Raw).Trim()
+        if (-not (Test-Path -LiteralPath $TokenFile -PathType Leaf)) {
+            throw "Frontend token file not found: $TokenFile"
+        }
+        $token = ([string](Get-Content -LiteralPath $TokenFile -Raw)).Trim()
+    } elseif ($env:CLEANROOM_FRONTEND_TOKEN) {
+        $token = $env:CLEANROOM_FRONTEND_TOKEN.Trim()
+    } elseif ($env:MANAGEDCLEANROOM_ACCESS_TOKEN) {
+        $token = $env:MANAGEDCLEANROOM_ACCESS_TOKEN.Trim()
+    } else {
+        try {
+            $token = az account get-access-token --resource "https://management.azure.com/" `
+                --query accessToken -o tsv
+            if ($LASTEXITCODE -ne 0) { throw "Azure CLI exited with code $LASTEXITCODE." }
+        } catch {
+            throw "Could not acquire a frontend token. Supply -TokenFile or CLEANROOM_FRONTEND_TOKEN. $($_.Exception.Message)"
+        }
+        $token = ($token -join "`n").Trim()
     }
-    az managedcleanroom frontend configure --endpoint $feBase 2>&1 | Out-Null
-
-    $PSNativeCommandUseErrorActionPreference = $false
-    $raw = az managedcleanroom frontend analytics skr-policy `
-        --collaboration-id $collaborationId `
-        --dataset-id $DatasetName 2>&1
-    $PSNativeCommandUseErrorActionPreference = $true
-
-    if ($LASTEXITCODE -eq 0) {
-        $jsonLines = $raw | Where-Object { $_ -is [string] }
-        return $jsonLines | ConvertFrom-Json
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        throw "Frontend token is empty. Supply a valid -TokenFile or CLEANROOM_FRONTEND_TOKEN."
     }
 
-    # Fallback to REST
-    $token = if ($TokenFile) { (Get-Content $TokenFile -Raw).Trim() } else { az account get-access-token --query accessToken -o tsv }
     $headers = @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" }
-    $url = "$feBase/collaborations/$collaborationId/analytics/datasets/$DatasetName/skrpolicy?api-version=2026-03-01-preview"
-    return Invoke-RestMethod -Uri $url -Headers $headers -Method Get -SkipCertificateCheck
+    $encodedCollaborationId = [Uri]::EscapeDataString($collaborationId)
+    $encodedDatasetName = [Uri]::EscapeDataString($DatasetName)
+    $url = "$feBase/collaborations/$encodedCollaborationId/analytics/datasets/$encodedDatasetName/skrpolicy?api-version=2026-03-01-preview"
+    try {
+        $policy = Invoke-RestMethod -Uri $url -Headers $headers -Method Get -ErrorAction Stop
+    } catch {
+        throw "Failed to fetch SKR policy for dataset '$DatasetName': $($_.Exception.Message)"
+    }
+    if (-not $policy.version -or @($policy.anyOf).Count -eq 0 -or -not $policy.anyOf[0]) {
+        throw "Frontend returned an invalid SKR policy for dataset '$DatasetName': expected version and nonempty anyOf."
+    }
+
+    return $policy
 }
 
 # -- Process each dataset ----------------------------------------------------------

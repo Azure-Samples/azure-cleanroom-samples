@@ -36,9 +36,9 @@ $ErrorActionPreference = "Stop"
 
 $fe = Get-FrontendContext -Persona $Persona -Frontend $Frontend -TokenFile $TokenFile -DryRun:$DryRun
 
-New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 $jwks = Invoke-Frontend -Context $fe -Path "$CollaborationId/oidc/keys" -Method GET
 if ($DryRun) { Write-Host "[DRY-RUN] Would write JWKS to $(Join-Path $outDir 'jwks.json')"; return }
+New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 $jwksPath = Join-Path $outDir "jwks.json"
 $jwks | ConvertTo-Json -Depth 10 | Out-File $jwksPath -Encoding utf8
 

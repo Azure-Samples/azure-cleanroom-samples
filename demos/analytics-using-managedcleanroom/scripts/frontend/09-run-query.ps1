@@ -18,6 +18,9 @@
 .PARAMETER QueryName
     Approved query name, e.g. "query1-v1".
 
+.PARAMETER ScaleSku
+    Spark execution profile: small (default), medium, or large.
+
 .PARAMETER StartDate
     Optional dataset date-range lower bound (e.g. "2025-09-01").
 
@@ -31,6 +34,7 @@ param(
     [Parameter(Mandatory)][string]$Persona,
     [Parameter(Mandatory)][string]$CollaborationId,
     [Parameter(Mandatory)][string]$QueryName,
+    [ValidateSet("small", "medium", "large")][string]$ScaleSku = "small",
     [string]$StartDate,
     [string]$EndDate,
     [string]$Frontend,
@@ -43,12 +47,19 @@ $ErrorActionPreference = "Stop"
 
 $fe = Get-FrontendContext -Persona $Persona -Frontend $Frontend -TokenFile $TokenFile -DryRun:$DryRun
 
-$runBody = @{ runId = [guid]::NewGuid().ToString() }
+$runBody = @{ runId = [guid]::NewGuid().ToString(); scaleSku = $ScaleSku.ToLowerInvariant() }
 if ($StartDate) { $runBody.startDate = $StartDate }
 if ($EndDate) { $runBody.endDate = $EndDate }
 
 $runResult = Invoke-Frontend -Context $fe -Path "$CollaborationId/analytics/queries/$QueryName/run" -Method POST -Body $runBody
+if ($DryRun) {
+    Write-Host "[DRY-RUN] No run submitted. Job ID placeholder: <job-id>"
+    return "<job-id>"
+}
 $jobId = $runResult.id
+if ([string]::IsNullOrWhiteSpace([string]$jobId)) {
+    throw "Frontend did not return a job ID for query '$QueryName'. Submission may have succeeded; check run history before retrying."
+}
 Write-Host "Run submitted. Job ID: $jobId"
 Write-Host "Track with: ./10-monitor-query.ps1 -Persona $Persona -CollaborationId $CollaborationId -JobId $jobId"
 return $jobId

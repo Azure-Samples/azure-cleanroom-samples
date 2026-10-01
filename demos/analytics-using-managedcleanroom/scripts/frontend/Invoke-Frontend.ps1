@@ -43,7 +43,7 @@ function Get-FrontendContext {
     )
 
     if (-not $Frontend) {
-        $Frontend = "https://prod.workload-frontendwestus.cleanroom.cloudapp.azure.net"
+        $Frontend = "https://prod-nonattested.workload-frontendwestus.cleanroom.cloudapp.azure.net"
     }
 
     # Resolve the bearer token (skipped in dry-run mode).
@@ -110,7 +110,6 @@ function Invoke-Frontend {
         Uri                  = $url
         Method               = $Method
         Headers              = $headers
-        SkipCertificateCheck = $true
     }
     if ($bodyJson) {
         $params.Body = $bodyJson

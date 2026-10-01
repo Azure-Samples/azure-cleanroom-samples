@@ -3,8 +3,8 @@
     Adds an app (SPN) as a collaborator to a managed cleanroom collaboration.
 
 .DESCRIPTION
-    Uses az rest to call the Private CleanRoom RP directly (eastus2euap ARM endpoint)
-    without requiring an az cloud switch. The caller must be logged in as the collaboration
+    Calls the production CleanRoom RP through the public Azure ARM endpoint.
+    The caller must be logged in as the collaboration
     owner (e.g., admin@contoso.com) with access to the collaboration subscription.
 
     IMPORTANT: The --user-identifier for an SPN is the Application (client) ID,
@@ -23,7 +23,7 @@
     Application (client) ID of the app to add as collaborator.
 
 .PARAMETER apiVersion
-    ARM API version (default: 2026-03-31-preview).
+    ARM API version (default: 2026-09-30-preview).
 
 .EXAMPLE
     ./scripts/common/add-app-collaborator.ps1 -collaborationName <collaboration-name> -resourceGroup <resource-group> -subscription "<your-subscription-id>" -appClientId "<your-app-client-id>"
@@ -41,7 +41,7 @@ param(
     [Parameter(Mandatory)]
     [string]$appClientId,
 
-    [string]$apiVersion = "2026-03-31-preview"
+    [string]$apiVersion = "2026-09-30-preview"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -55,7 +55,7 @@ if ($LASTEXITCODE -ne 0 -or -not $token) {
     throw "Failed to get management token. Run 'az login' first."
 }
 
-$baseUrl = "https://eastus2euap.management.azure.com"
+$baseUrl = "https://management.azure.com"
 $collabUrl = "$baseUrl/subscriptions/$subscription/resourceGroups/$resourceGroup/providers/Microsoft.CleanRoom/collaborations/$collaborationName"
 
 # Step 1: Verify the collaboration exists
@@ -75,7 +75,7 @@ try {
 # Step 2: Add the app as collaborator
 Write-Host "`nAdding app as collaborator..." -ForegroundColor Cyan
 $addUrl = "$($collabUrl)/addCollaborator?api-version=$apiVersion"
-$body = @{ userIdentifier = $appClientId } | ConvertTo-Json
+$body = @{ collaborator = @{ userIdentifier = $appClientId } } | ConvertTo-Json -Depth 3
 
 try {
     $result = Invoke-RestMethod -Method Post -Uri $addUrl -Headers $headers -Body $body -ContentType "application/json"

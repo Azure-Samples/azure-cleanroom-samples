@@ -294,7 +294,11 @@ if ($persona -eq "woodgrove") {
 }
 
 $metadataFile = Join-Path $datastoreDir "$persona-datastore-metadata.json"
-$datastoreMetadata | ConvertTo-Json -Depth 10 | Out-File -FilePath $metadataFile -Encoding utf8
+$versionedMetadataFile = Join-Path $datastoreDir "$persona-datastore-metadata$datasetSuffix.json"
+$metadataJson = $datastoreMetadata | ConvertTo-Json -Depth 10
+$metadataJson | Out-File -FilePath $metadataFile -Encoding utf8
+$metadataJson | Out-File -FilePath $versionedMetadataFile -Encoding utf8
 Write-Host "Datastore metadata saved to: $metadataFile" -ForegroundColor Yellow
+Write-Host "Versioned datastore metadata saved to: $versionedMetadataFile" -ForegroundColor Yellow
 
 Write-Host "`nData preparation complete for '$persona' ($variant mode)." -ForegroundColor Green

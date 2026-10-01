@@ -40,11 +40,12 @@
     skip provisioning and leave the existing collaboration as-is.
 
 .PARAMETER apiVersion
-    Microsoft.CleanRoom ARM API version (default: 2026-04-30-preview).
+    Microsoft.CleanRoom ARM API version (default: 2026-09-30-preview).
 
 .EXAMPLE
     ./deploy-managed-cleanroom.ps1 `
-        -resourceGroup cr-collab-rg -collaborationName collab1 -resourceLocation westus
+        -resourceGroup cr-collab-rg -collaborationName collab1 `
+        -location westus -resourceLocation westus
 #>
 param(
     [Parameter(Mandatory)]
@@ -62,11 +63,17 @@ param(
         "westus", "westus2")]
     [string]$resourceLocation = "westus",
 
+    [ValidateSet("Standard_D4ds_v5", "Standard_D8ds_v5", "Standard_D16ds_v5", "Standard_D32ds_v5")]
+    [string]$aksSku = "Standard_D4ds_v5",
+
+    [ValidateRange(3, 10)]
+    [int]$nodePoolSize = 3,
+
     [string[]]$additionalCollaborators = @(),
 
     [switch]$deleteExistingCollab,
 
-    [string]$apiVersion = "2026-04-30-preview",
+    [string]$apiVersion = "2026-09-30-preview",
 
     [switch]$dryRun
 )
@@ -105,7 +112,7 @@ if ($dryRun) {
         Write-Host "[DRY-RUN] Would delete an existing '$collaborationName' (if present) and wait for it to vanish."
     }
     Write-Host "[DRY-RUN] Would deploy Bicep: $PSScriptRoot/managed-cleanroom.bicep (owner from caller token)"
-    Write-Host "[DRY-RUN]   collaborationName=$collaborationName location=$location resourceLocation=$resourceLocation"
+    Write-Host "[DRY-RUN]   collaborationName=$collaborationName location=$location resourceLocation=$resourceLocation aksSku=$aksSku nodePoolSize=$nodePoolSize"
     Write-Host "[DRY-RUN] Would POST $collabArmUrl/enableWorkload  body {workloadType=$workloadType}"
     foreach ($collaborator in $additionalCollaborators) {
         Write-Host "[DRY-RUN] Would POST $collabArmUrl/addCollaborator  body {collaborator.userIdentifier=$collaborator}"
@@ -156,6 +163,8 @@ az deployment group create `
         collaborationName=$collaborationName `
         location=$location `
         resourceLocation=$resourceLocation `
+        aksSku=$aksSku `
+        nodePoolSize=$nodePoolSize `
     -o none
 if ($LASTEXITCODE -ne 0) {
     throw "Bicep deployment failed (az deployment group create exit code $LASTEXITCODE). See the error above."
