@@ -839,17 +839,14 @@ Cancel a non-terminal query when a persistent fatal error prevents progress or
 when its capacity should be released before the job timeout. Do not cancel a run
 for a single transient warning such as an early `FailedMount`.
 
-The run response and run history return a job ID such as `cl-spark-<uuid>`.
-The cancellation endpoint expects the **bare run ID**, without `cl-spark-`.
-Use a separate variable for cancellation.
+Use the full job ID returned by the run response or run history, such as
+`cl-spark-<uuid>`.
 
 ```powershell
-$cancelRunId = $jobId -creplace '^cl-spark-', ''
-
 $cancelResult = az managedcleanroom frontend analytics query cancel-run `
     --collaboration-id $collabId `
     --document-id $queryName `
-    --run-id $cancelRunId -o json | ConvertFrom-Json
+    --run-id $jobId -o json | ConvertFrom-Json
 
 $cancelResult | ConvertTo-Json -Depth 5
 ```
