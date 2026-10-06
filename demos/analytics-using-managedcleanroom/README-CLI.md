@@ -839,17 +839,14 @@ Cancel a non-terminal query when a persistent fatal error prevents progress or
 when its capacity should be released before the job timeout. Do not cancel a run
 for a single transient warning such as an early `FailedMount`.
 
-The run response and run history return a job ID such as `cl-spark-<uuid>`.
-The cancellation endpoint expects the **bare run ID**, without `cl-spark-`.
-Use a separate variable for cancellation.
+Use the full job ID returned by the run response or run history, such as
+`cl-spark-<uuid>`.
 
 ```powershell
-$cancelRunId = $jobId -creplace '^cl-spark-', ''
-
 $cancelResult = az managedcleanroom frontend analytics query cancel-run `
     --collaboration-id $collabId `
     --document-id $queryName `
-    --run-id $cancelRunId -o json | ConvertFrom-Json
+    --run-id $jobId -o json | ConvertFrom-Json
 
 $cancelResult | ConvertTo-Json -Depth 5
 ```
@@ -857,10 +854,6 @@ $cancelResult | ConvertTo-Json -Depth 5
 For an active run, successful cancellation returns the full job ID with
 `status: "cancelled"` and deletes
 the Spark application so its driver and executor capacity can be released.
-Consequently, a subsequent lookup for that run returns `404 Not Found`; this is
-the expected confirmation that cancellation completed. Cancelling an unknown
-or already-deleted run also returns 404, so confirm the run ID before submitting
-the request.
 
 ---
 
@@ -910,12 +903,13 @@ $result.status.applicationState | ConvertTo-Json -Depth 5
 |---|---|---|
 | `PENDING_RERUN` | Normal scheduling state | Keep polling; it transitions to `SUBMITTED` automatically. |
 | One early `FailedMount` for `spark-drv-...-conf-map`, followed by progress | Transient driver-startup race | No action. Do not cancel or resubmit the run. |
-| `FailedCreatePodSandBox: resource is not available in the location ... Resource requested: N CPU M GB`; executors remain in `Init`/`PENDING` | During query execution, Confidential ACI platform capacity is unavailable for the requested container-group size in the region. This can occur even when subscription quota is sufficient and is distinct from the quota required to create the collaboration. The warning is surfaced as a query-pod warning in detailed `events[]`. | If the warning persists, [cancel the run](#cancel-a-query), reduce concurrent runs, verify the Confidential ACI quota calculated in [capacity planning](#important-capacity-planning-for-query-execution), and retry later. If a stuck run has no useful warning, check collaboration health and preserve the run ID. If the issue continues, contact the Azure Container Instances (ACI) team with the region, requested CPU/memory, AKS-VN2 resource ID, and event message. |
+| Driver or executor pod `Warning / FailedCreatePodSandBox` with underlying `ContainerGroupQuotaReached` or `quota ... exceeded`, including `Limit`, `Usage`, and `Requested` | The subscription has insufficient remaining Confidential ACI vCPU or container-group quota in the backing resource region. New driver or executor pods cannot be allocated. | Request additional **Confidential ACI vCPU and/or container-group quota** for the affected subscription and `$resourceLocation` through an [Azure support quota request](https://learn.microsoft.com/azure/container-instances/container-instances-resource-and-quota-limits#default-quota-limits). Include the exceeded quota name, region, limit, usage, and requested amount, and size the increase using [capacity planning](#important-capacity-planning-for-query-execution). Retry after the quota increase is applied, or reduce concurrent usage to fit the existing quota. Repeated retries alone do not increase quota. |
+| Driver or executor pod `Warning / FailedCreatePodSandBox` with `resource is not available in the location ... Resource requested: N CPU M GB`; pods remain in `Init`/`PENDING` | During query execution, Confidential ACI platform capacity is unavailable for the requested container-group size in the region. This can occur even when subscription quota is sufficient and is distinct from the quota required to create the collaboration. The warning is surfaced as a query-pod warning in detailed `events[]`. | If the warning persists, [cancel the run](#cancel-a-query), reduce concurrent runs, verify the Confidential ACI quota calculated in [capacity planning](#important-capacity-planning-for-query-execution), and retry later. If a stuck run has no useful warning, check collaboration health and preserve the run ID. If the issue continues, contact the Azure Container Instances (ACI) team with the region, requested CPU/memory, AKS-VN2 resource ID, and event message. |
 | `FailedScheduling: all schedulable Spark nodes are at their per-node pod limit` | Concurrent runs exceed the collaboration's query-scheduling capacity. | Reduce concurrent runs. The current release supports only `Standard_D4ds_v5` with three nodes. Upcoming updates will enable higher capacity, but an existing collaboration cannot be resized; create a new collaboration after the required configuration becomes supported. |
-| Driver `ExitCode: 11`, all executors fail, or the error repeats `Initial job has not accepted any resources` | Executor starvation, usually caused by Confidential ACI placement failure. | Check `events[]` for `FailedCreatePodSandBox`, then follow the capacity resolution above. |
+| Driver `ExitCode: 11`, all executors fail, or the error repeats `Initial job has not accepted any resources` | Executor starvation, which can result from insufficient Confidential ACI quota or unavailable regional capacity. | Check `events[]` for the underlying ACI error, then follow the quota or capacity resolution above. |
 | `SPARK_JOB_FAILED: ExitCode 1` with `AADSTS700211: No matching federated identity record` | The dataset identity has an incorrect issuer or federated-credential subject. | Recreate the federated credential with subject `Analytics-$personaOid`, using the `oid` from the persona token, then republish the dataset if its issuer is stale. See [Appendix A](#appendix-a-federated-credential-subject-reference). |
 | `java.io.IOException: No space left on device` during a wide join or shuffle | The selected `scaleSku` is too small for the query's shuffle/spill requirements. | Retry with `medium` when using `small`. `large` is preview-only and is not ready for production use. |
-| Executor reaches `Running` and then fails with `ExitCode: 1` and no useful message | The executor started and then crashed; this alone does not prove a capacity shortage. | Do not classify it as capacity unless `FailedCreatePodSandBox` is also present. Retry once; if it recurs, preserve the run ID and events and contact support. |
+| Executor reaches `Running` and then fails with `ExitCode: 1` and no useful message | The executor started and then crashed; this alone does not prove a quota or capacity shortage. | Classify quota or capacity failures only when the underlying ACI error identifies them, not from `FailedCreatePodSandBox` alone. Retry once; if it recurs, preserve the run ID and events and contact support. |
 | Persistent `Failed`/`BackOff`, image-pull, container-crash, or pod-init errors | Collaboration workload or service infrastructure failure. | Check collaboration health below. If the issue persists, preserve the run ID and `healthIssues` and contact support. |
 | Query submission returns `AnalyticsRequestFailed` or a 100-second timeout, or no run appears in run history | The analytics endpoint is unreachable, an AKS workload is unhealthy, or NSG/AVNM policy blocks port 443. | Check collaboration health and the [network-connectivity requirements](#step-09-execute-query). Do not repeatedly submit the same query until you confirm whether a run was created. |
 
