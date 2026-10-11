@@ -201,6 +201,11 @@ PublishScripts/
 *.snupkg
 # The packages folder can be ignored because of Package Restore
 **/[Pp]ackages/*
+# Keep SDK sample source files under packages/sample.
+!packages/sample/
+!packages/sample/AnalyticsFrontendSample.csproj
+!packages/sample/Program.cs
+!packages/sample/NuGet.config
 # except build/, which is used as an MSBuild target.
 !**/[Pp]ackages/build/
 # Uncomment if necessary however generally it will be regenerated when needed
