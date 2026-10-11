@@ -419,14 +419,30 @@ CSS should use the [Customer TSG](customer/index.md) plus these additional tools
 | Active collaborations (by subscription, tenant, region) | Cosmos DB | Daily | TBD |
 | New collaborations created (count, trend) | RP Worker telemetry | Daily | TBD |
 | Collaborations deleted | RP Worker telemetry | Daily | TBD |
+| Collaboration distribution by workload type | RP Worker telemetry | Daily | TBD |
 | Unique tenants/subscriptions using ACCR | ARM activity log | Weekly | TBD |
 | Query execution count | Frontend Service telemetry | Daily | TBD |
 | Data volume processed (rows read/written) | Frontend Service telemetry | Daily | TBD |
+| Data volume processed (bytes of data scanned) | Frontend Service telemetry | Daily | TBD |
+| Average collaborators per collaboration | Frontend Service telemetry / Membership Manager | Weekly | TBD |
 | Average collaboration lifetime | Cosmos DB + ARM | Weekly | TBD |
 | Regional distribution | RP Worker telemetry | Weekly | TBD |
 | Workload types enabled | RP Worker telemetry | Weekly | TBD |
 
-### 5.2 Engineering Health Reports — Status: TBD
+### 5.2 Quality Metrics — Status: TBD
+
+> **Note**: Some of these metrics may have been mentioned elsewhere in this document; this section consolidates all quality metrics under one head.
+
+| # | Metric | Business Need | Description / Notes | Status |
+|---|---|---|---|---|
+| 1 | QoS / success rate of Cleanroom RP CRUD operations (including pause/resume collaboration) | QoS measurements — track service health and reliability of the Cleanroom RP; drive SLO/SLA reporting and isolate client- vs server-side regressions. | Per-operation success/failure rate for all ARM CRUD ops (Create, Get, List, Update, Delete, Pause, Resume, EnableWorkload, AddCollaborator). Each failure tagged with client-side vs server-side classification, error code, and failure reason. | TBD |
+| 2 | QoS / success rate of Analytics Frontend operations | QoS measurements — track service health and reliability of the Analytics Frontend; distinguish customer-induced errors (bad input) from platform errors. | Per-operation success/failure for all Frontend APIs (PublishDataset, PublishQuery, SubmitQuery, VoteOnProposal, AddCollaborator, DownloadOutput, ListAuditEvents, GetCollaboration, GetRun, ListRuns). Each failure tagged with client-side vs server-side classification, code and reason. Client-side examples: publishing a dataset or query without mandatory fields, invalid input, unauthorized identity. | TBD |
+| 3 | #queries published / submitted / successfully run / failed to run at a collaboration level | Analyze the state of a collaboration — understand activity, throughput, and failure trends per collaboration to inform customer engagement and product improvements. | Counts per collaboration. Dimensions: collaborationId, queryName, finalState (COMPLETED / FAILED / SUBMISSION_FAILED). | TBD |
+| 4 | Query execution failure reason (per query) | Identify and correct errors that are blocking customers — triage failures faster, attribute to the right component, and reduce mean-time-to-resolution. | Failure reason classification for each submitted query — client-side (syntax issues, SKR issue, storage or Key Vault access issue) and server-side (data loading issue, executor crash, OOM, etc.). | TBD |
+| 5 | Query execution time and average query execution time at a collaboration level | Work on improvements based on observed performance — detect regressions, benchmark workloads, and guide query/cluster optimization. | Per-query duration plus p50/p95/p99 and average aggregated at the collaboration level. | TBD |
+| 6 | #parallel queries executing in a collaboration | Verify whether parallel queries were executed as expected — validate scheduling/concurrency behavior, detect contention, and inform capacity planning. | Concurrent in-flight query count per collaboration over time, derived from execution-commencement timestamps (SUBMITTED → COMPLETED interval). Query IDs of the in-flight queries should also be returned. | TBD |
+
+### 5.3 Engineering Health Reports — Status: TBD
 
 > **Note**: Engineering reports will be sourced from the Geneva → Kusto pipeline once operational. Exact queries and dashboards TBD.
 
