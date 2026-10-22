@@ -51,6 +51,42 @@ $deployParams = @{
 This is Bicep (declarative collaboration resource) + the ARM *action* steps
 (`enableWorkload`, `addCollaborator`). Runtime ~35 min. See [scripts/bicep/](bicep/).
 
+### Optional target resource configuration
+
+To pass additional creation-time settings such as public IP tags, add a
+`targetResourceConfiguration` hashtable to `$deployParams` before invoking the
+deployment script:
+
+```powershell
+$deployParams.targetResourceConfiguration = @{
+    iPTagConfiguration = @{
+        type = "FirstPartyUsage"
+        value = "/AzureCleanRoomsNonProd"
+    }
+}
+.\scripts\bicep\deploy-managed-cleanroom.ps1 @deployParams -DryRun
+```
+
+Use only IP-tag values approved for your subscription and scenario. These are
+networking IP tags, not ordinary ARM resource tags. Use ARM property names,
+including the case-sensitive `iPTagConfiguration` spelling, not CLI shorthand
+such as `i-p-tag-configuration`.
+
+The script merges this object with `aksSku` and `nodePoolSize`. If those fields
+also appear in the object, the object values take precedence; SKU validation
+and the node-count range of 3-10 still apply. With the object omitted, existing
+behavior is unchanged (`Standard_D4ds_v5`, 3 nodes by default).
+
+`-DryRun` prints the effective configuration without deploying; it still reads
+the current Azure CLI account. Remove `-DryRun` to create the collaboration.
+The script passes the object through a temporary JSON file, which is removed
+even if deployment fails. Direct Bicep deployments can also supply the optional
+`targetResourceConfiguration` object parameter.
+
+These settings apply when creating a new collaboration. An existing
+collaboration is skipped, not updated. `-DeleteExistingCollab` deletes and
+recreates the collaboration; it is not an in-place configuration change.
+
 ---
 
 ## Phase 2 — Each participant resolves the collaboration and joins

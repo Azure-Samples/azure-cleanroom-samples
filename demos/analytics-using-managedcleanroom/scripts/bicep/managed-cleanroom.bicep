@@ -72,6 +72,9 @@ param aksSku string = 'Standard_D4ds_v5'
 @maxValue(10)
 param nodePoolSize int = 3
 
+@description('Optional target resource settings using ARM property names (for example iPTagConfiguration). Values override aksSku and nodePoolSize when supplied in this object.')
+param targetResourceConfiguration object = {}
+
 @description('Optional additional collaborators added at creation time. Each entry is { userIdentifier: "<email-or-appId>" }. The owner is derived from the caller token automatically. Add further collaborators later via the addCollaborator action (see deploy script).')
 param collaborators array = []
 
@@ -86,10 +89,10 @@ resource collaboration 'Microsoft.CleanRoom/collaborations@2026-09-30-preview' =
   properties: {
     resourceLocation: resourceLocation
     collaborators: collaborators
-    targetResourceConfiguration: {
+    targetResourceConfiguration: union({
       aksSku: aksSku
       nodePoolSize: nodePoolSize
-    }
+    }, targetResourceConfiguration)
   }
 }
 

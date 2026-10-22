@@ -31,6 +31,11 @@
 .PARAMETER resourceLocation
     Region where clean-room infra (AKS/CCF/CACI) is provisioned (default: westus).
 
+.PARAMETER targetResourceConfiguration
+    Optional target resource settings using ARM property names, including
+    iPTagConfiguration. aksSku and nodePoolSize in this object override the
+    corresponding script parameters and retain their validation constraints.
+
 .PARAMETER additionalCollaborators
     Optional list of extra collaborator identifiers to invite via addCollaborator.
 
@@ -75,11 +80,31 @@ param(
 
     [string]$apiVersion = "2026-09-30-preview",
 
-    [switch]$dryRun
+    [switch]$dryRun,
+
+    [ValidateNotNull()]
+    [hashtable]$targetResourceConfiguration = @{}
 )
 
 $ErrorActionPreference = "Stop"
 $armEndpoint = "https://management.azure.com"
+
+if ($targetResourceConfiguration.ContainsKey("aksSku")) {
+    $aksSku = $targetResourceConfiguration.aksSku
+}
+if ($targetResourceConfiguration.ContainsKey("nodePoolSize")) {
+    $nodePoolSize = $targetResourceConfiguration.nodePoolSize
+}
+$effectiveTargetConfiguration = @{
+    aksSku = $aksSku
+    nodePoolSize = $nodePoolSize
+}
+foreach ($entry in $targetResourceConfiguration.GetEnumerator()) {
+    if ($entry.Key -notin @("aksSku", "nodePoolSize")) {
+        $effectiveTargetConfiguration[$entry.Key] = $entry.Value
+    }
+}
+$targetConfigurationJson = $effectiveTargetConfiguration | ConvertTo-Json -Depth 20 -Compress
 
 # Analytics is currently the only supported workload.
 $workloadType = "Analytics"
@@ -113,6 +138,7 @@ if ($dryRun) {
     }
     Write-Host "[DRY-RUN] Would deploy Bicep: $PSScriptRoot/managed-cleanroom.bicep (owner from caller token)"
     Write-Host "[DRY-RUN]   collaborationName=$collaborationName location=$location resourceLocation=$resourceLocation aksSku=$aksSku nodePoolSize=$nodePoolSize"
+    Write-Host "[DRY-RUN]   targetResourceConfiguration=$targetConfigurationJson"
     Write-Host "[DRY-RUN] Would POST $collabArmUrl/enableWorkload  body {workloadType=$workloadType}"
     foreach ($collaborator in $additionalCollaborators) {
         Write-Host "[DRY-RUN] Would POST $collabArmUrl/addCollaborator  body {collaborator.userIdentifier=$collaborator}"
@@ -155,19 +181,27 @@ if ($existing -and $existing.id) {
 # collaborators are passed here. az deployment group create blocks until the
 # deployment reaches a terminal state, so no separate provisioning poll is needed.
 Write-Host "Deploying collaboration '$collaborationName' via Bicep (~25 min)..."
-az deployment group create `
-    --resource-group $resourceGroup `
-    --name "deploy-$collaborationName" `
-    --template-file "$PSScriptRoot/managed-cleanroom.bicep" `
-    --parameters `
-        collaborationName=$collaborationName `
-        location=$location `
-        resourceLocation=$resourceLocation `
-        aksSku=$aksSku `
-        nodePoolSize=$nodePoolSize `
-    -o none
-if ($LASTEXITCODE -ne 0) {
-    throw "Bicep deployment failed (az deployment group create exit code $LASTEXITCODE). See the error above."
+$targetConfigurationFile = [System.IO.Path]::GetTempFileName()
+try {
+    [System.IO.File]::WriteAllText($targetConfigurationFile, $targetConfigurationJson)
+    az deployment group create `
+        --resource-group $resourceGroup `
+        --name "deploy-$collaborationName" `
+        --template-file "$PSScriptRoot/managed-cleanroom.bicep" `
+        --parameters `
+            collaborationName=$collaborationName `
+            location=$location `
+            resourceLocation=$resourceLocation `
+            aksSku=$aksSku `
+            nodePoolSize=$nodePoolSize `
+            "targetResourceConfiguration=@$targetConfigurationFile" `
+        -o none
+    if ($LASTEXITCODE -ne 0) {
+        throw "Bicep deployment failed (az deployment group create exit code $LASTEXITCODE). See the error above."
+    }
+}
+finally {
+    Remove-Item -LiteralPath $targetConfigurationFile -ErrorAction SilentlyContinue
 }
 
 $collab = Get-Collab
