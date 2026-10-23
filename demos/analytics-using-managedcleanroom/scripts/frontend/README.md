@@ -27,9 +27,10 @@ relative to the demo root. For a complete ordered setup, follow
    healthy (run `.\scripts\bicep\deploy-managed-cleanroom.ps1` first).
 2. Each collaborator is authenticated and has a **frontend token** available.
    Token resolution order used by `Invoke-Frontend.ps1`:
-   1. `$env:CLEANROOM_FRONTEND_TOKEN` (SPN / CI)
-   2. `-TokenFile <path>`
-   3. per-persona temp file `msal-idtoken-<persona>.txt`
+   1. `-TokenFile <path>` (explicit override)
+   2. `$env:CLEANROOM_FRONTEND_TOKEN` (SPN / CI)
+   3. `$env:MANAGEDCLEANROOM_ACCESS_TOKEN` (CLI session)
+   4. per-persona temp file `msal-idtoken-<persona>.txt`
 
    Acquire a per-persona token and extract its `oid` as `$personaOid`
    (README Step 1.5). For the corporate-account token option:
@@ -46,15 +47,19 @@ relative to the demo root. For a complete ordered setup, follow
 | Script | Step | Runs as |
 |--------|------|---------|
 | `Invoke-Frontend.ps1` | — | shared helper (dot-sourced) |
+| `get-frontend-data.ps1` | 03–11 | ANY authorized collaborator; lists/shows resources |
 | `run-collaborator.ps1` | 03 + 06 + 08 | EACH collaborator (orchestrator) |
+| `run-query.ps1` | 07 + 09–11 | Owner; returns the job ID or service-preview response |
 | `03-accept-invitation.ps1` | 03 | EACH collaborator |
 | `05-fetch-jwks.ps1` | 5.1 | EACH collaborator |
 | `05-set-issuer-url.ps1` | 5.3 | EACH collaborator |
 | `06-publish-dataset.ps1` | 6.2 / 6.3 | EACH (output = Woodgrove) |
+| `06-set-consent.ps1` | 06 | Document owner; enable/disable without republishing |
 | `07-publish-query.ps1` | 7.2 | Woodgrove |
 | `08-approve-query.ps1` | 08 | EACH collaborator |
 | `09-run-query.ps1` | 09 | Woodgrove |
-| `10-monitor-query.ps1` | 10 | ANY |
+| `09-cancel-query.ps1` | 09 | Woodgrove; full job ID required |
+| `10-monitor-query.ps1` | 10 | ANY; bounded polling or `-Once` |
 | `11-results-audit.ps1` | 11.1 / 11.2 | Woodgrove |
 | `12-get-readonly-kubeconfig.ps1` | 12.1 | Owner (ARM action) |
 
@@ -78,8 +83,9 @@ $queryName = "<query2-name-from-woodgrove>"
 Single-owner `query1` binds Woodgrove's input twice; it needs neither Northwind
 data nor a Northwind vote. Publication casts Woodgrove's accept vote.
 
-Pass `-CollaborationId` or `-CollaborationName` explicitly to avoid the
-orchestrator's first-visible-collaboration fallback. Resource provisioning and
+Pass `-CollaborationId` or `-CollaborationName` explicitly. The orchestrators
+auto-select only when exactly one collaboration is visible; ambiguous names
+or multiple visible collaborations produce an error. Resource provisioning and
 OIDC are prerequisites and are not run by the orchestrator. Do not defer a
 query's input-dataset publication until its approval step.
 
@@ -170,18 +176,46 @@ $jobId = .\scripts\frontend\09-run-query.ps1 -Persona woodgrove -CollaborationId
 ## Notes
 
 - Frontend scripts accept optional `-Frontend` and `-TokenFile` overrides;
-  the ARM-only kubeconfig helper does not. An environment token takes
-  precedence over `-TokenFile` in the shared frontend helper.
-- `06-publish-dataset.ps1 -DisableConsent` toggles execution consent off.
+  the ARM-only kubeconfig helper does not. An explicit token file takes
+  precedence over environment tokens. The default frontend is the non-attested
+  West US endpoint with CA-issued TLS; certificate verification remains enabled.
+- `06-publish-dataset.ps1 -DisableConsent` disables execution consent after
+  publishing. Use `06-set-consent.ps1` to change consent without republishing.
 - `09-run-query.ps1` and `run-query.ps1` accept `-ScaleSku small` (default),
   `medium`, or `large`, and `-StartDate` / `-EndDate` for date-range filtering.
   The Spark execution profile is separate from the collaboration's AKS SKU.
 - Both run helpers stop if the frontend response has no job ID. Check run
   history before retrying: the service may already have scheduled the query.
-- `10-monitor-query.ps1` throws on `FAILED` or `SUBMISSION_FAILED` after a
-  best-effort collaboration-health lookup. The orchestrator stops instead of
-  reporting successful completion.
+- `10-monitor-query.ps1` prints new/updated events while waiting and throws on
+  failure, cancellation, or timeout after a best-effort health lookup. Default
+  timeout is 60 minutes (`-TimeoutMinutes`); `-Once` returns one detailed result,
+  including failures, without waiting. Timeout does not cancel or resubmit.
 - `-DryRun` on these frontend scripts previews requests locally; it does not
   send the service-side `dryRun: true` request or validate `skuSettings`.
   Run helpers return `<job-id>` for a local preview, not an actual submitted run.
-  The kubeconfig helper still reads the current Azure CLI account.
+  The kubeconfig helper reads the current Azure CLI account unless
+  `-Subscription` is supplied.
+
+## Additional operations
+
+See [Fast Setup Scripts](../README-SCRIPTS.md) for the complete examples:
+
+| Capability | Script / option |
+|---|---|
+| Effective `skuSettings` without executing | Either query runner with `-ServiceDryRun`; accepts `-ScaleSku`, `-StartDate`, `-EndDate` |
+| Lists and individual resource inspection | `get-frontend-data.ps1 -Resource <resource>` |
+| One detailed run result, including events | `10-monitor-query.ps1 -JobId <id> -Once` |
+| Cancel a persistent failure/unwanted run | `09-cancel-query.ps1 -QueryName <name> -JobId <full-job-id>` |
+| Consent without republishing | `06-set-consent.ps1 -DocumentId <id> -ConsentAction` with `enable` or `disable` |
+| ARM show/health, enable, add, recover, delete-only | `../bicep/manage-collaboration.ps1 -Action <action>` |
+
+The reader supports `Collaborations` (`-ActiveOnly`), `Invitations`
+(`-PendingOnly`), `Collaborators`, `OidcKeys`, `Datasets`, `Dataset`, `Queries`,
+`Query`, `Run`, `RunHistory`, and `AuditEvents`. Supply `-CollaborationId` except
+when listing collaborations; individual documents need `-DocumentId`
+(`-QueryName` is an alias), and runs need `-JobId`.
+
+`-ServiceDryRun` cannot be combined with `-DryRun` or the orchestrator's
+`-BodyFile`. Real execution returns the job ID; diagnostics go to the host.
+`large` remains preview-only. Inspect detailed events before cancelling;
+one early `FailedMount` is not a reason to cancel.

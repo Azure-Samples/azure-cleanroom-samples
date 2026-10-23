@@ -10,16 +10,16 @@
 
     Prerequisites:
     - 04-prepare-resources.ps1 must have been run.
-    - 06-setup-identity.ps1 must have been run (OIDC issuer configured).
+    - 06-setup-oidc-storage.ps1 must have been run and its issuer registered.
 
 .PARAMETER resourceGroup
     Azure resource group containing the resources.
 
-.PARAMETER collaborationName
-    Name of the collaboration resource.
+.PARAMETER collaborationId
+    Frontend UUID of the collaboration.
 
 .PARAMETER contractId
-    Contract identifier used to compute the federation subject (default: analytics).
+    Contract identifier used to compute the federation subject (default: Analytics).
 
 .PARAMETER userId
     User identifier used to compute the federation subject.
@@ -75,7 +75,7 @@ $PSNativeCommandUseErrorActionPreference = $true
 # Read issuer URL.
 $issuerUrlFile = Join-Path $outDir $resourceGroup "issuer-url.txt"
 if (-not (Test-Path $issuerUrlFile)) {
-    Write-Host "ERROR: '$issuerUrlFile' not found. Run 06-setup-identity.ps1 first." -ForegroundColor Red
+    Write-Host "ERROR: '$issuerUrlFile' not found. Run 06-setup-oidc-storage.ps1 first." -ForegroundColor Red
     exit 1
 }
 $issuerUrl = (Get-Content $issuerUrlFile -Raw).Trim()

@@ -1,5 +1,9 @@
 # Big Data Analytics — REST API (`az rest` + `Invoke-RestMethod`)
 
+For reusable wrappers covering this guide's ARM and frontend operations, see
+[Fast Setup Scripts](scripts/README-SCRIPTS.md) and the
+[frontend script reference](scripts/frontend/README.md).
+
 This guide uses **`az rest`** for ARM collaboration operations and
 **`Invoke-RestMethod`** for frontend service operations, with the same helper
 scripts for Azure resource provisioning.
