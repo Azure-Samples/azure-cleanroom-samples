@@ -20,7 +20,11 @@ function Invoke-Scenario {
         Deleted = $false
         Error = $null
         Output = @()
+        Now = [datetime]::new(2026, 10, 23)
     }
+
+    function Get-Date { return $state.Now }
+    function Start-Sleep { param([double]$Seconds); $state.Now = $state.Now.AddSeconds($Seconds) }
 
     function az {
         $command = $args -join " "
@@ -31,6 +35,7 @@ function Invoke-Scenario {
             "group create *" { return }
             "provider register *" { return }
             "deployment group create *" {
+                Assert-Equal ($args -contains "--no-wait") $true "Creation is submitted without blocking"
                 $parameter = @($args | Where-Object { $_ -like "@*" })
                 Assert-Equal $parameter.Count 1 "Expected one JSON object parameter"
                 $state.ParameterFile = $parameter[0].Substring(1)
@@ -40,6 +45,19 @@ function Invoke-Scenario {
                 if ($FailureMode -eq "ExitCode") { $global:LASTEXITCODE = 1; return }
                 if ($FailureMode -eq "Throw") { throw "Simulated deployment exception" }
                 $state.Deployed = $true
+                if ($FailureMode -eq "SlowSubmission") {
+                    $state.Now = $state.Now.AddMinutes(1)
+                }
+                return
+            }
+            "deployment group show *" {
+                if ($FailureMode -eq "DeploymentFailed") {
+                    '{"properties":{"provisioningState":"Failed","error":{"code":"OfflineFailure","message":"offline deployment failed"}}}'
+                } elseif ($FailureMode -in @("DeploymentTimeout", "SlowSubmission")) {
+                    '{"properties":{"provisioningState":"Running"}}'
+                } else {
+                    '{"properties":{"provisioningState":"Succeeded"}}'
+                }
                 return
             }
             "rest --method GET *" {
@@ -163,7 +181,21 @@ try {
     }
     Assert-Equal $state.Deployed $false "Authorization failure must not trigger creation"
     Write-Host "PASS: authorization errors are not treated as absence"
-    Write-Host "All 22 offline target-resource-configuration tests passed."
+    $state = Invoke-Scenario -Parameters @{} -FailureMode "DeploymentFailed"
+    if (-not $state.Error -or $state.Error.Exception.Message -notlike "*OfflineFailure*") {
+        throw "ARM deployment failure was not surfaced."
+    }
+    Write-Host "PASS: asynchronous deployment failure surfaced"
+    foreach ($mode in @("DeploymentTimeout", "SlowSubmission")) {
+        $state = Invoke-Scenario -Parameters @{ timeoutMinutes = 2 } -FailureMode $mode
+        if (-not $state.Error -or $state.Error.Exception.Message -notlike "*Timed out*") {
+            throw "Deployment did not time out: $mode"
+        }
+        Assert-Equal ($state.Now - [datetime]::new(2026, 10, 23)).TotalSeconds 120 `
+            "Timeout includes submission time and stops at the requested deadline"
+        Write-Host "PASS: bounded creation timeout ($mode)"
+    }
+    Write-Host "All 25 offline target-resource-configuration tests passed."
 }
 finally {
     Remove-Item -LiteralPath $testDirectory -Recurse -Force -ErrorAction SilentlyContinue

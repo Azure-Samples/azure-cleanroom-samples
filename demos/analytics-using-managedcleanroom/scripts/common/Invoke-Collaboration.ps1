@@ -114,32 +114,142 @@ function Invoke-Collaboration {
     }
 }
 
+function Invoke-CollaborationOperation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][pscustomobject]$Context,
+        [Parameter(Mandatory)][string]$Action,
+        [Parameter(Mandatory)][object]$Body,
+        [ValidateRange(1, 1440)][int]$TimeoutMinutes = 60,
+        [switch]$NoWait
+    )
+
+    if ($Context.DryRun) {
+        Invoke-Collaboration -Context $Context -Method POST -Action $Action -Body $Body
+        return
+    }
+    $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    $timeoutMessage = "Timed out waiting for '$Action'. The Azure operation was not cancelled; " +
+        "inspect its state before retrying."
+    function Send-OperationRequest {
+        param([string]$Uri, [string]$Method, [string]$Json)
+        if ((Get-Date) -ge $deadline) { throw $timeoutMessage }
+        $auth = Invoke-CleanroomAz -Arguments @("account", "get-access-token",
+            "--subscription", $Context.Subscription,
+            "--resource", "$($Context.ArmEndpoint)/", "-o", "json") | ConvertFrom-Json
+        if (-not $auth.accessToken) { throw "Azure CLI returned no ARM access token." }
+        $remaining = [Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds)
+        if ($remaining -le 0) { throw $timeoutMessage }
+        $parameters = @{
+            Uri = $Uri
+            Method = $Method
+            Headers = @{ Authorization = "Bearer $($auth.accessToken)" }
+            TimeoutSec = [Math]::Min(120, $remaining)
+            MaximumRedirection = 0
+        }
+        if ($Json) { $parameters.Body = $Json; $parameters.ContentType = "application/json" }
+        $result = Invoke-WebRequest @parameters
+        if ((Get-Date) -ge $deadline) { throw $timeoutMessage }
+        return $result
+    }
+
+    $url = "$($Context.ResourceUri)/${Action}?api-version=$($Context.ApiVersion)"
+    $response = Send-OperationRequest -Uri $url -Method POST `
+        -Json ($Body | ConvertTo-Json -Depth 20 -Compress)
+    if ($NoWait) { return }
+    $trackingUrl = [string]@($response.Headers["Azure-AsyncOperation"])[0]
+    if (-not $trackingUrl) {
+        $trackingUrl = [string]@($response.Headers["Operation-Location"])[0]
+    }
+    $statusEndpoint = -not [string]::IsNullOrWhiteSpace($trackingUrl)
+    if (-not $trackingUrl) { $trackingUrl = [string]@($response.Headers["Location"])[0] }
+    if (-not $trackingUrl) {
+        if ($response.StatusCode -eq 202) {
+            throw "ARM accepted '$Action' without an operation tracking URL. Inspect state before retrying."
+        }
+        return
+    }
+    $trackingUri = $null
+    $armHost = ([Uri]$Context.ArmEndpoint).Host
+    if (-not [Uri]::TryCreate($trackingUrl, [UriKind]::Absolute, [ref]$trackingUri) -or
+        $trackingUri.Scheme -ne "https" -or $trackingUri.UserInfo -or $trackingUri.Port -ne 443 -or
+        ($trackingUri.Host -ne $armHost -and
+            -not $trackingUri.Host.EndsWith(".management.azure.com", [StringComparison]::OrdinalIgnoreCase))) {
+        throw "ARM returned an unexpected operation tracking URL."
+    }
+    do {
+        $response = Send-OperationRequest -Uri $trackingUrl -Method GET
+        if ($statusEndpoint) {
+            $operation = $response.Content | ConvertFrom-Json
+            if ([string]::IsNullOrWhiteSpace($operation.status)) {
+                throw "ARM operation status response has no status."
+            }
+            if ($operation.status -eq "Succeeded") { return }
+            if ($operation.status -in @("Failed", "Canceled", "Cancelled")) {
+                $details = $operation.error | ConvertTo-Json -Depth 20 -Compress
+                throw "ARM operation '$Action' ended in state '$($operation.status)': $details"
+            }
+            Write-Host "Waiting for $Action (operation status=$($operation.status))..."
+        } elseif ($response.StatusCode -ne 202) {
+            return
+        }
+        $remaining = ($deadline - (Get-Date)).TotalSeconds
+        if ($remaining -le 0) { throw $timeoutMessage }
+        $retryAfter = 30
+        $headerDelay = 0
+        if ([int]::TryParse([string]@($response.Headers["Retry-After"])[0], [ref]$headerDelay) -and
+            $headerDelay -gt 0) { $retryAfter = $headerDelay }
+        Start-Sleep -Seconds ([Math]::Min($retryAfter, $remaining))
+    } while ($true)
+}
+
 function Wait-Collaboration {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][pscustomobject]$Context,
         [Parameter(Mandatory)][scriptblock]$Condition,
         [Parameter(Mandatory)][string]$Description,
-        [ValidateRange(1, 1440)][int]$TimeoutMinutes = 45,
+        [ValidateRange(1, 1440)][int]$TimeoutMinutes = 60,
         [ValidateRange(1, 3600)][int]$IntervalSeconds = 30,
-        [switch]$AllowNotFound
+        [switch]$AllowNotFound,
+        [datetime]$Deadline,
+        [string]$DeploymentName
     )
 
-    $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    if (-not $PSBoundParameters.ContainsKey("Deadline")) {
+        $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    }
+    $timeoutMessage = "Timed out after $TimeoutMinutes minutes waiting for $Description. " +
+        "The Azure operation was not cancelled; inspect its state before retrying."
     do {
+        if ((Get-Date) -ge $Deadline) { throw $timeoutMessage }
+        $deploymentReady = $true
+        if ($DeploymentName) {
+            $deployment = Invoke-CleanroomAz -Arguments @("deployment", "group", "show",
+                "--subscription", $Context.Subscription, "--resource-group", $Context.ResourceGroup,
+                "--name", $DeploymentName, "-o", "json") | ConvertFrom-Json
+            $deploymentState = $deployment.properties.provisioningState
+            if ([string]::IsNullOrWhiteSpace($deploymentState)) {
+                throw "ARM deployment '$DeploymentName' returned no provisioning state."
+            }
+            if ($deploymentState -in @("Failed", "Canceled", "Cancelled")) {
+                $details = $deployment.properties.error | ConvertTo-Json -Depth 20 -Compress
+                throw "ARM deployment '$DeploymentName' ended in state '${deploymentState}': $details"
+            }
+            $deploymentReady = $deploymentState -eq "Succeeded"
+        }
         $collaboration = Invoke-Collaboration -Context $Context -AllowNotFound:$AllowNotFound
         if ($collaboration.properties.provisioningState -in @("Failed", "Canceled", "Cancelled")) {
             $details = $collaboration.properties | ConvertTo-Json -Depth 10 -Compress
             throw "Failed waiting for ${Description}: $details"
         }
-        if (& $Condition $collaboration) { return $collaboration }
-        if ((Get-Date) -ge $deadline) {
-            throw "Timed out after $TimeoutMinutes minutes waiting for $Description. Check resource state before retrying."
-        }
+        if ((Get-Date) -ge $Deadline) { throw $timeoutMessage }
+        if ($deploymentReady -and (& $Condition $collaboration)) { return $collaboration }
         Write-Host "Waiting for $Description (state=$($collaboration.properties.provisioningState))..."
         if ($collaboration.properties.health.healthIssues) {
             $collaboration.properties.health.healthIssues | ConvertTo-Json -Depth 10 | Out-Host
         }
-        Start-Sleep -Seconds $IntervalSeconds
+        $remainingSeconds = [Math]::Max(0, ($Deadline - (Get-Date)).TotalSeconds)
+        Start-Sleep -Seconds ([Math]::Min($IntervalSeconds, $remainingSeconds))
     } while ($true)
 }

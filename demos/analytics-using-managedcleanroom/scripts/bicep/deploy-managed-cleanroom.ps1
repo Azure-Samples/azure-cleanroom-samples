@@ -57,7 +57,9 @@
     Optional subscription ID; defaults to the current Azure CLI account.
 
 .PARAMETER timeoutMinutes
-    Maximum wait per lifecycle operation (default: 45 minutes).
+    Polling budget per lifecycle operation (default: 60 minutes), starting before
+    submission. Creation is submitted asynchronously and its deployment is polled.
+    This is not a whole-script limit or a hard timeout on each Azure CLI request.
 
 .EXAMPLE
     ./deploy-managed-cleanroom.ps1 `
@@ -97,7 +99,7 @@ param(
     [string]$subscription,
 
     [ValidateRange(1, 1440)]
-    [int]$timeoutMinutes = 45,
+    [int]$timeoutMinutes = 60,
 
     [switch]$dryRun,
 
@@ -205,6 +207,7 @@ if ($existing) {
 # ---------------------------------------------------------------------------
 # The owner is added automatically from the caller's ARM token.
 Write-Host "Deploying collaboration '$collaborationName' via Bicep (~25 min)..."
+$creationDeadline = (Get-Date).AddMinutes($timeoutMinutes)
 $targetConfigurationFile = [System.IO.Path]::GetTempFileName()
 try {
     $parameters = @{
@@ -218,14 +221,15 @@ try {
         "--template-file", "$PSScriptRoot/managed-cleanroom.bicep",
         "--parameters", "collaborationName=$collaborationName", "location=$location",
         "resourceLocation=$resourceLocation", "aksSku=$aksSku", "nodePoolSize=$nodePoolSize",
-        "@$targetConfigurationFile", "-o", "none") | Out-Null
+        "@$targetConfigurationFile", "--no-wait", "-o", "none") | Out-Null
 }
 finally {
     Remove-Item -LiteralPath $targetConfigurationFile -Force
 }
 
 $collab = Wait-Collaboration -Context $context -Description "collaboration provisioning" `
-    -TimeoutMinutes $timeoutMinutes `
+    -TimeoutMinutes $timeoutMinutes -Deadline $creationDeadline `
+    -DeploymentName "deploy-$collaborationName" -AllowNotFound `
     -Condition { param($c) $c.properties.provisioningState -eq "Succeeded" }
 Write-Host "Collaboration resource ready: $($collab.id)"
 

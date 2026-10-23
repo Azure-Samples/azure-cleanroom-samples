@@ -63,6 +63,23 @@ The only currently supported sizing is `Standard_D4ds_v5` with **3 nodes**.
 Both the script and Bicep reject larger configurations until support is expanded.
 Quota and regional capacity remain prerequisites, not guarantees made by these scripts.
 
+### Timeouts
+
+`-TimeoutMinutes` defaults to **60 minutes per lifecycle operation**, not for the
+entire script. Delete, create, enable/readiness, and each collaborator addition
+have separate budgets. A complete clean setup can therefore take over an hour.
+The budget starts before submitting each operation; creation uses
+`az deployment group create --no-wait` and polls both deployment and collaboration
+state, so it does not hide a blocking creation wait before starting the timer.
+Recovery tracks the ARM operation URL, not `provisioningState`, which may remain
+`Succeeded` while recovery is still in progress.
+
+The polling deadline is checked between Azure CLI requests; it is not a hard
+process-kill timeout on an individual network request. On timeout, Azure work
+may still be running: inspect its status before retrying. Fast setup stops before
+creation if deletion fails or times out. Query monitoring has its own independent
+60-minute default and does not cancel or resubmit a query on timeout.
+
 ### Optional target resource configuration
 
 To pass additional creation-time settings such as public IP tags, add a
