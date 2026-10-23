@@ -62,6 +62,10 @@ jobs:
             Write-Host "PSScriptAnalyzer: clean"
           }
 
+      - name: Target resource configuration (offline, mocked Azure CLI)
+        run: |
+          & "./$env:DEMO/scripts/bicep/tests/test-target-resource-configuration.ps1"
+
       - name: Dry-run smoke (offline, no network)
         working-directory: demos/analytics-using-managedcleanroom/scripts/frontend
         run: |
