@@ -6,6 +6,10 @@ and frontend operations, with helper scripts for Azure resource provisioning.
 For the REST API variant using `Invoke-RestMethod` and `az rest`, see
 [README-API.md](README-API.md).
 
+For the same workflow through reusable PowerShell/Bicep helpers, including
+IP tags, query `ScaleSku`, service dry runs, cancellation, and SPN participants,
+see [Fast Setup Scripts](scripts/README-SCRIPTS.md).
+
 ---
 
 ## Scenario

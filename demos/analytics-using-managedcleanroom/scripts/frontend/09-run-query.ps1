@@ -27,6 +27,10 @@
 .PARAMETER EndDate
     Optional dataset date-range upper bound (e.g. "2025-09-02").
 
+.PARAMETER ServiceDryRun
+    Sends dryRun=true to the frontend and returns its skuSettings response
+    without executing a query. Different from the local-only -DryRun preview.
+
 .EXAMPLE
     ./09-run-query.ps1 -Persona woodgrove -CollaborationId $collabId -QueryName "query1-v1"
 #>
@@ -39,22 +43,33 @@ param(
     [string]$EndDate,
     [string]$Frontend,
     [string]$TokenFile,
+    [switch]$ServiceDryRun,
     [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot/Invoke-Frontend.ps1"
+if ($DryRun -and $ServiceDryRun) {
+    throw "Choose either -DryRun (local preview) or -ServiceDryRun (frontend validation)."
+}
 
 $fe = Get-FrontendContext -Persona $Persona -Frontend $Frontend -TokenFile $TokenFile -DryRun:$DryRun
 
 $runBody = @{ runId = [guid]::NewGuid().ToString(); scaleSku = $ScaleSku.ToLowerInvariant() }
 if ($StartDate) { $runBody.startDate = $StartDate }
 if ($EndDate) { $runBody.endDate = $EndDate }
+if ($ServiceDryRun) { $runBody.dryRun = $true }
 
 $runResult = Invoke-Frontend -Context $fe -Path "$CollaborationId/analytics/queries/$QueryName/run" -Method POST -Body $runBody
 if ($DryRun) {
     Write-Host "[DRY-RUN] No run submitted. Job ID placeholder: <job-id>"
     return "<job-id>"
+}
+if ($ServiceDryRun) {
+    if (-not $runResult.skuSettings) {
+        throw "The service dry run returned no skuSettings. Inspect the frontend response/API version."
+    }
+    return $runResult
 }
 $jobId = $runResult.id
 if ([string]::IsNullOrWhiteSpace([string]$jobId)) {

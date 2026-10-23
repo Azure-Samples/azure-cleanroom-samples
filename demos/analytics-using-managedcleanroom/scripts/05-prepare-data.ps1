@@ -9,7 +9,7 @@
     For CPK (Client-Provided Keys):
       1. Generate a random AES-256 DEK (Data Encryption Key)
       2. Upload data with azcopy --cpk-by-value (Azure Storage encrypts server-side)
-      3. Save DEK binary file for Phase B (KEK creation in 08-publish-dataset.ps1)
+      3. Save DEK binary file for Phase B (KEK creation in 08-prepare-dataset-keys.ps1)
 
     Both modes generate datastore metadata for the dataset publish step.
 

@@ -12,7 +12,7 @@
 
     Steps performed (each skippable):
       1. Resolve the collaboration UUID (by -CollaborationId, -CollaborationName,
-         or first visible collaboration).
+         or the only visible collaboration).
       2. Accept the pending invitation (03). Tolerates "already accepted".
       3. (optional) Publish a dataset (06) when -DatasetDocumentId + -DatasetBodyFile
          are supplied.
@@ -32,7 +32,7 @@
 
 .PARAMETER CollaborationId
     Frontend collaboration UUID. If omitted, resolved via -CollaborationName or
-    the first visible collaboration.
+    the only visible collaboration. Ambiguous selection is rejected.
 
 .PARAMETER CollaborationName
     Resolve the collaboration by display name when -CollaborationId is not given.

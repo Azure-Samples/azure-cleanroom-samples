@@ -14,9 +14,10 @@
         $collabs = (Invoke-Frontend -Context $fe -Path "" -Method GET).collaborations
 
     Token resolution order (first match wins):
-      1. $env:CLEANROOM_FRONTEND_TOKEN   (SPN / CI, set by setup-local-auth.ps1)
-      2. -TokenFile <path>               (explicit override)
-      3. Temp file msal-idtoken-<persona>.txt  (per-persona, per README Step 1.5)
+      1. -TokenFile <path> (explicit override)
+      2. $env:CLEANROOM_FRONTEND_TOKEN (SPN / CI)
+      3. $env:MANAGEDCLEANROOM_ACCESS_TOKEN (CLI session)
+      4. Temp file msal-idtoken-<persona>.txt (per README Step 1.5)
 
     Acquire the per-persona token first (README Step 1.5), e.g.:
         az account get-access-token --resource "https://management.azure.com/" `
@@ -45,14 +46,29 @@ function Get-FrontendContext {
     if (-not $Frontend) {
         $Frontend = "https://prod-nonattested.workload-frontendwestus.cleanroom.cloudapp.azure.net"
     }
+    $endpoint = $null
+    if (-not [Uri]::TryCreate($Frontend, [UriKind]::Absolute, [ref]$endpoint) -or
+        $endpoint.Scheme -ne "https" -or $endpoint.UserInfo -or
+        $endpoint.Query -or $endpoint.Fragment) {
+        throw "Frontend must be an absolute HTTPS URL without credentials, query, or fragment."
+    }
 
     # Resolve the bearer token (skipped in dry-run mode).
     $token = $null
     if ($DryRun) {
         $token = "<dry-run-token>"
     }
+    elseif ($TokenFile) {
+        if (-not (Test-Path -LiteralPath $TokenFile -PathType Leaf)) {
+            throw "Frontend token file not found: $TokenFile"
+        }
+        $token = (Get-Content -LiteralPath $TokenFile -Raw).Trim()
+    }
     elseif ($env:CLEANROOM_FRONTEND_TOKEN) {
         $token = $env:CLEANROOM_FRONTEND_TOKEN.Trim()
+    }
+    elseif ($env:MANAGEDCLEANROOM_ACCESS_TOKEN) {
+        $token = $env:MANAGEDCLEANROOM_ACCESS_TOKEN.Trim()
     }
     else {
         if (-not $TokenFile) {
@@ -62,6 +78,9 @@ function Get-FrontendContext {
             throw "Frontend token not found. Set `$env:CLEANROOM_FRONTEND_TOKEN or create '$TokenFile' (see README Step 1.5)."
         }
         $token = (Get-Content $TokenFile -Raw).Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        throw "Frontend token is empty. Supply a valid -TokenFile or frontend token environment variable."
     }
 
     return [pscustomobject]@{
@@ -91,7 +110,8 @@ function Invoke-Frontend {
         "Content-Type" = "application/json"
     }
 
-    $url = if ($Path) { "$($Context.Frontend)/collaborations/$Path" } else { "$($Context.Frontend)/collaborations" }
+    $url = "$($Context.Frontend)/collaborations"
+    if ($Path) { $url += $(if ($Path.StartsWith("?")) { $Path } else { "/$Path" }) }
     if ($url -notmatch '\?') { $url += "?api-version=$($Context.ApiVersion)" }
     else { $url += "&api-version=$($Context.ApiVersion)" }
 
@@ -122,7 +142,7 @@ function Invoke-Frontend {
 function Resolve-CollaborationId {
     <#
     .SYNOPSIS
-        Resolves a frontend collaboration UUID by id, name, or first-visible.
+        Resolves a UUID by ID, unique name, or the only visible collaboration.
     #>
     [CmdletBinding()]
     param(
@@ -141,13 +161,16 @@ function Resolve-CollaborationId {
     if (-not $collabs) { throw "No collaborations visible to persona '$($Context.Persona)'." }
 
     if ($CollaborationName) {
-        $match = $collabs | Where-Object { $_.collaborationName -eq $CollaborationName }
+        $match = @($collabs | Where-Object { $_.collaborationName -eq $CollaborationName })
         if (-not $match) { throw "No collaboration named '$CollaborationName' visible to '$($Context.Persona)'." }
-        return @($match)[0].collaborationId
+        if ($match.Count -ne 1) {
+            throw "Multiple collaborations named '$CollaborationName'. Pass -CollaborationId."
+        }
+        return $match[0].collaborationId
     }
 
     if (@($collabs).Count -gt 1) {
-        Write-Warning "Multiple collaborations visible; using the first. Pass -CollaborationName or -CollaborationId to disambiguate."
+        throw "Multiple collaborations visible. Pass -CollaborationName or -CollaborationId."
     }
     return @($collabs)[0].collaborationId
 }

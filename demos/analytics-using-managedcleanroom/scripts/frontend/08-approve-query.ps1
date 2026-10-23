@@ -47,9 +47,7 @@ if (-not $DryRun -and $VoteAction -eq "accept" -and $queryInfo.state -eq "Accept
     return
 }
 if (-not $proposalId -and -not $DryRun) {
-    # A missing proposal usually means the query is already decided, not unpublished.
-    Write-Host "Query '$QueryName' has no open proposal (state='$($queryInfo.state)'); nothing to vote on."
-    return
+    throw "Cannot vote '$VoteAction': query '$QueryName' has no open proposal (state='$($queryInfo.state)')."
 }
 Write-Host "Proposal ID: $proposalId"
 
