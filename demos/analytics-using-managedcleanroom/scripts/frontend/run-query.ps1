@@ -5,8 +5,8 @@
 
 .DESCRIPTION
     A single entry point that makes a query "easily runnable by scripts" once the
-    collaboration is set up. Chains the per-step scripts (07, 10, 11) and runs the
-    query inline to capture the job id.
+    collaboration is set up. Chains the per-step scripts (07, 09, 10, 11) and
+    returns the submitted job id.
 
     Steps performed (each skippable):
       1. Resolve the collaboration UUID.
@@ -28,7 +28,7 @@
 
 .PARAMETER CollaborationId
     Frontend collaboration UUID. If omitted, resolved via -CollaborationName or
-    the first visible collaboration.
+    the only visible collaboration. Ambiguous selection is rejected.
 
 .PARAMETER CollaborationName
     Resolve the collaboration by display name when -CollaborationId is not given.
@@ -60,6 +60,13 @@
 .PARAMETER DryRun
     Print planned requests without calling the service.
 
+.PARAMETER ServiceDryRun
+    Return the frontend's effective skuSettings without publishing, executing,
+    monitoring, or fetching results. Cannot be combined with BodyFile or DryRun.
+
+.PARAMETER TimeoutMinutes
+    Maximum time to monitor an executed run (default: 60 minutes).
+
 .EXAMPLE
     # Run an approved query and wait for results
     ./run-query.ps1 -Persona woodgrove -QueryName query1-v1
@@ -83,11 +90,16 @@ param(
     [switch]$SkipResults,
     [string]$Frontend,
     [string]$TokenFile,
+    [ValidateRange(1, 1440)][int]$TimeoutMinutes = 60,
+    [switch]$ServiceDryRun,
     [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot/Invoke-Frontend.ps1"
+if ($ServiceDryRun -and ($DryRun -or $BodyFile)) {
+    throw "-ServiceDryRun cannot be combined with -DryRun or -BodyFile."
+}
 
 $fe = Get-FrontendContext -Persona $Persona -Frontend $Frontend -TokenFile $TokenFile -DryRun:$DryRun
 
@@ -105,12 +117,12 @@ Write-Host "==> Collaboration: $CollaborationId"
 if ($BodyFile) {
     Write-Host "==> Publishing query '$QueryName'..."
     & "$PSScriptRoot/07-publish-query.ps1" @childArgs -CollaborationId $CollaborationId `
-        -QueryName $QueryName -BodyFile $BodyFile
+        -QueryName $QueryName -BodyFile $BodyFile | Out-Host
     Write-Host "    (the publisher's vote is automatic; remaining affected collaborators must approve)"
 }
 
 # 3. Check approval before submitting a run.
-if (-not $DryRun) {
+if (-not $DryRun -and -not $ServiceDryRun) {
     $queryInfo = Invoke-Frontend -Context $fe -Path "$CollaborationId/analytics/queries/$QueryName"
     if ($queryInfo.state -ne "Accepted") {
         throw "Query '$QueryName' is not Accepted (state='$($queryInfo.state)'). Obtain the required approvals, then rerun without -BodyFile."
@@ -118,21 +130,23 @@ if (-not $DryRun) {
 }
 
 # Run the query (capture the job id).
-Write-Host "==> Running query '$QueryName'..."
-$runBody = @{ runId = [guid]::NewGuid().ToString(); scaleSku = $ScaleSku.ToLowerInvariant() }
-if ($StartDate) { $runBody.startDate = $StartDate }
-if ($EndDate) { $runBody.endDate = $EndDate }
-$runResult = Invoke-Frontend -Context $fe -Path "$CollaborationId/analytics/queries/$QueryName/run" -Method POST -Body $runBody
-$jobId = if ($DryRun) { "<job-id>" } else { $runResult.id }
-if ([string]::IsNullOrWhiteSpace([string]$jobId)) {
-    throw "Frontend did not return a job ID for query '$QueryName'. Submission may have succeeded; check run history before retrying."
+if ($ServiceDryRun) {
+    Write-Host "==> Validating execution settings for '$QueryName' (no query execution)..."
+} else {
+    Write-Host "==> Running query '$QueryName'..."
 }
+$runResult = & "$PSScriptRoot/09-run-query.ps1" @childArgs -CollaborationId $CollaborationId `
+    -QueryName $QueryName -ScaleSku $ScaleSku -StartDate $StartDate -EndDate $EndDate `
+    -ServiceDryRun:$ServiceDryRun
+if ($ServiceDryRun) { return $runResult }
+$jobId = $runResult
 Write-Host "    Job ID: $jobId"
 
 # 4. Monitor (optional).
 if (-not $SkipMonitor) {
     Write-Host "==> Monitoring run $jobId..."
-    & "$PSScriptRoot/10-monitor-query.ps1" @childArgs -CollaborationId $CollaborationId -JobId $jobId
+    & "$PSScriptRoot/10-monitor-query.ps1" @childArgs -CollaborationId $CollaborationId `
+        -JobId $jobId -TimeoutMinutes $TimeoutMinutes | Out-Null
 }
 
 # 5. Results + audit (optional).
@@ -141,7 +155,8 @@ if (-not $SkipResults) {
     if ($DryRun) {
         & "$PSScriptRoot/11-results-audit.ps1" @childArgs -CollaborationId $CollaborationId -QueryName $QueryName | Out-Null
     } else {
-        & "$PSScriptRoot/11-results-audit.ps1" @childArgs -CollaborationId $CollaborationId -QueryName $QueryName
+        & "$PSScriptRoot/11-results-audit.ps1" @childArgs -CollaborationId $CollaborationId `
+            -QueryName $QueryName | Out-Host
     }
 }
 
@@ -150,5 +165,10 @@ if ($DryRun) {
     Write-Host "[DRY-RUN] Workflow preview complete; no query was submitted."
     return $jobId
 }
-Write-Host "Query workflow complete for '$QueryName' (job $jobId) on collaboration $CollaborationId."
+if ($SkipMonitor) {
+    Write-Host "Query submitted (not monitored): '$QueryName', job $jobId."
+} else {
+    Write-Host "Query completed: '$QueryName', job $jobId."
+}
 Write-Host "From the demo root, download with: .\scripts\11-download-output.ps1 -resourceGroup <rg> -datasetSuffix <suffix> -JobId $jobId"
+return $jobId

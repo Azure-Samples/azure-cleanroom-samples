@@ -32,25 +32,25 @@ param(
     [Parameter(Mandatory)][string]$resourceGroup,
     [Parameter(Mandatory)][string]$collaborationName,
     [string]$OutFile = "./readonly.kubeconfig",
+    [string]$Subscription,
     [string]$apiVersion = "2026-09-30-preview",
     [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
-$armEndpoint = "https://management.azure.com"
+. "$PSScriptRoot/../common/Invoke-Collaboration.ps1"
+$context = Get-CollaborationContext -ResourceGroup $resourceGroup `
+    -CollaborationName $collaborationName -Subscription $Subscription `
+    -ApiVersion $apiVersion -DryRun:$DryRun
 
-$subscription = (az account show -o json | ConvertFrom-Json).id
-$collabArmUrl = "$armEndpoint/subscriptions/$subscription/resourceGroups/$resourceGroup/providers/Microsoft.CleanRoom/Collaborations/$collaborationName"
-
+$kc = Invoke-Collaboration -Context $context -Method POST -Action getReadonlyKubeConfig
 if ($DryRun) {
-    Write-Host "[DRY-RUN] POST $collabArmUrl/getReadonlyKubeConfig?api-version=$apiVersion"
     Write-Host "[DRY-RUN] Would decode kubeconfig and write to $OutFile"
     return
 }
-
-$kc = az rest --method POST `
-    --url "$collabArmUrl/getReadonlyKubeConfig`?api-version=$apiVersion" `
-    --resource $armEndpoint -o json | ConvertFrom-Json
+if ([string]::IsNullOrWhiteSpace($kc.kubeconfig)) {
+    throw "ARM returned no read-only kubeconfig."
+}
 
 $bytes = [Convert]::FromBase64String($kc.kubeconfig)
 [System.Text.Encoding]::UTF8.GetString($bytes) | Out-File $OutFile -Encoding utf8

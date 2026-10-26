@@ -6,6 +6,9 @@
 .DESCRIPTION
     Run by: Collaboration owner (Woodgrove).
 
+    Existing collaborations are deleted first. Setup waits until ARM reports
+    the old resource absent before creating a fresh one; deletion errors stop setup.
+
     Bicep is declarative and can only create the collaboration *resource*
     (control-plane PUT). The managed clean-room flow also requires imperative
     ARM *action* POSTs which have no declarative Bicep equivalent:
@@ -36,16 +39,27 @@
     iPTagConfiguration. aksSku and nodePoolSize in this object override the
     corresponding script parameters and retain their validation constraints.
 
+.PARAMETER collaborators
+    Creation-time collaborators: emails or SPN objects with userIdentifier,
+    objectId and tenantId.
+
 .PARAMETER additionalCollaborators
-    Optional list of extra collaborator identifiers to invite via addCollaborator.
+    Optional extra emails or SPN identity objects to invite via addCollaborator.
 
 .PARAMETER deleteExistingCollab
-    If a collaboration with the same name exists: when set, delete it (and wait
-    for its resources to vanish) before provisioning a new one; when not set,
-    skip provisioning and leave the existing collaboration as-is.
+    Defaults to true. Retained for compatibility; false is rejected because fast
+    setup always recreates. Use manage-collaboration.ps1 for existing-resource actions.
 
 .PARAMETER apiVersion
     Microsoft.CleanRoom ARM API version (default: 2026-09-30-preview).
+
+.PARAMETER subscription
+    Optional subscription ID; defaults to the current Azure CLI account.
+
+.PARAMETER timeoutMinutes
+    Polling budget per lifecycle operation (default: 60 minutes), starting before
+    submission. Creation is submitted asynchronously and its deployment is polled.
+    This is not a whole-script limit or a hard timeout on each Azure CLI request.
 
 .EXAMPLE
     ./deploy-managed-cleanroom.ps1 `
@@ -68,17 +82,24 @@ param(
         "westus", "westus2")]
     [string]$resourceLocation = "westus",
 
-    [ValidateSet("Standard_D4ds_v5", "Standard_D8ds_v5", "Standard_D16ds_v5", "Standard_D32ds_v5")]
+    [ValidateSet("Standard_D4ds_v5")]
     [string]$aksSku = "Standard_D4ds_v5",
 
-    [ValidateRange(3, 10)]
+    [ValidateRange(3, 3)]
     [int]$nodePoolSize = 3,
 
-    [string[]]$additionalCollaborators = @(),
+    [object[]]$collaborators = @(),
 
-    [switch]$deleteExistingCollab,
+    [object[]]$additionalCollaborators = @(),
+
+    [switch]$deleteExistingCollab = $true,
 
     [string]$apiVersion = "2026-09-30-preview",
+
+    [string]$subscription,
+
+    [ValidateRange(1, 1440)]
+    [int]$timeoutMinutes = 60,
 
     [switch]$dryRun,
 
@@ -87,8 +108,14 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$armEndpoint = "https://management.azure.com"
+. "$PSScriptRoot/../common/Invoke-Collaboration.ps1"
 
+if (-not $deleteExistingCollab) {
+    throw "Fast setup always deletes and recreates existing collaborations. Use manage-collaboration.ps1 for existing-resource actions."
+}
+if ($apiVersion -ne "2026-09-30-preview") {
+    throw "This Bicep template uses 2026-09-30-preview; use the same API version for setup."
+}
 if ($targetResourceConfiguration.ContainsKey("aksSku")) {
     $aksSku = $targetResourceConfiguration.aksSku
 }
@@ -101,6 +128,13 @@ $effectiveTargetConfiguration = @{
 }
 foreach ($entry in $targetResourceConfiguration.GetEnumerator()) {
     if ($entry.Key -notin @("aksSku", "nodePoolSize")) {
+        if ($entry.Key -cne "iPTagConfiguration") {
+            throw "Unknown target resource property '$($entry.Key)'. Use ARM spelling iPTagConfiguration."
+        }
+        if ([string]::IsNullOrWhiteSpace($entry.Value.type) -or
+            [string]::IsNullOrWhiteSpace($entry.Value.value)) {
+            throw "iPTagConfiguration requires both type and value."
+        }
         $effectiveTargetConfiguration[$entry.Key] = $entry.Value
     }
 }
@@ -109,39 +143,38 @@ $targetConfigurationJson = $effectiveTargetConfiguration | ConvertTo-Json -Depth
 # Analytics is currently the only supported workload.
 $workloadType = "Analytics"
 
-$subscription = (az account show -o json | ConvertFrom-Json).id
-$collabArmUrl = "$armEndpoint/subscriptions/$subscription/resourceGroups/$resourceGroup/providers/Microsoft.CleanRoom/Collaborations/$collaborationName"
-
-function Get-Collab {
-    az rest --method GET --url "${collabArmUrl}?api-version=$apiVersion" --resource $armEndpoint -o json 2>$null | ConvertFrom-Json
+$creationIdentities = @($collaborators | ForEach-Object { ConvertTo-Collaborator -Identity $_ })
+$additionalIdentities = @($additionalCollaborators | ForEach-Object {
+    ConvertTo-Collaborator -Identity $_
+})
+$context = Get-CollaborationContext -ResourceGroup $resourceGroup `
+    -CollaborationName $collaborationName -Subscription $subscription `
+    -ApiVersion $apiVersion -DryRun:$dryRun
+$actionArgs = @{
+    ResourceGroup = $resourceGroup
+    CollaborationName = $collaborationName
+    Subscription = $context.Subscription
+    ApiVersion = $apiVersion
+    TimeoutMinutes = $timeoutMinutes
+    DryRun = $dryRun
 }
 
-# Polls a condition until it returns truthy or the timeout elapses.
-function Wait-Until {
-    param(
-        [Parameter(Mandatory)][scriptblock]$Condition,
-        [Parameter(Mandatory)][string]$Description,
-        [int]$TimeoutMinutes = 20,
-        [int]$IntervalSeconds = 30
-    )
-    $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
-    while (-not (& $Condition)) {
-        if ((Get-Date) -gt $deadline) { throw "Timed out after $TimeoutMinutes min waiting for: $Description" }
-        Start-Sleep -Seconds $IntervalSeconds
-    }
+function Get-Collab {
+    Invoke-Collaboration -Context $context -AllowNotFound
 }
 
 if ($dryRun) {
     Write-Host "[DRY-RUN] Would ensure resource group '$resourceGroup' ($location) and register providers."
-    if ($deleteExistingCollab) {
-        Write-Host "[DRY-RUN] Would delete an existing '$collaborationName' (if present) and wait for it to vanish."
-    }
-    Write-Host "[DRY-RUN] Would deploy Bicep: $PSScriptRoot/managed-cleanroom.bicep (owner from caller token)"
+    Write-Host "[DRY-RUN] Would delete an existing '$collaborationName' (if present) and wait for it to vanish."
+    & "$PSScriptRoot/manage-collaboration.ps1" @actionArgs -Action Delete
+    Write-Host "[DRY-RUN] Would then create a fresh collaboration via Bicep."
     Write-Host "[DRY-RUN]   collaborationName=$collaborationName location=$location resourceLocation=$resourceLocation aksSku=$aksSku nodePoolSize=$nodePoolSize"
     Write-Host "[DRY-RUN]   targetResourceConfiguration=$targetConfigurationJson"
-    Write-Host "[DRY-RUN] Would POST $collabArmUrl/enableWorkload  body {workloadType=$workloadType}"
-    foreach ($collaborator in $additionalCollaborators) {
-        Write-Host "[DRY-RUN] Would POST $collabArmUrl/addCollaborator  body {collaborator.userIdentifier=$collaborator}"
+    Write-Host "[DRY-RUN]   collaborators=$($creationIdentities | ConvertTo-Json -Depth 10 -Compress -AsArray)"
+    & "$PSScriptRoot/manage-collaboration.ps1" @actionArgs -Action EnableWorkload
+    if ($additionalIdentities.Count) {
+        & "$PSScriptRoot/manage-collaboration.ps1" @actionArgs -Action AddCollaborator `
+            -Collaborators $additionalIdentities
     }
     return
 }
@@ -150,115 +183,69 @@ if ($dryRun) {
 # 0. Ensure resource group + providers
 # ---------------------------------------------------------------------------
 Write-Host "Ensuring resource group '$resourceGroup' ($location)..."
-az group create --name $resourceGroup --location $location -o none
+Invoke-CleanroomAz -Arguments @("group", "create", "--name", $resourceGroup,
+    "--location", $location, "--subscription", $context.Subscription, "-o", "none") | Out-Null
 
 Write-Host "Registering resource providers (idempotent)..."
-az provider register --namespace Microsoft.CleanRoom -o none
-az provider register --namespace Microsoft.ContainerService -o none
+foreach ($provider in @("Microsoft.CleanRoom", "Microsoft.ContainerService")) {
+    Invoke-CleanroomAz -Arguments @("provider", "register", "--namespace", $provider,
+        "--subscription", $context.Subscription, "--wait", "-o", "none") | Out-Null
+}
 
 # ---------------------------------------------------------------------------
 # 0.5 Handle an existing collaboration of the same name
 # ---------------------------------------------------------------------------
 $existing = Get-Collab
-if ($existing -and $existing.id) {
-    if ($deleteExistingCollab) {
-        Write-Host "Deleting existing collaboration '$collaborationName'..."
-        az rest --method DELETE --url "${collabArmUrl}?api-version=$apiVersion" --resource $armEndpoint -o none
-        Wait-Until -Description "existing '$collaborationName' to be deleted" -TimeoutMinutes 30 -Condition { -not (Get-Collab) }
-        Write-Host "Existing collaboration deleted."
-    }
-    else {
-        Write-Host "Collaboration '$collaborationName' already exists (provisioningState=$($existing.properties.provisioningState)); skipping provisioning."
-        Write-Host "Pass -DeleteExistingCollab to delete and recreate it."
-        return
-    }
+if ($existing) {
+    Write-Warning "Deleting existing collaboration '$collaborationName' for a clean setup."
+    & "$PSScriptRoot/manage-collaboration.ps1" @actionArgs -Action Delete
+    Write-Host "Existing collaboration deleted."
 }
 
 # ---------------------------------------------------------------------------
 # 1. Deploy the collaboration (declarative -- Bicep)
 # ---------------------------------------------------------------------------
-# The owner is added automatically from the caller's ARM token, so no
-# collaborators are passed here. az deployment group create blocks until the
-# deployment reaches a terminal state, so no separate provisioning poll is needed.
+# The owner is added automatically from the caller's ARM token.
 Write-Host "Deploying collaboration '$collaborationName' via Bicep (~25 min)..."
+$creationDeadline = (Get-Date).AddMinutes($timeoutMinutes)
 $targetConfigurationFile = [System.IO.Path]::GetTempFileName()
 try {
-    [System.IO.File]::WriteAllText($targetConfigurationFile, $targetConfigurationJson)
-    az deployment group create `
-        --resource-group $resourceGroup `
-        --name "deploy-$collaborationName" `
-        --template-file "$PSScriptRoot/managed-cleanroom.bicep" `
-        --parameters `
-            collaborationName=$collaborationName `
-            location=$location `
-            resourceLocation=$resourceLocation `
-            aksSku=$aksSku `
-            nodePoolSize=$nodePoolSize `
-            "targetResourceConfiguration=@$targetConfigurationFile" `
-        -o none
-    if ($LASTEXITCODE -ne 0) {
-        throw "Bicep deployment failed (az deployment group create exit code $LASTEXITCODE). See the error above."
-    }
+    $parameters = @{
+        targetResourceConfiguration = @{ value = $effectiveTargetConfiguration }
+        collaborators = @{ value = $creationIdentities }
+    } | ConvertTo-Json -Depth 20
+    [System.IO.File]::WriteAllText($targetConfigurationFile, $parameters)
+    Invoke-CleanroomAz -Arguments @("deployment", "group", "create",
+        "--resource-group", $resourceGroup, "--subscription", $context.Subscription,
+        "--name", "deploy-$collaborationName",
+        "--template-file", "$PSScriptRoot/managed-cleanroom.bicep",
+        "--parameters", "collaborationName=$collaborationName", "location=$location",
+        "resourceLocation=$resourceLocation", "aksSku=$aksSku", "nodePoolSize=$nodePoolSize",
+        "@$targetConfigurationFile", "--no-wait", "-o", "none") | Out-Null
 }
 finally {
-    Remove-Item -LiteralPath $targetConfigurationFile -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $targetConfigurationFile -Force
 }
 
-$collab = Get-Collab
-if (-not $collab -or -not $collab.id) {
-    throw "Collaboration '$collaborationName' was not found after deployment. Aborting."
-}
+$collab = Wait-Collaboration -Context $context -Description "collaboration provisioning" `
+    -TimeoutMinutes $timeoutMinutes -Deadline $creationDeadline `
+    -DeploymentName "deploy-$collaborationName" -AllowNotFound `
+    -Condition { param($c) $c.properties.provisioningState -eq "Succeeded" }
 Write-Host "Collaboration resource ready: $($collab.id)"
 
 # ---------------------------------------------------------------------------
 # 2. Enable the workload (ARM *action* -- no Bicep equivalent)
 # ---------------------------------------------------------------------------
 Write-Host "Enabling '$workloadType' workload (~7 min)..."
-$bodyFile = Join-Path $PSScriptRoot "body.json"
-[System.IO.File]::WriteAllText($bodyFile, (@{ workloadType = $workloadType } | ConvertTo-Json))
-az rest --method POST `
-    --url "$collabArmUrl/enableWorkload?api-version=$apiVersion" `
-    --resource $armEndpoint `
-    --headers "Content-Type=application/json" `
-    --body "@$bodyFile" -o none
-
-# az rest does not surface the Azure-AsyncOperation header, so poll the resource
-# for the workload endpoint and health, each guarded by a timeout.
-Wait-Until -Description "'$workloadType' workload endpoint" -TimeoutMinutes 15 -Condition {
-    $c = Get-Collab
-    if ($c.properties.provisioningState -eq "Failed") { throw "Workload enablement failed." }
-    $wl = $c.properties.workloads | Where-Object { $_.workloadType -eq $workloadType } | Select-Object -First 1
-    [bool]$wl.endpoint
-}
-Wait-Until -Description "collaboration healthState=Ok" -TimeoutMinutes 15 -Condition {
-    $c = Get-Collab
-    if ($c.properties.health.healthIssues) {
-        $c.properties.health.healthIssues | ForEach-Object { Write-Host "  Issue: $($_ | ConvertTo-Json -Compress)" }
-    }
-    $c.properties.health.healthState -eq "Ok"
-}
+& "$PSScriptRoot/manage-collaboration.ps1" @actionArgs -Action EnableWorkload | Out-Null
 
 # ---------------------------------------------------------------------------
 # 3. Add additional collaborators (ARM *action* -- no Bicep equivalent)
 # ---------------------------------------------------------------------------
-foreach ($collaborator in $additionalCollaborators) {
-    Write-Host "Adding collaborator '$collaborator'..."
-    [System.IO.File]::WriteAllText($bodyFile, (@{ collaborator = @{ userIdentifier = $collaborator } } | ConvertTo-Json))
-    az rest --method POST `
-        --url "$collabArmUrl/addCollaborator?api-version=$apiVersion" `
-        --resource $armEndpoint `
-        --headers "Content-Type=application/json" `
-        --body "@$bodyFile" -o none
-
-    Wait-Until -Description "collaborator '$collaborator' to be added" -TimeoutMinutes 10 -Condition {
-        (Get-Collab).properties.collaborators.userIdentifier -contains $collaborator
-    }
+if ($additionalIdentities.Count) {
+    & "$PSScriptRoot/manage-collaboration.ps1" @actionArgs -Action AddCollaborator `
+        -Collaborators $additionalIdentities
 }
-
-Remove-Item $bodyFile -ErrorAction SilentlyContinue
-
-Write-Host ""
-Write-Host "Done. Collaboration '$collaborationName' is provisioned and healthy."
 
 Write-Host ""
 Write-Host "Done. Collaboration '$collaborationName' is provisioned and healthy."

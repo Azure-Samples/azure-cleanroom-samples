@@ -9,6 +9,8 @@
 
     IMPORTANT: The --user-identifier for an SPN is the Application (client) ID,
     NOT the Enterprise App object ID or the App Registration object ID.
+    Supply the Enterprise Application objectId and tenantId as well.
+    SPNs auto-activate and do not need invitation acceptance.
 
 .PARAMETER collaborationName
     Name of the collaboration.
@@ -22,11 +24,23 @@
 .PARAMETER appClientId
     Application (client) ID of the app to add as collaborator.
 
+.PARAMETER objectId
+    Enterprise Application object ID of the service principal.
+
+.PARAMETER tenantId
+    Tenant ID of the service principal.
+
 .PARAMETER apiVersion
     ARM API version (default: 2026-09-30-preview).
 
+.PARAMETER NoWait
+    Submit without waiting for the collaborator to appear on the resource.
+
+.PARAMETER DryRun
+    Preview the request without changing the collaboration.
+
 .EXAMPLE
-    ./scripts/common/add-app-collaborator.ps1 -collaborationName <collaboration-name> -resourceGroup <resource-group> -subscription "<your-subscription-id>" -appClientId "<your-app-client-id>"
+    ./scripts/common/add-app-collaborator.ps1 -collaborationName <collaboration-name> -resourceGroup <resource-group> -subscription "<your-subscription-id>" -appClientId "<your-app-client-id>" -objectId "<sp-object-id>" -tenantId "<tenant-id>"
 #>
 param(
     [Parameter(Mandatory)]
@@ -41,62 +55,20 @@ param(
     [Parameter(Mandatory)]
     [string]$appClientId,
 
-    [string]$apiVersion = "2026-09-30-preview"
+    [Parameter(Mandatory)]
+    [string]$objectId,
+
+    [Parameter(Mandatory)]
+    [string]$tenantId,
+
+    [string]$apiVersion = "2026-09-30-preview",
+    [switch]$NoWait,
+    [switch]$DryRun
 )
 
 $ErrorActionPreference = 'Stop'
 
-Write-Host "=== Adding app collaborator to '$collaborationName' ===" -ForegroundColor Cyan
-Write-Host "  App Client ID: $appClientId" -ForegroundColor Yellow
-
-# Get a management token from the current az login session
-$token = az account get-access-token --resource "https://management.azure.com/" --query accessToken -o tsv
-if ($LASTEXITCODE -ne 0 -or -not $token) {
-    throw "Failed to get management token. Run 'az login' first."
-}
-
-$baseUrl = "https://management.azure.com"
-$collabUrl = "$baseUrl/subscriptions/$subscription/resourceGroups/$resourceGroup/providers/Microsoft.CleanRoom/collaborations/$collaborationName"
-
-# Step 1: Verify the collaboration exists
-Write-Host "Verifying collaboration..." -ForegroundColor Cyan
-$headers = @{ Authorization = "Bearer $token" }
-try {
-    $collab = Invoke-RestMethod -Method Get -Uri "$($collabUrl)?api-version=$apiVersion" -Headers $headers
-    Write-Host "  Collaboration found: $($collab.name), State: $($collab.properties.provisioningState)" -ForegroundColor Green
-    Write-Host "  Current collaborators:" -ForegroundColor Yellow
-    foreach ($c in $collab.properties.collaborators) {
-        Write-Host "    - $($c.userIdentifier) (type=$($c.identityType), owner=$($c.isCollaborationOwner))" -ForegroundColor Yellow
-    }
-} catch {
-    throw "Cannot read collaboration: $_"
-}
-
-# Step 2: Add the app as collaborator
-Write-Host "`nAdding app as collaborator..." -ForegroundColor Cyan
-$addUrl = "$($collabUrl)/addCollaborator?api-version=$apiVersion"
-$body = @{ collaborator = @{ userIdentifier = $appClientId } } | ConvertTo-Json -Depth 3
-
-try {
-    $result = Invoke-RestMethod -Method Post -Uri $addUrl -Headers $headers -Body $body -ContentType "application/json"
-    Write-Host "  Collaborator added successfully!" -ForegroundColor Green
-} catch {
-    $errBody = $_.ErrorDetails.Message
-    if ($errBody -match "already exists|already added|Conflict") {
-        Write-Host "  App already added as collaborator (idempotent)." -ForegroundColor Yellow
-    } else {
-        Write-Host "  Failed to add collaborator: $errBody" -ForegroundColor Red
-        throw "Add collaborator failed: $_"
-    }
-}
-
-# Step 3: Verify
-Write-Host "`nVerifying updated collaborators..." -ForegroundColor Cyan
-$collab = Invoke-RestMethod -Method Get -Uri "$($collabUrl)?api-version=$apiVersion" -Headers $headers
-foreach ($c in $collab.properties.collaborators) {
-    $marker = if ($c.userIdentifier -eq $appClientId) { ">>> NEW" } else { "   " }
-    Write-Host "  $marker $($c.userIdentifier) (type=$($c.identityType), objId=$($c.objectId))" -ForegroundColor $(if ($c.userIdentifier -eq $appClientId) { "Green" } else { "Yellow" })
-}
-
-Write-Host "`n=== Done ===" -ForegroundColor Green
-Write-Host "Next: The app may need to accept an invitation via the frontend API." -ForegroundColor Yellow
+& "$PSScriptRoot/../bicep/manage-collaboration.ps1" -Action AddCollaborator `
+    -ResourceGroup $resourceGroup -CollaborationName $collaborationName `
+    -Subscription $subscription -ApiVersion $apiVersion -NoWait:$NoWait -DryRun:$DryRun `
+    -Collaborators @(@{ userIdentifier = $appClientId; objectId = $objectId; tenantId = $tenantId })

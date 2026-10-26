@@ -37,7 +37,8 @@
 
 .PARAMETER TokenFile
     Token file for frontend authentication. If omitted, uses CLEANROOM_FRONTEND_TOKEN,
-    then MANAGEDCLEANROOM_ACCESS_TOKEN, then the current Azure CLI ARM access token.
+    then MANAGEDCLEANROOM_ACCESS_TOKEN, then the per-persona temp token file,
+    then the current Azure CLI ARM access token.
 #>
 param(
     [Parameter(Mandatory)]
@@ -119,6 +120,10 @@ function Get-SkrPolicy {
         $token = $env:CLEANROOM_FRONTEND_TOKEN.Trim()
     } elseif ($env:MANAGEDCLEANROOM_ACCESS_TOKEN) {
         $token = $env:MANAGEDCLEANROOM_ACCESS_TOKEN.Trim()
+    } elseif (Test-Path -LiteralPath (
+        Join-Path ([IO.Path]::GetTempPath()) "msal-idtoken-$persona.txt") -PathType Leaf) {
+        $token = (Get-Content -LiteralPath (
+            Join-Path ([IO.Path]::GetTempPath()) "msal-idtoken-$persona.txt") -Raw).Trim()
     } else {
         try {
             $token = az account get-access-token --resource "https://management.azure.com/" `

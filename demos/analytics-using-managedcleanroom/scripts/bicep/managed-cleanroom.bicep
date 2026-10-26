@@ -61,19 +61,28 @@ param resourceLocation string = 'westus'
 @description('Virtual machine SKU for the AKS node pool.')
 @allowed([
   'Standard_D4ds_v5'
-  'Standard_D8ds_v5'
-  'Standard_D16ds_v5'
-  'Standard_D32ds_v5'
 ])
 param aksSku string = 'Standard_D4ds_v5'
 
 @description('Number of nodes in the AKS node pool.')
 @minValue(3)
-@maxValue(10)
+@maxValue(3)
 param nodePoolSize int = 3
 
+@sealed()
+type TargetResourceSettings = {
+  aksSku: 'Standard_D4ds_v5'?
+  nodePoolSize: 3?
+  iPTagConfiguration: {
+    @minLength(1)
+    type: string
+    @minLength(1)
+    value: string
+  }?
+}
+
 @description('Optional target resource settings using ARM property names (for example iPTagConfiguration). Values override aksSku and nodePoolSize when supplied in this object.')
-param targetResourceConfiguration object = {}
+param targetResourceConfiguration TargetResourceSettings = {}
 
 @description('Optional additional collaborators added at creation time. Each entry is { userIdentifier: "<email-or-appId>" }. The owner is derived from the caller token automatically. Add further collaborators later via the addCollaborator action (see deploy script).')
 param collaborators array = []
