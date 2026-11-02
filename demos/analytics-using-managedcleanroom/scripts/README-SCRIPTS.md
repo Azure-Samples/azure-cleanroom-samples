@@ -164,6 +164,11 @@ already active (including the owner).
 
 ## Phase 3 — Each participant provisions resources, data and OIDC
 
+Publish the CGS JWKS and static discovery documents and register the exact issuer
+URL once per collaborator/new collaboration, before creating CPK KEKs.
+Configure each collaborator's FIC and access grants, and reuse the OIDC
+registration for subsequent dataset iterations.
+
 ```powershell
 .\scripts\04-prepare-resources.ps1 -resourceGroup $personaRg -persona $persona -location westus
 .\demos\generate-data.ps1 -persona $persona
@@ -198,7 +203,7 @@ if ($persona -eq "woodgrove") {
 For CPK, install AzCopy first. The upload helper generates the DEKs and uploads
 with Azure Storage CPK encryption; do not manually encrypt the input files.
 Access setup grants the workload its Key Vault permissions.
-Prepare the KEKs **after publishing** in Phase 4, not before.
+Prepare the exportable **RSA-HSM** KEKs in Phase 4, after this OIDC bootstrap.
 Use a distinct dataset suffix for each iteration and a separate output directory
 for each query run. See README-API.md Appendix C for the key-release architecture.
 
@@ -226,7 +231,13 @@ if ($EncryptionMode -eq "CPK") {
 Key preparation uses the explicit `-TokenFile` when supplied, then the frontend
 environment tokens, then the per-persona temp token file. If you used a custom
 token-file location for other steps, pass that same file here.
-Publish all datasets before retrieving their SKR policies.
+The helper fetches
+`GET /collaborations/{collaborationId}/analytics/skrpolicy?api-version=2026-03-01-preview`
+once and preserves the returned issuer and Analytics contract claims. It rejects
+an authority that differs from the saved registered issuer; fix the backend or
+registration instead of rewriting the policy. Dataset publication is not required
+for policy retrieval; the dataset-scoped SKR endpoint is deprecated.
+CPK bodies use `kek.authority = { type: "CGS" }`, not `maaUrl`; SSE bodies omit KEK/DEK.
 
 ---
 

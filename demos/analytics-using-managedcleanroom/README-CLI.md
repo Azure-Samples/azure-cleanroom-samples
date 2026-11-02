@@ -530,6 +530,11 @@ $variant = if ($EncryptionMode -eq "CPK") { "cpk" } else { "sse" }
 > proves its identity via hardware attestation, receives a signed JWT from CGS, and
 > exchanges it for an Azure AD token. The OIDC issuer URL makes this exchange work.
 
+Complete this one-time bootstrap for each collaborator in the new collaboration
+**before creating CPK KEKs**: fetch the CGS JWKS, publish static OIDC discovery and
+JWKS, register the exact issuer URL, and configure federated credentials and
+resource access. Reuse that registration for subsequent dataset iterations.
+
 ### 5.1 Fetch JWKS from Frontend
 
 ```powershell
@@ -648,12 +653,18 @@ if ($persona -eq "woodgrove") {
 
 ### 6.4 Prepare CPK Keys (CPK mode only)
 
-> CPK keys must be created **after** publishing datasets. The script fetches the
-> SKR (Secure Key Release) policy from the published dataset, which determines
-> the attestation hash for the KEK release policy.
+> Complete Step 05 before creating keys. The script fetches the **Analytics
+> contract-scoped** CGS SKR policy once for all this persona's dataset KEKs;
+> dataset publication is not a prerequisite for policy retrieval.
+> It preserves the returned issuer and contract claims without modification.
+> An issuer mismatch is a backend/registration error, not a reason to rewrite
+> the policy. Complete key preparation before running queries.
 >
 > Requires **Key Vault Crypto Officer** and **Key Vault Secrets Officer** roles
-> (assigned by `04-prepare-resources.ps1` in Step 4.1).
+> (assigned by `04-prepare-resources.ps1` in Step 4.1), a Premium Key Vault,
+> and **exportable RSA-HSM** KEKs. The helper uses REST for the new contract policy
+> endpoint; no new CLI SKR command is assumed. The installed extension/backend
+> must accept the `kek.authority` payload.
 
 ```powershell
 if ($EncryptionMode -eq "CPK") {
@@ -1065,11 +1076,19 @@ az identity federated-credential create --name "Analytics-$personaOid-federation
 ```
 Upload:   plaintext CSV → azcopy --cpk-by-value → Azure Storage (encrypted with DEK)
 Keys:     DEK → RSA-OAEP wrap with KEK → KV Secret (wrapped DEK)
-          KEK (RSA-2048) → az keyvault key import (with SKR policy) → KV Key
-Runtime:  SKR release → KEK private → unwrap DEK → CPK header → Storage → plaintext
+          KEK (RSA-2048) → import as exportable RSA-HSM (CGS SKR policy) → KV Key
+Runtime:  CGS SKR release → KEK private → unwrap DEK → CPK header → Storage → plaintext
 ```
 
 > **CRITICAL**: CPK is server-side encryption. Do NOT manually encrypt files before upload.
+
+CPK dataset bodies use
+`kek = { secretId, keyVaultUrl, authority: { type: "CGS" } }`.
+SSE bodies omit `kek` and `dek`. The key helper fetches
+`GET /collaborations/{collaborationId}/analytics/skrpolicy?api-version=2026-03-01-preview`
+and imports that policy unchanged.
+See [the API CPK reference](README-API.md#appendix-c-cpk-deep-dive) for the exact
+payload.
 
 ---
 

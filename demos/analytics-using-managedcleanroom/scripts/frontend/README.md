@@ -119,7 +119,13 @@ to configure OIDC and grants. The frontend calls within Step 05 can use:
 Build the dataset bodies with `.\scripts\08-build-dataset-body.ps1` as in
 README Step 6.1, retaining Woodgrove's optional `2025-09-01` subdirectory.
 The examples below use suffix `-v1`; replace it consistently if your upload
-used a different suffix. Prepare keys after publishing if using CPK.
+used a different suffix. For CPK, the generated KEK reference contains
+`authority: { type: "CGS" }`, not `maaUrl`. After the one-time OIDC publication,
+issuer registration and FIC setup, prepare exportable RSA-HSM KEKs using
+`.\scripts\08-prepare-dataset-keys.ps1` (README Step 6.4) before running queries.
+The helper retrieves `/collaborations/{id}/analytics/skrpolicy` with frontend API
+version `2026-03-01-preview`, preserving the exact issuer and contract claims.
+It does not require a published dataset, an MAA resource, or a dataset-scoped SKR call.
 
 ### Northwind (publisher — input only)
 

@@ -16,8 +16,9 @@
     Prerequisites:
     - 05-prepare-data.ps1 (generates datastore metadata)
     - 06-setup-oidc-storage.ps1 (generates identity metadata + issuer URL)
-    For CPK, publish these dataset bodies before running 08-prepare-dataset-keys.ps1;
-    key preparation needs the SKR policy of the published dataset.
+    For CPK, complete OIDC publication and issuer registration before running
+    08-prepare-dataset-keys.ps1. SKR policies are scoped to the Analytics contract,
+    not to a published dataset.
 #>
 param(
     [Parameter(Mandatory)]
@@ -26,8 +27,6 @@ param(
     [Parameter(Mandatory)]
     [ValidateSet("northwind", "woodgrove", IgnoreCase = $false)]
     [string]$persona,
-
-    [string]$maaUrl = "https://sharedeus.eus.attest.azure.net",
 
     [string]$outDir = "./generated",
 
@@ -68,7 +67,6 @@ function New-DatasetPublishBody {
         [string]$AccessMode,
         [string[]]$AllowedFields,
         [string]$EncMode,
-        [string]$Maa,
         [string]$Subdirectory = ""
     )
 
@@ -108,7 +106,7 @@ function New-DatasetPublishBody {
         $body.kek = [ordered]@{
             keyVaultUrl = $Meta.encryption.kekStoreUrl
             secretId    = $Meta.encryption.kekName
-            maaUrl      = $Maa
+            authority   = [ordered]@{ type = "CGS" }
         }
     }
 
@@ -134,7 +132,7 @@ $inputAllowedFields = if ($persona -eq "northwind") {
 
 $inputBody = New-DatasetPublishBody -Meta $inputMeta -Identity $identityMeta `
     -AccessMode "read" -AllowedFields $inputAllowedFields `
-    -EncMode $encryptionMode -Maa $maaUrl -Subdirectory $subdirectory
+    -EncMode $encryptionMode -Subdirectory $subdirectory
 
 $inputFile = Join-Path $publishDir "$persona-input-dataset.json"
 $inputBody | ConvertTo-Json -Depth 20 | Out-File -FilePath $inputFile -Encoding utf8
@@ -144,7 +142,7 @@ Write-Host "Input dataset body: $inputFile" -ForegroundColor Green
 if ($persona -eq "woodgrove" -and $datastoreMeta.output) {
     $outputBody = New-DatasetPublishBody -Meta $datastoreMeta.output -Identity $identityMeta `
         -AccessMode "write" -AllowedFields @("user_id") `
-        -EncMode $encryptionMode -Maa $maaUrl
+        -EncMode $encryptionMode
 
     $outputFile = Join-Path $publishDir "woodgrove-output-dataset.json"
     $outputBody | ConvertTo-Json -Depth 20 | Out-File -FilePath $outputFile -Encoding utf8
