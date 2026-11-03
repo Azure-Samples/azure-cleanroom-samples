@@ -175,7 +175,7 @@ if ($PSCmdlet.ParameterSetName -eq "Reuse") {
         jwks_uri                              = "$issuerUrl/openid/v1/jwks"
         response_types_supported              = @("id_token")
         subject_types_supported               = @("public")
-        id_token_signing_alg_values_supported = @("RS256")
+        id_token_signing_alg_values_supported = @("PS256")
     } | ConvertTo-Json -Depth 4
 
     $openidConfigPath = Join-Path $outputDir "openid-configuration.json"
