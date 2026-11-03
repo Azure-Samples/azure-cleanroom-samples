@@ -108,8 +108,8 @@ providing your own data and query.
 
 | Requirement | Details |
 |---|---|
-| Azure CLI | 2.75.0+ |
-| `managedcleanroom` extension | `az extension add --name managedcleanroom --version 1.0.0b10 --upgrade` |
+| Azure CLI | Latest stable (`az upgrade`) |
+| `managedcleanroom` extension | `az extension add --name managedcleanroom --version 1.0.0b11 --upgrade` |
 | PowerShell | 7.x+ |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) |
@@ -186,7 +186,7 @@ availability; these values are planning ceilings, not throughput guarantees.
 
 The examples below target the **production RP and frontend** in `westus`, with
 collaboration resources in `westus`. Choose a supported resource region where your
-subscription has sufficient quota. Extension `1.0.0b10` uses
+subscription has sufficient quota. The `managedcleanroom` extension uses
 `2026-09-30-preview` for collaboration creation; the frontend API version is
 separate and remains `2026-03-01-preview`.
 
@@ -296,7 +296,7 @@ az managedcleanroom frontend configure --endpoint $frontend
 ```
 
 > Run `frontend configure` explicitly when changing environments. Do not rely
-> solely on `MANAGEDCLEANROOM_ENDPOINT`: the `1.0.0b10` frontend client reads the
+> solely on `MANAGEDCLEANROOM_ENDPOINT`: the frontend client reads the
 > endpoint from Azure CLI configuration.
 
 ---
@@ -683,8 +683,15 @@ if ($persona -eq "woodgrove") {
 >
 > Requires **Key Vault Crypto Officer** and **Key Vault Secrets Officer** roles
 > (assigned by `04-prepare-resources.ps1` in Step 4.1), a Premium Key Vault,
-> and **exportable RSA-HSM** KEKs. The helper uses REST for the new contract policy
-> endpoint; no new CLI SKR command is assumed.
+> and **exportable RSA-HSM** KEKs.
+
+Get the Analytics contract-scoped SKR policy:
+
+```powershell
+az managedcleanroom frontend analytics skr-policy `
+    --collaboration-id $collabId `
+    --api-version "2026-03-01-preview" -o json
+```
 
 ```powershell
 if ($EncryptionMode -eq "CPK") {
@@ -1077,7 +1084,7 @@ az identity federated-credential create --name "Analytics-$personaOid-federation
 | `SSL certificate verify failed` | Wrong frontend endpoint or stale endpoint configuration | Re-run `az managedcleanroom frontend configure --endpoint $frontend`; do not disable TLS verification |
 | `404 Not Found` on frontend | Using ARM ID instead of frontend UUID | Use UUID from `frontend collaboration list` |
 | `ContractNotFound` | Stale CCF endpoint | Create new collaboration |
-| `Python 3.13 tuple error` | CLI extension bug | Upgrade to `managedcleanroom` extension `1.0.0b10` |
+| `Python 3.13 tuple error` | CLI extension bug | Upgrade to `managedcleanroom` extension `1.0.0b11` |
 | `Already voted / Conflict` | Publisher already voted | Check query state; skip an accept vote if already Accepted. Do not ignore other conflicts |
 | `PENDING_RERUN` | Normal scheduling | Keep polling |
 
