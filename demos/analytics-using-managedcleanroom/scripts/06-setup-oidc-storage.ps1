@@ -3,17 +3,18 @@
     Sets up OIDC storage infrastructure and saves identity metadata (utility only).
 
 .DESCRIPTION
-    Creates/uses an OIDC storage account, uploads OpenID configuration and JWKS
-    documents to its static website, gets managed identity properties, and saves
-    all metadata for downstream steps.
+    Publishes OpenID configuration and JWKS to an OIDC storage account, or reuses
+    the exact issuer URL already published by another collaborator in the same
+    collaboration. Reuse does not access or modify the publisher's storage.
+    Both modes save the current collaborator's managed identity metadata.
 
     Does NOT make any frontend service calls. The caller (README) is responsible for:
-    1. Fetching JWKS from the frontend before calling this script.
-    2. Registering the issuer URL with the frontend after this script completes.
+    1. Fetching JWKS from the frontend before publishing (not needed for reuse).
+    2. Registering the issuer URL using the current collaborator's frontend token.
 
     Prerequisites:
     - 04-prepare-resources.ps1 must have been run.
-    - JWKS file must already exist (fetched from frontend by the README).
+    - For publication, a JWKS file fetched from the frontend must already exist.
 
 .PARAMETER resourceGroup
     Azure resource group containing the managed identity.
@@ -32,9 +33,15 @@
     whitelisted OIDC storage account (e.g. https://<account>.z22.web.core.windows.net).
     If omitted, creates a new SA in the resource group.
 
+.PARAMETER ReuseIssuerUrl
+    Exact full issuer URL shared by the publishing collaborator, including its
+    path. Use this instead of JwksFile/OidcStorageUrl, including across tenants.
+    The published URL must be permitted by each collaborator's tenant policy.
+
 .PARAMETER outDir
     Output directory for generated metadata (default: ./generated).
 #>
+[CmdletBinding(DefaultParameterSetName = "Publish")]
 param(
     [Parameter(Mandatory)]
     [string]$resourceGroup,
@@ -46,10 +53,15 @@ param(
     [Parameter(Mandatory)]
     [string]$collaborationId,
 
-    [Parameter(Mandatory)]
+    [Parameter(Mandatory, ParameterSetName = "Publish")]
     [string]$JwksFile,
 
+    [Parameter(ParameterSetName = "Publish")]
     [string]$OidcStorageUrl,
+
+    [Parameter(Mandatory, ParameterSetName = "Reuse")]
+    [ValidateNotNullOrEmpty()]
+    [string]$ReuseIssuerUrl,
 
     [string]$outDir = "./generated"
 )
@@ -76,7 +88,16 @@ if (-not (Test-Path $namesFile)) {
 }
 . $namesFile
 
-if (-not (Test-Path $JwksFile)) {
+if ($PSCmdlet.ParameterSetName -eq "Reuse") {
+    $issuerUri = $null
+    if ($ReuseIssuerUrl -cne $ReuseIssuerUrl.Trim() -or
+        -not [Uri]::TryCreate($ReuseIssuerUrl, [UriKind]::Absolute, [ref]$issuerUri) -or
+        $issuerUri.Scheme -ne "https" -or $issuerUri.UserInfo -or
+        $issuerUri.Query -or $issuerUri.Fragment) {
+        throw "ReuseIssuerUrl must be an exact HTTPS issuer URL without credentials, query, or fragment."
+    }
+}
+elseif (-not (Test-Path -LiteralPath $JwksFile -PathType Leaf)) {
     Write-Host "ERROR: JWKS file '$JwksFile' not found. Fetch JWKS from frontend first." -ForegroundColor Red
     exit 1
 }
@@ -84,96 +105,100 @@ if (-not (Test-Path $JwksFile)) {
 $outputDir = Join-Path $outDir $resourceGroup
 New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 
-# -- Step 1: Set up OIDC storage account -----------------------------------------
-$subscriptionId = az account show --query id -o tsv
-
-$newOidcAccountCreated = $false
-if ($OidcStorageUrl) {
-    $staticWebUrl = $OidcStorageUrl.TrimEnd('/')
-    # Extract storage account name from the static-website hostname (e.g. <account>.z22.web.core.windows.net).
-    $oidcStorageAccountName = ([Uri]$staticWebUrl).Host.Split('.')[0]
-    $containerName = $collaborationId
-    $issuerUrl = "$staticWebUrl/$containerName"
-    Write-Host "Using pre-existing OIDC storage account '$oidcStorageAccountName'." -ForegroundColor Cyan
+# -- Publish documents, or reuse the publisher's exact issuer URL ----------------
+if ($PSCmdlet.ParameterSetName -eq "Reuse") {
+    $issuerUrl = $ReuseIssuerUrl
+    Write-Host "Reusing published issuer URL: $issuerUrl" -ForegroundColor Cyan
 } else {
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes("$subscriptionId-$resourceGroup")
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    $hash = -join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") })
-    $oidcStorageAccountName = ("oidc" + $hash).Substring(0, 24).ToLower() -replace '[^a-z0-9]', ''
-    $containerName = ("oidc-" + $hash).Substring(0, 24).ToLower() -replace '[^a-z0-9-]', ''
+    $subscriptionId = az account show --query id -o tsv
 
-    $location = az group show --name $resourceGroup --query location -o tsv
-
-    Write-Host "Creating OIDC storage account '$oidcStorageAccountName'..." -ForegroundColor Cyan
-    az storage account create --name $oidcStorageAccountName --resource-group $resourceGroup `
-        --location $location --sku Standard_LRS --min-tls-version TLS1_2 --output none
-
-    az storage blob service-properties update --account-name $oidcStorageAccountName `
-        --static-website --auth-mode login --output none
-
-    $oidcStorageId = az storage account show --name $oidcStorageAccountName `
-        --resource-group $resourceGroup --query id -o tsv
-
-    $accountInfo = az account show --query "user" -o json 2>$null | ConvertFrom-Json
-    $principalType = "User"
-    $callerObjectId = $null
-    if ($accountInfo.type -eq "servicePrincipal") {
-        $PSNativeCommandUseErrorActionPreference = $false
-        $callerObjectId = az ad sp show --id $accountInfo.name --query id -o tsv 2>$null
-        $PSNativeCommandUseErrorActionPreference = $true
-        $principalType = "ServicePrincipal"
+    $newOidcAccountCreated = $false
+    if ($OidcStorageUrl) {
+        $staticWebUrl = $OidcStorageUrl.TrimEnd('/')
+        # Extract the account name from the static-website hostname.
+        $oidcStorageAccountName = ([Uri]$staticWebUrl).Host.Split('.')[0]
+        $containerName = $collaborationId
+        $issuerUrl = "$staticWebUrl/$containerName"
+        Write-Host "Using pre-existing OIDC storage account '$oidcStorageAccountName'." -ForegroundColor Cyan
     } else {
-        $callerObjectId = az ad signed-in-user show --query id -o tsv
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes("$subscriptionId-$resourceGroup")
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $hash = -join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") })
+        $oidcStorageAccountName = ("oidc" + $hash).Substring(0, 24).ToLower() -replace '[^a-z0-9]', ''
+        $containerName = ("oidc-" + $hash).Substring(0, 24).ToLower() -replace '[^a-z0-9-]', ''
+
+        $location = az group show --name $resourceGroup --query location -o tsv
+
+        Write-Host "Creating OIDC storage account '$oidcStorageAccountName'..." -ForegroundColor Cyan
+        az storage account create --name $oidcStorageAccountName --resource-group $resourceGroup `
+            --location $location --sku Standard_LRS --min-tls-version TLS1_2 --output none
+
+        az storage blob service-properties update --account-name $oidcStorageAccountName `
+            --static-website --auth-mode login --output none
+
+        $oidcStorageId = az storage account show --name $oidcStorageAccountName `
+            --resource-group $resourceGroup --query id -o tsv
+
+        $accountInfo = az account show --query "user" -o json 2>$null | ConvertFrom-Json
+        $principalType = "User"
+        $callerObjectId = $null
+        if ($accountInfo.type -eq "servicePrincipal") {
+            $PSNativeCommandUseErrorActionPreference = $false
+            $callerObjectId = az ad sp show --id $accountInfo.name --query id -o tsv 2>$null
+            $PSNativeCommandUseErrorActionPreference = $true
+            $principalType = "ServicePrincipal"
+        } else {
+            $callerObjectId = az ad signed-in-user show --query id -o tsv
+        }
+
+        if ($callerObjectId) {
+            Invoke-AzSafe @("role", "assignment", "create", "--role", "Storage Blob Data Contributor",
+                "--assignee-object-id", $callerObjectId, "--assignee-principal-type", $principalType,
+                "--scope", $oidcStorageId, "--output", "none")
+        }
+
+        $staticWebUrl = (az storage account show --name $oidcStorageAccountName `
+            --resource-group $resourceGroup --query "primaryEndpoints.web" -o tsv).TrimEnd('/')
+        $issuerUrl = "$staticWebUrl/$containerName"
+        $newOidcAccountCreated = $true
     }
 
-    if ($callerObjectId) {
-        Invoke-AzSafe @("role", "assignment", "create", "--role", "Storage Blob Data Contributor",
-            "--assignee-object-id", $callerObjectId, "--assignee-principal-type", $principalType,
-            "--scope", $oidcStorageId, "--output", "none")
+    Write-Host "Issuer URL: $issuerUrl" -ForegroundColor Yellow
+
+    if ($newOidcAccountCreated) {
+        Write-Host "Waiting 60 seconds for RBAC role assignment to propagate..." -ForegroundColor Yellow
+        Start-Sleep -Seconds 60
     }
 
-    $staticWebUrl = (az storage account show --name $oidcStorageAccountName `
-        --resource-group $resourceGroup --query "primaryEndpoints.web" -o tsv).TrimEnd('/')
-    $issuerUrl = "$staticWebUrl/$containerName"
-    $newOidcAccountCreated = $true
+    $openidConfig = @{
+        issuer                                = $issuerUrl
+        jwks_uri                              = "$issuerUrl/openid/v1/jwks"
+        response_types_supported              = @("id_token")
+        subject_types_supported               = @("public")
+        id_token_signing_alg_values_supported = @("RS256")
+    } | ConvertTo-Json -Depth 4
+
+    $openidConfigPath = Join-Path $outputDir "openid-configuration.json"
+    $openidConfig | Out-File -FilePath $openidConfigPath -Encoding utf8
+
+    # Copy JWKS to output dir (skip if already there).
+    $jwksPath = Join-Path $outputDir "jwks.json"
+    $jwksSrc = (Resolve-Path $JwksFile).Path
+    $jwksDst = Join-Path (Resolve-Path $outputDir).Path "jwks.json"
+    if ($jwksSrc -ne $jwksDst) {
+        Copy-Item -Path $JwksFile -Destination $jwksPath -Force
+    }
+
+    Write-Host "Uploading OpenID configuration to static website..." -ForegroundColor Cyan
+    az storage blob upload --account-name $oidcStorageAccountName --container-name '$web' `
+        --name "$containerName/.well-known/openid-configuration" --file $openidConfigPath `
+        --content-type "application/json" --overwrite --auth-mode login --output none
+
+    Write-Host "Uploading JWKS to static website..." -ForegroundColor Cyan
+    az storage blob upload --account-name $oidcStorageAccountName --container-name '$web' `
+        --name "$containerName/openid/v1/jwks" --file $jwksPath `
+        --content-type "application/json" --overwrite --auth-mode login --output none
 }
-
-Write-Host "Issuer URL: $issuerUrl" -ForegroundColor Yellow
-
-if ($newOidcAccountCreated) {
-    Write-Host "Waiting 60 seconds for RBAC role assignment to propagate..." -ForegroundColor Yellow
-    Start-Sleep -Seconds 60
-}
-
-# -- Step 2: Build and upload OpenID configuration --------------------------------
-$openidConfig = @{
-    issuer                                = $issuerUrl
-    jwks_uri                              = "$issuerUrl/openid/v1/jwks"
-    response_types_supported              = @("id_token")
-    subject_types_supported               = @("public")
-    id_token_signing_alg_values_supported = @("RS256")
-} | ConvertTo-Json -Depth 4
-
-$openidConfigPath = Join-Path $outputDir "openid-configuration.json"
-$openidConfig | Out-File -FilePath $openidConfigPath -Encoding utf8
-
-# Copy JWKS to output dir (skip if already there)
-$jwksPath = Join-Path $outputDir "jwks.json"
-$jwksSrc = (Resolve-Path $JwksFile).Path
-$jwksDst = Join-Path (Resolve-Path $outputDir).Path "jwks.json"
-if ($jwksSrc -ne $jwksDst) {
-    Copy-Item -Path $JwksFile -Destination $jwksPath -Force
-}
-
-Write-Host "Uploading OpenID configuration to static website..." -ForegroundColor Cyan
-az storage blob upload --account-name $oidcStorageAccountName --container-name '$web' `
-    --name "$containerName/.well-known/openid-configuration" --file $openidConfigPath `
-    --content-type "application/json" --overwrite --auth-mode login --output none
-
-Write-Host "Uploading JWKS to static website..." -ForegroundColor Cyan
-az storage blob upload --account-name $oidcStorageAccountName --container-name '$web' `
-    --name "$containerName/openid/v1/jwks" --file $jwksPath `
-    --content-type "application/json" --overwrite --auth-mode login --output none
 
 # -- Step 3: Save issuer URL -----------------------------------------------------
 $issuerUrlPath = Join-Path $outputDir "issuer-url.txt"

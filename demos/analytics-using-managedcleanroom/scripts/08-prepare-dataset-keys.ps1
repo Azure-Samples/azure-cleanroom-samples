@@ -19,8 +19,6 @@
     - 05-prepare-data.ps1 must have been run with -variant cpk (generates DEK files).
     - OIDC discovery and JWKS must be published (06-setup-oidc-storage.ps1), and
       the issuer URL registered with the frontend before creating KEKs.
-    - A backend with secure, attestation-bound CGS SKR support is required;
-      see README-API.md Appendix C for unresolved backend prerequisites.
 
 .PARAMETER collaborationId
     The collaboration frontend UUID.
@@ -160,7 +158,7 @@ function Get-SkrPolicy {
     foreach ($branch in $policy.anyOf) {
         if ($branch.authority -cne $issuerUrl) {
             throw ("SKR authority does not match the registered CGS issuer. " +
-                "Check issuer registration and backend support; do not rewrite the release policy.")
+                "Check issuer registration; do not rewrite the release policy.")
         }
     }
 

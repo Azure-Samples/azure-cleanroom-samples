@@ -530,10 +530,20 @@ $variant = if ($EncryptionMode -eq "CPK") { "cpk" } else { "sse" }
 > proves its identity via hardware attestation, receives a signed JWT from CGS, and
 > exchanges it for an Azure AD token. The OIDC issuer URL makes this exchange work.
 
-Complete this one-time bootstrap for each collaborator in the new collaboration
-**before creating CPK KEKs**: fetch the CGS JWKS, publish static OIDC discovery and
-JWKS, register the exact issuer URL, and configure federated credentials and
-resource access. Reuse that registration for subsequent dataset iterations.
+Complete this bootstrap **before creating CPK KEKs**. One collaborator publishes
+the CGS discovery documents and JWKS, then shares the full issuer URL with the
+other collaborators in this collaboration. Each collaborator, including those
+in different tenants, registers that exact URL using their own frontend token
+and configures their own federated credentials and resource access. Their tenant
+policy must allow the shared issuer URL. Reuse the registration for later datasets.
+
+Set this in each collaborator's terminal:
+
+```powershell
+# Recipients: set $reuseIssuerUrl to the publisher's full issuer-url.txt value first.
+# Default to publication only when no value has been supplied.
+$reuseIssuerUrl ??= ""
+```
 
 ### 5.1 Fetch JWKS from Frontend
 
@@ -541,26 +551,37 @@ resource access. Reuse that registration for subsequent dataset iterations.
 $env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
 az managedcleanroom frontend configure --endpoint $frontend
 
-$jwksDir = "generated/$personaRg"
-New-Item -ItemType Directory -Path $jwksDir -Force | Out-Null
+if (-not $reuseIssuerUrl) {
+    $jwksDir = "generated/$personaRg"
+    New-Item -ItemType Directory -Path $jwksDir -Force | Out-Null
 
-az managedcleanroom frontend oidc keys `
-    --collaboration-id $collabId -o json > "$jwksDir/jwks.json"
+    az managedcleanroom frontend oidc keys `
+        --collaboration-id $collabId -o json > "$jwksDir/jwks.json"
+}
 ```
 
-### 5.2 Setup OIDC Storage & Upload Documents
+### 5.2 Publish or Reuse OIDC Documents
 
 ```powershell
 $oidcParams = @{
     resourceGroup   = $personaRg
     persona         = $persona
     collaborationId = $collabId
-    JwksFile        = "generated/$personaRg/jwks.json"
 }
-if ($oidcStorageUrl) { $oidcParams["OidcStorageUrl"] = $oidcStorageUrl }
+if ($reuseIssuerUrl) {
+    $oidcParams.ReuseIssuerUrl = $reuseIssuerUrl
+} else {
+    $oidcParams.JwksFile = "generated/$personaRg/jwks.json"
+    if ($oidcStorageUrl) { $oidcParams.OidcStorageUrl = $oidcStorageUrl }
+}
 
 ./scripts/06-setup-oidc-storage.ps1 @oidcParams
 ```
+
+The publisher shares `generated/$personaRg/issuer-url.txt`, including its path.
+`-ReuseIssuerUrl` saves each recipient's identity metadata without reading or
+writing the publisher's storage; no cross-tenant storage permissions are needed.
+`-OidcStorageUrl` instead selects an account for publication, not an existing issuer.
 
 ### 5.3 Register Issuer URL with Frontend
 
@@ -657,14 +678,13 @@ if ($persona -eq "woodgrove") {
 > contract-scoped** CGS SKR policy once for all this persona's dataset KEKs;
 > dataset publication is not a prerequisite for policy retrieval.
 > It preserves the returned issuer and contract claims without modification.
-> An issuer mismatch is a backend/registration error, not a reason to rewrite
-> the policy. Complete key preparation before running queries.
+> If the issuer differs from the saved URL, correct the registration rather
+> than rewriting the policy. Complete key preparation before running queries.
 >
 > Requires **Key Vault Crypto Officer** and **Key Vault Secrets Officer** roles
 > (assigned by `04-prepare-resources.ps1` in Step 4.1), a Premium Key Vault,
 > and **exportable RSA-HSM** KEKs. The helper uses REST for the new contract policy
-> endpoint; no new CLI SKR command is assumed. The installed extension/backend
-> must accept the `kek.authority` payload.
+> endpoint; no new CLI SKR command is assumed.
 
 ```powershell
 if ($EncryptionMode -eq "CPK") {

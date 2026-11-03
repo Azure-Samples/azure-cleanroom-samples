@@ -51,7 +51,7 @@ relative to the demo root. For a complete ordered setup, follow
 | `run-collaborator.ps1` | 03 + 06 + 08 | EACH collaborator (orchestrator) |
 | `run-query.ps1` | 07 + 09–11 | Owner; returns the job ID or service-preview response |
 | `03-accept-invitation.ps1` | 03 | EACH collaborator |
-| `05-fetch-jwks.ps1` | 5.1 | EACH collaborator |
+| `05-fetch-jwks.ps1` | 5.1 | OIDC publisher |
 | `05-set-issuer-url.ps1` | 5.3 | EACH collaborator |
 | `06-publish-dataset.ps1` | 6.2 / 6.3 | EACH (output = Woodgrove) |
 | `06-set-consent.ps1` | 06 | Document owner; enable/disable without republishing |
@@ -116,6 +116,19 @@ to configure OIDC and grants. The frontend calls within Step 05 can use:
 # Then run .\scripts\07-grant-access.ps1 (README Step 5.4).
 ```
 
+Only the OIDC publisher fetches and uploads the JWKS. Other collaborators in the
+same collaboration, including those in different tenants, run this instead:
+
+```powershell
+.\scripts\06-setup-oidc-storage.ps1 -resourceGroup $personaRg -persona $persona `
+    -collaborationId $collabId -ReuseIssuerUrl "<publisher's full issuer URL>"
+```
+
+This saves their own identity metadata without accessing the publisher's
+storage. Every collaborator then runs `05-set-issuer-url.ps1` with their own
+frontend token and configures their own FIC and grants. Each tenant must permit
+the shared issuer URL. See README Step 5.2 for the complete publish/reuse commands.
+
 Build the dataset bodies with `.\scripts\08-build-dataset-body.ps1` as in
 README Step 6.1, retaining Woodgrove's optional `2025-09-01` subdirectory.
 The examples below use suffix `-v1`; replace it consistently if your upload
@@ -125,7 +138,7 @@ issuer registration and FIC setup, prepare exportable RSA-HSM KEKs using
 `.\scripts\08-prepare-dataset-keys.ps1` (README Step 6.4) before running queries.
 The helper retrieves `/collaborations/{id}/analytics/skrpolicy` with frontend API
 version `2026-03-01-preview`, preserving the exact issuer and contract claims.
-It does not require a published dataset, an MAA resource, or a dataset-scoped SKR call.
+Dataset publication is not a prerequisite for policy retrieval.
 
 ### Northwind (publisher — input only)
 
