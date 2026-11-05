@@ -196,6 +196,7 @@ separate and remains `2026-03-01-preview`.
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 az login
+az account set --subscription "<owner-subscription-id>"
 $account = az account show -o json | ConvertFrom-Json
 $subscription = $account.id
 $tenantId = $account.tenantId
@@ -223,10 +224,15 @@ az provider register --namespace Microsoft.ContainerService
 
 ### 1.4 Each Collaborator Terminal — Variables
 
+Select the subscription that owns this persona's storage, Key Vault, and managed identity
+before acquiring the frontend JWT. Different personas can use different subscriptions and
+directories. If the directory is known, use `az login --tenant "<resource-tenant-id>"`.
+
 ```powershell
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 az login
+az account set --subscription "<persona-subscription-id>"
 $account = az account show -o json | ConvertFrom-Json
 $subscription = $account.id
 $tenantId = $account.tenantId
@@ -256,11 +262,15 @@ $oidcStorageUrl = "https://cleanroomoidc.z22.web.core.windows.net"   # Required 
 
 #### 1.5.1 Acquire Token
 
+For this walkthrough, use the selected resource subscription's `$tenantId` for frontend sign-in.
+External / MSA users must have access to that directory as a member or guest. Selecting another
+CLI subscription does not change an existing frontend token file; acquire the token after selection.
+
 **Option A — MSAL device-code flow** (external / MSA accounts):
 
 ```powershell
 $token = Get-MsalToken -ClientId "8a3849c1-81c5-4d62-b83e-3bb2bb11251a" `
-    -TenantId "common" -Scopes "User.Read" -DeviceCode
+    -TenantId $tenantId -Scopes "User.Read" -DeviceCode
 $personaTokenFile = Join-Path ([System.IO.Path]::GetTempPath()) "msal-idtoken-$persona.txt"
 $token.IdToken | Out-File -FilePath $personaTokenFile -NoNewline
 ```
@@ -268,9 +278,10 @@ $token.IdToken | Out-File -FilePath $personaTokenFile -NoNewline
 **Option B — `az login`** (corporate @microsoft.com accounts):
 
 ```powershell
-az login
 $personaTokenFile = Join-Path ([System.IO.Path]::GetTempPath()) "msal-idtoken-$persona.txt"
-az account get-access-token --resource "https://management.azure.com/" --query accessToken -o tsv | Out-File -FilePath $personaTokenFile -NoNewline
+az account get-access-token --subscription $subscription `
+    --resource "https://management.azure.com/" --query accessToken -o tsv |
+    Out-File -FilePath $personaTokenFile -NoNewline
 ```
 
 #### 1.5.2 Extract OID from Token
@@ -280,12 +291,18 @@ $tokenB64 = (Get-Content $personaTokenFile -Raw).Split('.')[1].Replace('-', '+')
 $padLen = (4 - $tokenB64.Length % 4) % 4
 $padded = $tokenB64 + ('=' * $padLen)
 $claims = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($padded)) | ConvertFrom-Json
+if ($claims.tid -ne $tenantId) {
+    throw "Frontend JWT tenant does not match the selected resource tenant. Repeat Step 1.5.1."
+}
 $personaOid = $claims.oid
+Write-Host "JWT tenant: $($claims.tid)"
 Write-Host "JWT oid: $personaOid"
 ```
 
 > **CRITICAL**: Always use the JWT `oid`, NOT `az ad signed-in-user show --query id`.
-> For MSA accounts these differ. See [Appendix A](#appendix-a-federated-credential-subject-reference).
+> Different sign-in directories can produce different OIDs for the same person.
+> Use the same OID and tenant identity for invitation acceptance and all later frontend calls.
+> See [Appendix A](#appendix-a-federated-credential-subject-reference).
 
 #### 1.5.3 Configure CLI Extension
 
