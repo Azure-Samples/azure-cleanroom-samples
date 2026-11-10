@@ -3,10 +3,11 @@
     Prepares CPK encryption keys for datasets (KEK creation, DEK wrapping).
 
 .DESCRIPTION
-    CPK-only utility script. For each dataset in the datastore metadata:
-    1. Fetches the SKR release policy from the frontend (for the attestation hash).
+    CPK-only utility script. Fetches the Analytics contract-scoped CGS SKR policy
+    once from the frontend, preserving its issuer and claims. For each dataset:
+    1. Uses the contract's SKR release policy.
     2. Generates a local RSA-2048 KEK.
-    3. Imports the KEK to Key Vault with the SKR release policy.
+    3. Imports the KEK as an exportable RSA-HSM key with the SKR release policy.
     4. Wraps the DEK with the KEK (RSA-OAEP-SHA256, client-side).
     5. Stores the wrapped DEK as a Key Vault secret.
 
@@ -16,6 +17,8 @@
     Prerequisites:
     - 04-prepare-resources.ps1 must have been run.
     - 05-prepare-data.ps1 must have been run with -variant cpk (generates DEK files).
+    - OIDC discovery and JWKS must be published (06-setup-oidc-storage.ps1), and
+      the issuer URL registered with the frontend before creating KEKs.
 
 .PARAMETER collaborationId
     The collaboration frontend UUID.
@@ -28,9 +31,6 @@
 
 .PARAMETER frontendEndpoint
     Frontend service URL (needed for SKR policy fetch).
-
-.PARAMETER maaUrl
-    MAA URL for the SKR release policy authority.
 
 .PARAMETER outDir
     Output directory.
@@ -53,8 +53,6 @@ param(
 
     [Parameter(Mandatory)]
     [string]$frontendEndpoint,
-
-    [string]$maaUrl = "https://sharedeus.eus.attest.azure.net",
 
     [string]$outDir = "./generated",
 
@@ -95,6 +93,15 @@ if ($datastoreMeta.input.encryptionMode -ne "CPK") {
     exit 0
 }
 
+$issuerUrlFile = Join-Path $outDir $resourceGroup "issuer-url.txt"
+if (-not (Test-Path -LiteralPath $issuerUrlFile -PathType Leaf)) {
+    throw "Publish OIDC discovery/JWKS and register the issuer URL before preparing CPK keys."
+}
+$issuerUrl = (Get-Content -LiteralPath $issuerUrlFile -Raw).Trim()
+if ([string]::IsNullOrWhiteSpace($issuerUrl)) {
+    throw "The saved OIDC issuer URL is empty. Complete OIDC setup and issuer registration first."
+}
+
 # -- Set up frontend auth (used internally for SKR policy fetch) -------------------
 $feBase = $frontendEndpoint.TrimEnd('/')
 if ($feBase.EndsWith('/collaborations')) {
@@ -102,8 +109,6 @@ if ($feBase.EndsWith('/collaborations')) {
 }
 
 function Get-SkrPolicy {
-    param([string]$DatasetName)
-
     $endpointUri = $null
     if (-not [Uri]::TryCreate($feBase, [UriKind]::Absolute, [ref]$endpointUri) -or
         $endpointUri.Scheme -ne "https" -or $endpointUri.Query -or $endpointUri.Fragment -or
@@ -140,15 +145,21 @@ function Get-SkrPolicy {
 
     $headers = @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" }
     $encodedCollaborationId = [Uri]::EscapeDataString($collaborationId)
-    $encodedDatasetName = [Uri]::EscapeDataString($DatasetName)
-    $url = "$feBase/collaborations/$encodedCollaborationId/analytics/datasets/$encodedDatasetName/skrpolicy?api-version=2026-03-01-preview"
+    $url = "$feBase/collaborations/$encodedCollaborationId/analytics/skrpolicy" +
+        "?api-version=2026-03-01-preview"
     try {
         $policy = Invoke-RestMethod -Uri $url -Headers $headers -Method Get -ErrorAction Stop
     } catch {
-        throw "Failed to fetch SKR policy for dataset '$DatasetName': $($_.Exception.Message)"
+        throw "Failed to fetch the Analytics contract SKR policy: $($_.Exception.Message)"
     }
     if (-not $policy.version -or @($policy.anyOf).Count -eq 0 -or -not $policy.anyOf[0]) {
-        throw "Frontend returned an invalid SKR policy for dataset '$DatasetName': expected version and nonempty anyOf."
+        throw "Invalid Analytics SKR policy: expected version and nonempty anyOf."
+    }
+    foreach ($branch in $policy.anyOf) {
+        if ($branch.authority -cne $issuerUrl) {
+            throw ("SKR authority does not match the registered CGS issuer. " +
+                "Check issuer registration; do not rewrite the release policy.")
+        }
     }
 
     return $policy
@@ -176,13 +187,6 @@ function New-DatasetKekAndWrappedDek {
     }
 
     $dekBytes = [System.IO.File]::ReadAllBytes($dekFile)
-
-    # Step 1: Fetch SKR release policy
-    Write-Host "  Fetching SKR release policy..." -ForegroundColor Yellow
-    $skrPolicy = Get-SkrPolicy -DatasetName $datasetName
-    $skrPolicy.anyOf[0].authority = $maaUrl
-    $skrPolicyJson = $skrPolicy | ConvertTo-Json -Depth 10 -Compress
-    Write-Host "  SKR policy fetched. ccePolicyHash: $($skrPolicy.anyOf[0].allOf[0].equals)" -ForegroundColor Green
 
     # Step 2: Generate RSA-2048 KEK locally
     Write-Host "  Generating KEK '$kekName' (RSA-2048)..." -ForegroundColor Yellow
@@ -227,6 +231,9 @@ function New-DatasetKekAndWrappedDek {
 }
 
 Write-Host "=== Preparing CPK keys ===" -ForegroundColor Cyan
+
+Write-Host "Fetching the Analytics contract CGS SKR release policy..." -ForegroundColor Yellow
+$skrPolicyJson = Get-SkrPolicy | ConvertTo-Json -Depth 100 -Compress
 
 New-DatasetKekAndWrappedDek -DatasetMeta $datastoreMeta.input `
     -KeyVaultName $KEYVAULT_NAME -OutputDir $outDir

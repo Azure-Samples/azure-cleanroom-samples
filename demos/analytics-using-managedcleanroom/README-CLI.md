@@ -108,8 +108,8 @@ providing your own data and query.
 
 | Requirement | Details |
 |---|---|
-| Azure CLI | 2.75.0+ |
-| `managedcleanroom` extension | `az extension add --name managedcleanroom --version 1.0.0b10 --upgrade` |
+| Azure CLI | Latest stable (`az upgrade`) |
+| `managedcleanroom` extension | `az extension add --name managedcleanroom --version 1.0.0b11 --upgrade` |
 | PowerShell | 7.x+ |
 | MSAL.PS module | `Install-Module MSAL.PS -Scope CurrentUser -Force` |
 | azcopy | v10+ (CPK mode only) |
@@ -186,7 +186,7 @@ availability; these values are planning ceilings, not throughput guarantees.
 
 The examples below target the **production RP and frontend** in `westus`, with
 collaboration resources in `westus`. Choose a supported resource region where your
-subscription has sufficient quota. Extension `1.0.0b10` uses
+subscription has sufficient quota. The `managedcleanroom` extension uses
 `2026-09-30-preview` for collaboration creation; the frontend API version is
 separate and remains `2026-03-01-preview`.
 
@@ -196,6 +196,7 @@ separate and remains `2026-03-01-preview`.
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 az login
+az account set --subscription "<owner-subscription-id>"
 $account = az account show -o json | ConvertFrom-Json
 $subscription = $account.id
 $tenantId = $account.tenantId
@@ -223,10 +224,15 @@ az provider register --namespace Microsoft.ContainerService
 
 ### 1.4 Each Collaborator Terminal — Variables
 
+Select the subscription that owns this persona's storage, Key Vault, and managed identity
+before acquiring the frontend JWT. Different personas can use different subscriptions and
+directories. If the directory is known, use `az login --tenant "<resource-tenant-id>"`.
+
 ```powershell
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 az login
+az account set --subscription "<persona-subscription-id>"
 $account = az account show -o json | ConvertFrom-Json
 $subscription = $account.id
 $tenantId = $account.tenantId
@@ -256,11 +262,15 @@ $oidcStorageUrl = "https://cleanroomoidc.z22.web.core.windows.net"   # Required 
 
 #### 1.5.1 Acquire Token
 
+For this walkthrough, use the selected resource subscription's `$tenantId` for frontend sign-in.
+External / MSA users must have access to that directory as a member or guest. Selecting another
+CLI subscription does not change an existing frontend token file; acquire the token after selection.
+
 **Option A — MSAL device-code flow** (external / MSA accounts):
 
 ```powershell
 $token = Get-MsalToken -ClientId "8a3849c1-81c5-4d62-b83e-3bb2bb11251a" `
-    -TenantId "common" -Scopes "User.Read" -DeviceCode
+    -TenantId $tenantId -Scopes "User.Read" -DeviceCode
 $personaTokenFile = Join-Path ([System.IO.Path]::GetTempPath()) "msal-idtoken-$persona.txt"
 $token.IdToken | Out-File -FilePath $personaTokenFile -NoNewline
 ```
@@ -268,9 +278,10 @@ $token.IdToken | Out-File -FilePath $personaTokenFile -NoNewline
 **Option B — `az login`** (corporate @microsoft.com accounts):
 
 ```powershell
-az login
 $personaTokenFile = Join-Path ([System.IO.Path]::GetTempPath()) "msal-idtoken-$persona.txt"
-az account get-access-token --resource "https://management.azure.com/" --query accessToken -o tsv | Out-File -FilePath $personaTokenFile -NoNewline
+az account get-access-token --subscription $subscription `
+    --resource "https://management.azure.com/" --query accessToken -o tsv |
+    Out-File -FilePath $personaTokenFile -NoNewline
 ```
 
 #### 1.5.2 Extract OID from Token
@@ -280,12 +291,18 @@ $tokenB64 = (Get-Content $personaTokenFile -Raw).Split('.')[1].Replace('-', '+')
 $padLen = (4 - $tokenB64.Length % 4) % 4
 $padded = $tokenB64 + ('=' * $padLen)
 $claims = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($padded)) | ConvertFrom-Json
+if ($claims.tid -ne $tenantId) {
+    throw "Frontend JWT tenant does not match the selected resource tenant. Repeat Step 1.5.1."
+}
 $personaOid = $claims.oid
+Write-Host "JWT tenant: $($claims.tid)"
 Write-Host "JWT oid: $personaOid"
 ```
 
 > **CRITICAL**: Always use the JWT `oid`, NOT `az ad signed-in-user show --query id`.
-> For MSA accounts these differ. See [Appendix A](#appendix-a-federated-credential-subject-reference).
+> Different sign-in directories can produce different OIDs for the same person.
+> Use the same OID and tenant identity for invitation acceptance and all later frontend calls.
+> See [Appendix A](#appendix-a-federated-credential-subject-reference).
 
 #### 1.5.3 Configure CLI Extension
 
@@ -296,7 +313,7 @@ az managedcleanroom frontend configure --endpoint $frontend
 ```
 
 > Run `frontend configure` explicitly when changing environments. Do not rely
-> solely on `MANAGEDCLEANROOM_ENDPOINT`: the `1.0.0b10` frontend client reads the
+> solely on `MANAGEDCLEANROOM_ENDPOINT`: the frontend client reads the
 > endpoint from Azure CLI configuration.
 
 ---
@@ -530,32 +547,58 @@ $variant = if ($EncryptionMode -eq "CPK") { "cpk" } else { "sse" }
 > proves its identity via hardware attestation, receives a signed JWT from CGS, and
 > exchanges it for an Azure AD token. The OIDC issuer URL makes this exchange work.
 
+Complete this bootstrap **before creating CPK KEKs**. One collaborator publishes
+the CGS discovery documents and JWKS, then shares the full issuer URL with the
+other collaborators in this collaboration. Each collaborator, including those
+in different tenants, registers that exact URL using their own frontend token
+and configures their own federated credentials and resource access. Their tenant
+policy must allow the shared issuer URL. Reuse the registration for later datasets.
+
+Set this in each collaborator's terminal:
+
+```powershell
+# Recipients: set $reuseIssuerUrl to the publisher's full issuer-url.txt value first.
+# Default to publication only when no value has been supplied.
+$reuseIssuerUrl ??= ""
+```
+
 ### 5.1 Fetch JWKS from Frontend
 
 ```powershell
 $env:MANAGEDCLEANROOM_ACCESS_TOKEN = Get-Content $personaTokenFile -Raw
 az managedcleanroom frontend configure --endpoint $frontend
 
-$jwksDir = "generated/$personaRg"
-New-Item -ItemType Directory -Path $jwksDir -Force | Out-Null
+if (-not $reuseIssuerUrl) {
+    $jwksDir = "generated/$personaRg"
+    New-Item -ItemType Directory -Path $jwksDir -Force | Out-Null
 
-az managedcleanroom frontend oidc keys `
-    --collaboration-id $collabId -o json > "$jwksDir/jwks.json"
+    az managedcleanroom frontend oidc keys `
+        --collaboration-id $collabId -o json > "$jwksDir/jwks.json"
+}
 ```
 
-### 5.2 Setup OIDC Storage & Upload Documents
+### 5.2 Publish or Reuse OIDC Documents
 
 ```powershell
 $oidcParams = @{
     resourceGroup   = $personaRg
     persona         = $persona
     collaborationId = $collabId
-    JwksFile        = "generated/$personaRg/jwks.json"
 }
-if ($oidcStorageUrl) { $oidcParams["OidcStorageUrl"] = $oidcStorageUrl }
+if ($reuseIssuerUrl) {
+    $oidcParams.ReuseIssuerUrl = $reuseIssuerUrl
+} else {
+    $oidcParams.JwksFile = "generated/$personaRg/jwks.json"
+    if ($oidcStorageUrl) { $oidcParams.OidcStorageUrl = $oidcStorageUrl }
+}
 
 ./scripts/06-setup-oidc-storage.ps1 @oidcParams
 ```
+
+The publisher shares `generated/$personaRg/issuer-url.txt`, including its path.
+`-ReuseIssuerUrl` saves each recipient's identity metadata without reading or
+writing the publisher's storage; no cross-tenant storage permissions are needed.
+`-OidcStorageUrl` instead selects an account for publication, not an existing issuer.
 
 ### 5.3 Register Issuer URL with Frontend
 
@@ -648,12 +691,24 @@ if ($persona -eq "woodgrove") {
 
 ### 6.4 Prepare CPK Keys (CPK mode only)
 
-> CPK keys must be created **after** publishing datasets. The script fetches the
-> SKR (Secure Key Release) policy from the published dataset, which determines
-> the attestation hash for the KEK release policy.
+> Complete Step 05 before creating keys. The script fetches the **Analytics
+> contract-scoped** CGS SKR policy once for all this persona's dataset KEKs;
+> dataset publication is not a prerequisite for policy retrieval.
+> It preserves the returned issuer and contract claims without modification.
+> If the issuer differs from the saved URL, correct the registration rather
+> than rewriting the policy. Complete key preparation before running queries.
 >
 > Requires **Key Vault Crypto Officer** and **Key Vault Secrets Officer** roles
-> (assigned by `04-prepare-resources.ps1` in Step 4.1).
+> (assigned by `04-prepare-resources.ps1` in Step 4.1), a Premium Key Vault,
+> and **exportable RSA-HSM** KEKs.
+
+Get the Analytics contract-scoped SKR policy:
+
+```powershell
+az managedcleanroom frontend analytics skr-policy `
+    --collaboration-id $collabId `
+    --api-version "2026-03-01-preview" -o json
+```
 
 ```powershell
 if ($EncryptionMode -eq "CPK") {
@@ -1046,7 +1101,7 @@ az identity federated-credential create --name "Analytics-$personaOid-federation
 | `SSL certificate verify failed` | Wrong frontend endpoint or stale endpoint configuration | Re-run `az managedcleanroom frontend configure --endpoint $frontend`; do not disable TLS verification |
 | `404 Not Found` on frontend | Using ARM ID instead of frontend UUID | Use UUID from `frontend collaboration list` |
 | `ContractNotFound` | Stale CCF endpoint | Create new collaboration |
-| `Python 3.13 tuple error` | CLI extension bug | Upgrade to `managedcleanroom` extension `1.0.0b10` |
+| `Python 3.13 tuple error` | CLI extension bug | Upgrade to `managedcleanroom` extension `1.0.0b11` |
 | `Already voted / Conflict` | Publisher already voted | Check query state; skip an accept vote if already Accepted. Do not ignore other conflicts |
 | `PENDING_RERUN` | Normal scheduling | Keep polling |
 
@@ -1065,11 +1120,19 @@ az identity federated-credential create --name "Analytics-$personaOid-federation
 ```
 Upload:   plaintext CSV → azcopy --cpk-by-value → Azure Storage (encrypted with DEK)
 Keys:     DEK → RSA-OAEP wrap with KEK → KV Secret (wrapped DEK)
-          KEK (RSA-2048) → az keyvault key import (with SKR policy) → KV Key
-Runtime:  SKR release → KEK private → unwrap DEK → CPK header → Storage → plaintext
+          KEK (RSA-2048) → import as exportable RSA-HSM (CGS SKR policy) → KV Key
+Runtime:  CGS SKR release → KEK private → unwrap DEK → CPK header → Storage → plaintext
 ```
 
 > **CRITICAL**: CPK is server-side encryption. Do NOT manually encrypt files before upload.
+
+CPK dataset bodies use
+`kek = { secretId, keyVaultUrl, authority: { type: "CGS" } }`.
+SSE bodies omit `kek` and `dek`. The key helper fetches
+`GET /collaborations/{collaborationId}/analytics/skrpolicy?api-version=2026-03-01-preview`
+and imports that policy unchanged.
+See [the API CPK reference](README-API.md#appendix-c-cpk-deep-dive) for the exact
+payload.
 
 ---
 

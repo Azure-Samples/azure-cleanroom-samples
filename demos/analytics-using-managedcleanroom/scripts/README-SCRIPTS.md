@@ -164,23 +164,42 @@ already active (including the owner).
 
 ## Phase 3 — Each participant provisions resources, data and OIDC
 
+One collaborator publishes the CGS JWKS and static discovery documents, then
+shares the full issuer URL with the others in the same collaboration.
+Each collaborator, including those in different tenants, registers that exact URL
+with their own frontend token and configures their own FIC and access grants
+before creating CPK KEKs. Each tenant must permit the shared issuer.
+Reuse this registration for subsequent dataset iterations.
+
+OIDC is an explicit per-participant step below, not an option on
+`deploy-managed-cleanroom.ps1` or `run-collaborator.ps1`; neither invokes OIDC setup.
+Joining collaborators run Phases 2–4 without repeating the owner's destructive
+Phase 1. Set `$reuseIssuerUrl` to the publisher's full URL before running this block;
+the block preserves a supplied value.
+
 ```powershell
 .\scripts\04-prepare-resources.ps1 -resourceGroup $personaRg -persona $persona -location westus
 .\demos\generate-data.ps1 -persona $persona
 $variant = $EncryptionMode.ToLowerInvariant()
 .\scripts\05-prepare-data.ps1 -resourceGroup $personaRg -variant $variant -persona $persona `
     -dataDir ".\generated\datasource\$persona\csv" -datasetSuffix $suffix
-.\scripts\frontend\05-fetch-jwks.ps1 -Persona $persona -CollaborationId $collabId `
-    -outDir "generated\$personaRg"
 
+# Default to publication only when no issuer URL has been supplied.
+$reuseIssuerUrl ??= ""
 $oidcParams = @{
     resourceGroup = $personaRg
     persona = $persona
     collaborationId = $collabId
-    JwksFile = "generated\$personaRg\jwks.json"
 }
-# If tenant policy requires a whitelisted OIDC account, set its approved URL:
-# $oidcParams.OidcStorageUrl = "https://<account>.z22.web.core.windows.net"
+if ($reuseIssuerUrl) {
+    $oidcParams.ReuseIssuerUrl = $reuseIssuerUrl
+} else {
+    .\scripts\frontend\05-fetch-jwks.ps1 -Persona $persona -CollaborationId $collabId `
+        -outDir "generated\$personaRg"
+    $oidcParams.JwksFile = "generated\$personaRg\jwks.json"
+    # To publish to a whitelisted account, set its static-website endpoint:
+    # $oidcParams.OidcStorageUrl = "https://<account>.z22.web.core.windows.net"
+}
 .\scripts\06-setup-oidc-storage.ps1 @oidcParams
 .\scripts\frontend\05-set-issuer-url.ps1 -Persona $persona -CollaborationId $collabId `
     -outDir "generated\$personaRg"
@@ -198,7 +217,10 @@ if ($persona -eq "woodgrove") {
 For CPK, install AzCopy first. The upload helper generates the DEKs and uploads
 with Azure Storage CPK encryption; do not manually encrypt the input files.
 Access setup grants the workload its Key Vault permissions.
-Prepare the KEKs **after publishing** in Phase 4, not before.
+Prepare the exportable **RSA-HSM** KEKs in Phase 4, after this OIDC bootstrap.
+The publisher shares `generated\<publisher-resource-group>\issuer-url.txt`.
+Recipients use `-ReuseIssuerUrl`, including its path, without permissions to
+the publisher's storage. `-OidcStorageUrl` is for publication, not URL reuse.
 Use a distinct dataset suffix for each iteration and a separate output directory
 for each query run. See README-API.md Appendix C for the key-release architecture.
 
@@ -226,7 +248,13 @@ if ($EncryptionMode -eq "CPK") {
 Key preparation uses the explicit `-TokenFile` when supplied, then the frontend
 environment tokens, then the per-persona temp token file. If you used a custom
 token-file location for other steps, pass that same file here.
-Publish all datasets before retrieving their SKR policies.
+The helper fetches
+`GET /collaborations/{collaborationId}/analytics/skrpolicy?api-version=2026-03-01-preview`
+once and preserves the returned issuer and Analytics contract claims. It rejects
+an authority that differs from the saved registered issuer; correct the
+registration instead of rewriting the policy. Dataset publication is not required
+for policy retrieval; the dataset-scoped SKR endpoint is deprecated.
+CPK bodies use `kek.authority = { type: "CGS" }`, not `maaUrl`; SSE bodies omit KEK/DEK.
 
 ---
 
